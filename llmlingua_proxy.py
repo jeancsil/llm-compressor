@@ -113,10 +113,10 @@ def record_request(session_id: str, session_name: str | None = None):
 def _rtk_db_path() -> Path:
     system = platform.system()
     if system == "Darwin":
-        return Path.home() / "Library" / "Application Support" / "rtk" / "tracking.db"
+        return Path.home() / "Library" / "Application Support" / "rtk" / "history.db"
     if system == "Windows":
-        return Path(os.environ.get("APPDATA", "")) / "rtk" / "tracking.db"
-    return Path.home() / ".local" / "share" / "rtk" / "tracking.db"
+        return Path(os.environ.get("APPDATA", "")) / "rtk" / "history.db"
+    return Path.home() / ".local" / "share" / "rtk" / "history.db"
 
 def read_rtk_stats() -> dict | None:
     db = _rtk_db_path()

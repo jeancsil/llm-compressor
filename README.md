@@ -82,9 +82,9 @@ No configuration required. The proxy reads rtk's SQLite database at the standard
 
 | OS | Path |
 |---|---|
-| macOS | `~/Library/Application Support/rtk/tracking.db` |
-| Linux | `~/.local/share/rtk/tracking.db` |
-| Windows | `%APPDATA%\rtk\tracking.db` |
+| macOS | `~/Library/Application Support/rtk/history.db` |
+| Linux | `~/.local/share/rtk/history.db` |
+| Windows | `%APPDATA%\rtk\history.db` |
 
 Install rtk:
 
