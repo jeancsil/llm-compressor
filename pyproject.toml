@@ -1,0 +1,14 @@
+[project]
+name = "llm-lingua"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "anthropic>=0.97.0",
+    "fastapi>=0.136.1",
+    "httpx>=0.28.1",
+    "llmlingua>=0.2.2",
+    "torch>=2.11.0",
+    "uvicorn>=0.46.0",
+]
