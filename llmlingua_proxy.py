@@ -110,11 +110,15 @@ def record_request(session_id: str, session_name: str | None = None):
 def compress_text(text: str, session_id: str) -> str:
     if len(text) <= 200:
         return text
-    result = compressor.compress_prompt(
-        text,
-        rate=0.5,
-        force_tokens=['\n', '?', '.', '!'],
-    )
+    try:
+        result = compressor.compress_prompt(
+            text,
+            rate=0.5,
+            force_tokens=['\n', '?', '.', '!'],
+        )
+    except Exception as e:
+        print(f"[LLMLingua-2] compression failed, forwarding original: {e}")
+        return text
     orig = result['origin_tokens']
     comp = result['compressed_tokens']
     print(f"[LLMLingua-2] {orig} → {comp} tokens ({result['ratio']}) [{session_id[:8]}]")
