@@ -9,7 +9,7 @@ FastAPI proxy that sits between Claude Code and the Anthropic API. Every outboun
 | **llmlingua-proxy** (this) | API | Conversation messages before they're billed |
 | **rtk** | Shell | CLI command output before it enters the context window |
 
-Running both gives you savings at both layers.
+Running both gives you savings at both layers. The dashboard automatically detects rtk and switches to a two-layer view when it is present.
 
 ## Requirements
 
@@ -70,6 +70,27 @@ While the proxy is running, open `http://127.0.0.1:9099/dashboard` in a browser.
 - Full session table with request counts and last-seen times
 
 > **Note on token counts:** the saved/compressed figures use LLMLingua-2's BERT-based tokenizer, not Claude's billing tokenizer. They are a good proxy for relative savings but do not map 1:1 to your Anthropic invoice.
+
+### rtk integration
+
+If [rtk](https://github.com/rtk-ai/rtk) is installed, the dashboard automatically reads its tracking database and switches to a two-layer view:
+
+- **Shell layer** — rtk's total commands, tokens saved, and a top-commands breakdown
+- **API layer** — LLMLingua-2's per-session stats (existing view)
+
+No configuration required. The proxy reads rtk's SQLite database at the standard platform path in read-only mode:
+
+| OS | Path |
+|---|---|
+| macOS | `~/Library/Application Support/rtk/tracking.db` |
+| Linux | `~/.local/share/rtk/tracking.db` |
+| Windows | `%APPDATA%\rtk\tracking.db` |
+
+Install rtk:
+
+```bash
+brew install rtk   # macOS
+```
 
 ## How it works
 
