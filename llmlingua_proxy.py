@@ -28,8 +28,25 @@ _db_conn  = None
 # ---------------------------------------------------------------------------
 
 def init_db(path: str):
-    import sqlite3
-    return sqlite3.connect(path)
+    import sqlite3 as _sqlite3
+    conn = _sqlite3.connect(path)
+    conn.row_factory = _sqlite3.Row
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS compressions (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts               TEXT,
+            session_id       TEXT,
+            model            TEXT,
+            original_tokens  INTEGER,
+            compressed_tokens INTEGER,
+            latency_ms       REAL
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_ts ON compressions(ts)")
+    conn.commit()
+    return conn
 
 
 def migrate_from_json(conn, stats_file="stats.json"):
