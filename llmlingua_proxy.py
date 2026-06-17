@@ -569,7 +569,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   .rtk-hint code { background: #21262d; padding: 1px 6px; border-radius: 3px; color: #c9d1d9; }
 
   /* ── Metric cards ── */
-  .cards { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-bottom: 12px; }
+  .cards { display: grid; grid-template-columns: repeat(7, 1fr); gap: 10px; margin-bottom: 12px; }
   .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px 14px; }
   .card-label { font-size: 9px; color: #8b949e; text-transform: uppercase; letter-spacing: .08em; margin-bottom: 5px; }
   .card-value { font-size: 20px; font-weight: 700; color: #f0f6fc; }
@@ -597,6 +597,15 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   .spark-empty { font-size: 11px; color: #484f58; }
   .spark-legend { display: flex; gap: 16px; margin-top: 8px; font-size: 10px; color: #8b949e; }
   .leg-dot { display: inline-block; width: 8px; height: 8px; border-radius: 1px; margin-right: 4px; vertical-align: middle; }
+
+  /* ── Model badge ── */
+  .model-badge { font-size: 10px; background: #0d1a35; color: #58a6ff; padding: 2px 8px; border-radius: 4px; }
+
+  /* ── Time-series chart ── */
+  .ts-chart { display: flex; align-items: flex-end; gap: 4px; height: 60px; overflow: hidden; }
+  .ts-bar { flex: 1; min-height: 4px; border-radius: 2px 2px 0 0; opacity: .8; transition: opacity .1s; cursor: default; }
+  .ts-bar:hover { opacity: 1; }
+  .ts-labels { display: flex; justify-content: space-between; margin-top: 4px; font-size: 9px; color: #484f58; }
 
   /* ── Session bars ── */
   .sess-bars { display: flex; flex-direction: column; gap: 8px; }
@@ -629,7 +638,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <body>
 
 <div class="header">
-  <div class="title">⚡ LLMLingua Proxy</div>
+  <div style="display:flex;align-items:center;gap:8px">
+    <div class="title">⚡ LLMLingua Proxy</div>
+    <span class="model-badge" id="model_badge">—</span>
+  </div>
   <div class="header-right">
     <span id="uptime_display">—</span>
     <span><span class="live-dot"></span>live</span>
@@ -691,6 +703,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   <div class="card"><div class="card-label">Sessions</div><div class="card-value blue"  id="card_sessions">—</div></div>
   <div class="card"><div class="card-label">Avg Ratio</div><div class="card-value green" id="card_ratio">—</div></div>
   <div class="card"><div class="card-label">Uptime</div><div class="card-value"          id="card_uptime">—</div></div>
+  <div class="card"><div class="card-label">Latency</div><div class="card-value" id="card_latency">—</div></div>
+  <div class="card">
+    <div class="card-label">Est. $ Saved</div>
+    <div class="card-value green" id="card_cost">—</div>
+    <div style="font-size:9px;color:#484f58;margin-top:3px" id="card_cost_label">@ $3.00 / MTok</div>
+  </div>
 </div>
 
 <!-- rtk top commands (shown when rtk present) -->
@@ -717,6 +735,13 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <div class="section">
   <div class="section-title">LLMLingua-2 — sessions by tokens saved</div>
   <div id="sess_bars" class="sess-bars"><span class="spark-empty">No sessions yet</span></div>
+</div>
+
+<!-- 48-hour time series -->
+<div class="section">
+  <div class="section-title">compression rate — last 48h (hourly) &nbsp;·&nbsp; height = requests &nbsp;·&nbsp; color = avg savings %</div>
+  <div id="ts_chart" class="ts-chart"><span class="spark-empty">No data</span></div>
+  <div id="ts_labels" class="ts-labels"></div>
 </div>
 
 <!-- Session detail table -->
@@ -809,11 +834,29 @@ async function refresh() {
       document.getElementById('t_sessions').textContent  = Object.keys(d.sessions).length;
     }
 
+    // ── Model badge ──
+    if (d.compressor) {
+      const c = d.compressor;
+      document.getElementById('model_badge').textContent =
+        (c.model === 'kompress' ? 'kompress' : 'llmlingua2') + ' · ' + c.param_name + '=' + c.param_value;
+    }
+
     // ── Metric cards ──
     document.getElementById('card_requests').textContent = fmt(d.total_requests);
     document.getElementById('card_saved').textContent    = fmt(d.total_saved_tokens);
     document.getElementById('card_sessions').textContent = Object.keys(d.sessions).length;
     document.getElementById('card_ratio').textContent    = d.overall_ratio + '×';
+
+    // ── Latency card ──
+    document.getElementById('card_latency').textContent =
+      d.avg_latency_ms != null ? Math.round(d.avg_latency_ms) + ' ms' : '—';
+
+    // ── Cost card ──
+    if (d.cost_per_mtok != null && d.total_saved_tokens != null) {
+      const cost = (d.total_saved_tokens / 1000000) * d.cost_per_mtok;
+      document.getElementById('card_cost').textContent = '$' + cost.toFixed(2);
+      document.getElementById('card_cost_label').textContent = '@ $' + d.cost_per_mtok.toFixed(2) + ' / MTok';
+    }
 
     // ── Sparkline ──
     const comps = [...d.recent_compressions].reverse();
@@ -825,7 +868,8 @@ async function refresh() {
       sparkEl.innerHTML = comps.map(c => {
         const pct = c.original > 0 ? Math.round((1 - c.compressed / c.original) * 100) : 0;
         const h = Math.max(10, Math.round((c.original / maxOrig) * 100));
-        const tip = c.ts + ' · ' + c.session_id + ' · ' + pct + '% saved (' + fmt(c.original) + ' → ' + fmt(c.compressed) + ')';
+        const tip = c.ts + ' · ' + c.session_id + ' · ' + pct + '% saved (' + fmt(c.original) + ' → ' + fmt(c.compressed) + ')' +
+          (c.latency_ms != null ? ' · ' + c.latency_ms + 'ms' : '');
         return '<div class="bar" style="background:' + barColor(pct) + ';height:' + h + '%" title="' + tip + '"></div>';
       }).join('');
     }
@@ -878,8 +922,34 @@ async function refresh() {
   } catch(e) { console.error(e); }
 }
 
+async function refreshTimeseries() {
+  try {
+    const r = await fetch('/stats/timeseries');
+    const buckets = await r.json();
+    const chartEl = document.getElementById('ts_chart');
+    const labelsEl = document.getElementById('ts_labels');
+    if (!buckets || buckets.length === 0) {
+      chartEl.innerHTML = '<span class="spark-empty">No data</span>';
+      labelsEl.innerHTML = '';
+      return;
+    }
+    const maxReq = Math.max(...buckets.map(b => b.requests), 1);
+    chartEl.innerHTML = buckets.map(b => {
+      const h = Math.max(4, Math.round((b.requests / maxReq) * 100));
+      const tip = b.hour.slice(11, 16) + ' · ' + b.requests + ' req · ' +
+        b.avg_savings_pct + '% saved · ' + b.avg_latency_ms + 'ms avg';
+      return '<div class="ts-bar" style="height:' + h + '%;background:' + barColor(b.avg_savings_pct) + '" title="' + tip + '"></div>';
+    }).join('');
+    const first = buckets[0].hour.slice(11, 16);
+    const last  = buckets[buckets.length - 1].hour.slice(11, 16);
+    labelsEl.innerHTML = '<span>' + first + '</span><span>' + last + '</span>';
+  } catch(e) { console.error(e); }
+}
+
 refresh();
+refreshTimeseries();
 setInterval(refresh, 2000);
+setInterval(refreshTimeseries, 60000);
 </script>
 </body>
 </html>"""

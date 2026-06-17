@@ -11,3 +11,5 @@ wheels/
 
 # Runtime data
 stats.json
+stats.json.bak
+metrics.db
