@@ -2,6 +2,7 @@ import os
 import json
 import platform
 import sqlite3
+import time
 import httpx
 import uvicorn
 from collections import deque
@@ -170,26 +171,37 @@ stats = {
     "recent_compressions": deque(maxlen=100),
 }
 
-def record_compression(session_id: str, original: int, compressed: int):
+def record_compression(session_id: str, original: int, compressed: int, latency_ms: float = 0.0):
     stats["total_original_tokens"] += original
     stats["total_compressed_tokens"] += compressed
 
+    model_name = backend.get("type", "llmlingua2") if backend else "llmlingua2"
+    ts = datetime.utcnow().isoformat(timespec="seconds")
+
+    if _db_conn:
+        _db_conn.execute(
+            "INSERT INTO compressions (ts, session_id, model, original_tokens, compressed_tokens, latency_ms) VALUES (?,?,?,?,?,?)",
+            (ts, session_id, model_name, original, compressed, latency_ms),
+        )
+        _db_conn.commit()
+
     sess = stats["sessions"].setdefault(session_id, {
-        "first_seen": datetime.now().isoformat(),
+        "first_seen": ts,
         "requests": 0,
         "original_tokens": 0,
         "compressed_tokens": 0,
     })
     sess["original_tokens"] += original
     sess["compressed_tokens"] += compressed
-    sess["last_seen"] = datetime.now().isoformat()
+    sess["last_seen"] = ts
 
     stats["recent_compressions"].appendleft({
-        "ts": datetime.now().strftime("%H:%M:%S"),
+        "ts": datetime.utcnow().strftime("%H:%M:%S"),
         "session_id": session_id[:8],
         "original": original,
         "compressed": compressed,
         "saved": original - compressed,
+        "latency_ms": round(latency_ms, 1),
     })
 
 def record_request(session_id: str, session_name: str | None = None):
@@ -265,20 +277,40 @@ def compress_text(text: str, session_id: str) -> str:
         return text
     if backend is None:
         return text
+    t0 = time.perf_counter()
     try:
-        result = backend["compressor"].compress_prompt(
-            text,
-            rate=backend["rate"],
-            force_tokens=['\n', '?', '.', '!'],
-        )
+        compressed, orig, comp = compress_backend(text)
     except Exception as e:
-        print(f"[LLMLingua-2] compression failed, forwarding original: {e}")
+        print(f"[compressor] compression failed, forwarding original: {e}")
         return text
-    orig = result['origin_tokens']
-    comp = result['compressed_tokens']
-    print(f"[LLMLingua-2] {orig} → {comp} tokens ({result['ratio']}) [{session_id[:8]}]")
-    record_compression(session_id, orig, comp)
-    return result['compressed_prompt']
+    latency_ms = (time.perf_counter() - t0) * 1000
+    print(f"[LLMLingua-2] {orig} → {comp} tokens [{session_id[:8]}]")
+    record_compression(session_id, orig, comp, latency_ms)
+    return compressed
+
+
+def compress_backend(text: str):
+    """Dispatch to the configured compressor. Returns (compressed_text, orig_tokens, comp_tokens)."""
+    if backend.get("type") == "kompress":
+        return _compress_kompress(text)
+    return _compress_llmlingua2(text)
+
+
+def _compress_llmlingua2(text: str):
+    result = backend["compressor"].compress_prompt(
+        text,
+        rate=backend.get("rate", 0.5),
+        force_tokens=['\n', '?', '.', '!'],
+    )
+    return result["compressed_prompt"], result["origin_tokens"], result["compressed_tokens"]
+
+
+def _compress_kompress(text: str):
+    """Stub for chopratejas/kompress backend (not yet on PyPI)."""
+    raise RuntimeError(
+        "kompress backend (chopratejas/kompress) is not installed. "
+        "Set COMPRESSOR_MODEL=llmlingua2 or install the kompress ML library."
+    )
 
 def compress_messages(messages: list, session_id: str) -> list:
     out = []

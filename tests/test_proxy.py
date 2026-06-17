@@ -1,3 +1,4 @@
+import sys
 import json
 from collections import deque
 
@@ -88,4 +89,61 @@ def test_load_stats_from_db(tmp_path):
     assert "aaa" in stats["sessions"]
     assert stats["sessions"]["aaa"]["original_tokens"] == 350
     assert len(stats["recent_compressions"]) == 3
+    conn.close()
+
+
+def test_record_compression_writes_to_db(tmp_path):
+    """Task 7: record_compression writes a row to SQLite including latency_ms."""
+    for dep in ("llmlingua", "torch", "transformers"):
+        if dep not in sys.modules:
+            import unittest.mock as _mock
+            sys.modules[dep] = _mock.MagicMock()
+
+    import llmlingua_proxy as proxy
+    from llmlingua_proxy import init_db
+
+    conn = init_db(str(tmp_path / "metrics.db"))
+    proxy._db_conn = conn
+    proxy.backend = {"type": "llmlingua2", "rate": 0.5}
+
+    proxy.record_compression("sess-xyz", 200, 120, 95.5)
+
+    row = conn.execute("SELECT * FROM compressions").fetchone()
+    assert row is not None
+    assert row["session_id"] == "sess-xyz"
+    assert row["original_tokens"] == 200
+    assert row["compressed_tokens"] == 120
+    assert row["latency_ms"] == 95.5
+    assert row["model"] == "llmlingua2"
+    assert proxy.stats["recent_compressions"][0]["latency_ms"] == 95.5
+    conn.close()
+
+
+def test_compress_text_records_latency(tmp_path, monkeypatch):
+    """Task 8: compress_text measures wall-clock latency and persists it via record_compression."""
+    from unittest.mock import MagicMock
+
+    for dep in ("llmlingua", "torch", "transformers"):
+        if dep not in sys.modules:
+            monkeypatch.setitem(sys.modules, dep, MagicMock())
+
+    monkeypatch.delitem(sys.modules, "llmlingua_proxy", raising=False)
+
+    import llmlingua_proxy as proxy
+    from llmlingua_proxy import init_db
+    from tests.conftest import make_mock_llmlingua
+
+    conn = init_db(str(tmp_path / "metrics.db"))
+    proxy._db_conn = conn
+    proxy.backend = {
+        "type": "llmlingua2",
+        "compressor": make_mock_llmlingua(),
+        "rate": 0.5,
+    }
+
+    proxy.compress_text("word " * 50, "sess-test")  # 250 chars → triggers compression
+
+    row = proxy._db_conn.execute("SELECT latency_ms FROM compressions").fetchone()
+    assert row is not None
+    assert row[0] >= 0
     conn.close()
