@@ -121,7 +121,8 @@ def load_stats_from_db(conn) -> None:
     )
 
 
-def _load_backend():
+def _load_llmlingua2_backend() -> dict:
+    """Load the LLMLingua-2 PromptCompressor and return a backend dict."""
     from llmlingua import PromptCompressor
     rate = float(os.environ.get("COMPRESS_RATE", "0.5"))
     model_name = os.environ.get(
@@ -138,6 +139,31 @@ def _load_backend():
     )
     print(f"Model ready. (device={device})")
     return {"type": "llmlingua2", "compressor": c, "rate": rate}
+
+
+def _load_kompress_backend() -> dict:
+    """Load the kompress backend (chopratejas/kompress-v2 on HuggingFace).
+
+    Architecture: ModernBERT-base + LoRA token classifier head.
+    Not publicly installable — install the private kompress package and update
+    this function before use.
+    """
+    raise RuntimeError(
+        "kompress backend (chopratejas/kompress) is not publicly installable. "
+        "Use COMPRESSOR_MODEL=llmlingua2 or install the private kompress package."
+    )
+
+
+def load_backend() -> dict:
+    """Dispatch to the configured backend loader based on COMPRESSOR_MODEL."""
+    model_name = os.environ.get("COMPRESSOR_MODEL", "llmlingua2")
+    if model_name == "kompress":
+        return _load_kompress_backend()
+    return _load_llmlingua2_backend()
+
+
+# Keep the private alias so existing call-sites (lifespan, tests) still work.
+_load_backend = load_backend
 
 
 # ---------------------------------------------------------------------------

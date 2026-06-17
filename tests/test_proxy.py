@@ -147,3 +147,35 @@ def test_compress_text_records_latency(tmp_path, monkeypatch):
     assert row is not None
     assert row[0] >= 0
     conn.close()
+
+
+def test_load_backend_llmlingua2(monkeypatch):
+    """Task 9: load_backend with COMPRESSOR_MODEL=llmlingua2 returns a valid backend dict."""
+    from unittest.mock import MagicMock
+
+    monkeypatch.setenv("COMPRESSOR_MODEL", "llmlingua2")
+    monkeypatch.setenv("COMPRESS_RATE", "0.4")
+
+    mock_cls = MagicMock()
+    mock_cls.return_value.compress_prompt.return_value = {
+        "compressed_prompt": "compressed x",
+        "origin_tokens": 10,
+        "compressed_tokens": 6,
+        "ratio": 0.6,
+    }
+
+    monkeypatch.setattr("llmlingua.PromptCompressor", mock_cls)
+    from llmlingua_proxy import load_backend
+    b = load_backend()
+    assert b["type"] == "llmlingua2"
+    assert b["rate"] == 0.4
+
+
+def test_load_backend_kompress_raises(monkeypatch):
+    """Task 9: load_backend with COMPRESSOR_MODEL=kompress raises RuntimeError."""
+    import pytest
+
+    monkeypatch.setenv("COMPRESSOR_MODEL", "kompress")
+    from llmlingua_proxy import load_backend
+    with pytest.raises(RuntimeError, match="kompress"):
+        load_backend()
