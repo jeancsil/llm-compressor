@@ -14,7 +14,6 @@ from llmlingua import PromptCompressor
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 ANTHROPIC_BASE    = "https://api.anthropic.com"
-STATS_FILE        = "stats.json"
 DB_PATH           = "metrics.db"
 COST_PER_MTOK     = float(os.environ.get("COST_PER_MTOK", "3.0"))
 
@@ -82,8 +81,43 @@ def migrate_from_json(conn, json_path: str = "stats.json") -> None:
         print(f"[migration] Failed, skipping: {e}")
 
 
-def load_stats_from_db(conn):
-    pass
+def load_stats_from_db(conn) -> None:
+    row = conn.execute(
+        "SELECT COUNT(*), COALESCE(SUM(original_tokens),0), COALESCE(SUM(compressed_tokens),0) FROM compressions"
+    ).fetchone()
+    stats["total_original_tokens"] = row[1]
+    stats["total_compressed_tokens"] = row[2]
+
+    for r in conn.execute(
+        "SELECT session_id, COUNT(*), SUM(original_tokens), SUM(compressed_tokens), MIN(ts), MAX(ts) FROM compressions GROUP BY session_id"
+    ):
+        stats["sessions"][r[0]] = {
+            "requests":          r[1],
+            "original_tokens":   r[2],
+            "compressed_tokens": r[3],
+            "first_seen":        r[4],
+            "last_seen":         r[5],
+            "name":              None,
+        }
+
+    for r in conn.execute(
+        "SELECT ts, session_id, original_tokens, compressed_tokens, latency_ms FROM compressions ORDER BY id DESC LIMIT 100"
+    ):
+        saved = r[2] - r[3]
+        stats["recent_compressions"].append({
+            "ts":         r[0][11:19],
+            "session_id": r[1][:8],
+            "original":   r[2],
+            "compressed": r[3],
+            "saved":      saved,
+            "latency_ms": r[4],
+        })
+
+    print(
+        f"[stats] Loaded from metrics.db: "
+        f"{stats['total_original_tokens']} original, {stats['total_compressed_tokens']} compressed, "
+        f"{len(stats['sessions'])} sessions"
+    )
 
 
 def _load_backend():
@@ -136,36 +170,6 @@ stats = {
     "recent_compressions": deque(maxlen=100),
 }
 
-def load_stats():
-    if not os.path.exists(STATS_FILE):
-        return
-    try:
-        with open(STATS_FILE) as f:
-            data = json.load(f)
-        stats["total_requests"]          = data.get("total_requests", 0)
-        stats["total_original_tokens"]   = data.get("total_original_tokens", 0)
-        stats["total_compressed_tokens"] = data.get("total_compressed_tokens", 0)
-        stats["sessions"]                = data.get("sessions", {})
-        stats["recent_compressions"]     = deque(data.get("recent_compressions", []), maxlen=100)
-        print(f"[stats] Loaded from {STATS_FILE}")
-    except Exception as e:
-        print(f"[stats] Could not load {STATS_FILE}: {e}")
-
-def save_stats():
-    try:
-        with open(STATS_FILE, "w") as f:
-            json.dump({
-                "total_requests":          stats["total_requests"],
-                "total_original_tokens":   stats["total_original_tokens"],
-                "total_compressed_tokens": stats["total_compressed_tokens"],
-                "sessions":                stats["sessions"],
-                "recent_compressions":     list(stats["recent_compressions"]),
-            }, f)
-    except Exception as e:
-        print(f"[stats] Could not save: {e}")
-
-load_stats()
-
 def record_compression(session_id: str, original: int, compressed: int):
     stats["total_original_tokens"] += original
     stats["total_compressed_tokens"] += compressed
@@ -187,7 +191,6 @@ def record_compression(session_id: str, original: int, compressed: int):
         "compressed": compressed,
         "saved": original - compressed,
     })
-    save_stats()
 
 def record_request(session_id: str, session_name: str | None = None):
     stats["total_requests"] += 1
@@ -202,7 +205,6 @@ def record_request(session_id: str, session_name: str | None = None):
     sess["last_seen"] = datetime.now().isoformat()
     if session_name:
         sess["name"] = session_name
-    save_stats()
 
 # ---------------------------------------------------------------------------
 # rtk integration (optional — gracefully absent when rtk not installed)

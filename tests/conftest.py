@@ -31,7 +31,7 @@ def make_mock_llmlingua() -> MagicMock:
 # client fixture
 #
 # Patches _load_backend so the heavy model never loads.  Uses a temp SQLite
-# DB and temp STATS_FILE so all I/O is hermetic.
+# DB so all I/O is hermetic.
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
@@ -58,9 +58,8 @@ def client(tmp_path, monkeypatch):
     mock_backend = {"type": "llmlingua2", "compressor": mock_compressor, "rate": 0.5}
     monkeypatch.setattr(proxy, "_load_backend", lambda: mock_backend)
 
-    # Redirect DB_PATH and STATS_FILE to temp paths
+    # Redirect DB_PATH to temp path
     monkeypatch.setattr(proxy, "DB_PATH", str(tmp_path / "test_metrics.db"))
-    monkeypatch.setattr(proxy, "STATS_FILE", str(tmp_path / "test_stats.json"))
 
     with TestClient(proxy.app) as c:
         yield c

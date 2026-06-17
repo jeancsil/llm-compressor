@@ -64,3 +64,28 @@ def test_migrate_no_json(tmp_path):
     conn = init_db(str(tmp_path / "metrics.db"))
     migrate_from_json(conn, json_path=str(tmp_path / "nonexistent.json"))
     conn.close()
+
+
+def test_load_stats_from_db(tmp_path):
+    from llmlingua_proxy import init_db, load_stats_from_db, stats
+    conn = init_db(str(tmp_path / "metrics.db"))
+    conn.executemany(
+        "INSERT INTO compressions (ts, session_id, model, original_tokens, compressed_tokens, latency_ms) VALUES (?,?,?,?,?,?)",
+        [
+            ("2026-06-14T10:00:00", "aaa", "llmlingua2", 200, 140, 10.0),
+            ("2026-06-14T10:01:00", "aaa", "llmlingua2", 150, 110, 12.0),
+            ("2026-06-14T10:02:00", "bbb", "llmlingua2", 300, 210, 9.0),
+        ],
+    )
+    conn.commit()
+    stats["total_original_tokens"] = 0
+    stats["total_compressed_tokens"] = 0
+    stats["sessions"] = {}
+    stats["recent_compressions"] = deque(maxlen=100)
+    load_stats_from_db(conn)
+    assert stats["total_original_tokens"] == 650
+    assert stats["total_compressed_tokens"] == 460
+    assert "aaa" in stats["sessions"]
+    assert stats["sessions"]["aaa"]["original_tokens"] == 350
+    assert len(stats["recent_compressions"]) == 3
+    conn.close()
