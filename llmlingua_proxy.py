@@ -5,25 +5,77 @@ import sqlite3
 import httpx
 import uvicorn
 from collections import deque
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse, JSONResponse, HTMLResponse
 from llmlingua import PromptCompressor
 
-app = FastAPI()
-
-print("Loading LLMLingua-2 model...")
-compressor = PromptCompressor(
-    model_name="microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank",
-    use_llmlingua2=True,
-    device_map="mps",
-)
-print("Model ready.")
-
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 ANTHROPIC_BASE    = "https://api.anthropic.com"
 STATS_FILE        = "stats.json"
+DB_PATH           = "metrics.db"
+COST_PER_MTOK     = float(os.environ.get("COST_PER_MTOK", "3.0"))
+
+# Module-level globals populated by lifespan
+backend   = None
+_db_conn  = None
+
+
+# ---------------------------------------------------------------------------
+# Stub helpers (replaced in later tasks)
+# ---------------------------------------------------------------------------
+
+def init_db(path: str):
+    import sqlite3
+    return sqlite3.connect(path)
+
+
+def migrate_from_json(conn, stats_file="stats.json"):
+    pass
+
+
+def load_stats_from_db(conn):
+    pass
+
+
+def _load_backend():
+    from llmlingua import PromptCompressor
+    rate = float(os.environ.get("COMPRESS_RATE", "0.5"))
+    model_name = os.environ.get(
+        "COMPRESSOR_MODEL",
+        "microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank",
+    )
+    import torch
+    device = "mps" if torch.backends.mps.is_available() else "cpu"
+    print("Loading LLMLingua-2 model...")
+    c = PromptCompressor(
+        model_name=model_name,
+        use_llmlingua2=True,
+        device_map=device,
+    )
+    print(f"Model ready. (device={device})")
+    return {"type": "llmlingua2", "compressor": c, "rate": rate}
+
+
+# ---------------------------------------------------------------------------
+# Lifespan
+# ---------------------------------------------------------------------------
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global backend, _db_conn
+    _db_conn = init_db(DB_PATH)
+    migrate_from_json(_db_conn)
+    load_stats_from_db(_db_conn)
+    backend = _load_backend()
+    yield
+    if _db_conn:
+        _db_conn.close()
+
+
+app = FastAPI(lifespan=lifespan)
 
 # ---------------------------------------------------------------------------
 # Stats
@@ -163,10 +215,12 @@ def read_rtk_stats() -> dict | None:
 def compress_text(text: str, session_id: str) -> str:
     if len(text) <= 200:
         return text
+    if backend is None:
+        return text
     try:
-        result = compressor.compress_prompt(
+        result = backend["compressor"].compress_prompt(
             text,
-            rate=0.5,
+            rate=backend["rate"],
             force_tokens=['\n', '?', '.', '!'],
         )
     except Exception as e:
