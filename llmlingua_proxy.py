@@ -49,8 +49,37 @@ def init_db(path: str):
     return conn
 
 
-def migrate_from_json(conn, stats_file="stats.json"):
-    pass
+def migrate_from_json(conn, json_path: str = "stats.json") -> None:
+    path = Path(json_path)
+    if not path.exists():
+        return
+    existing = conn.execute("SELECT COUNT(*) FROM compressions").fetchone()[0]
+    if existing:
+        return
+    try:
+        import shutil
+        data = json.loads(path.read_text())
+        rows = data.get("recent_compressions", [])
+        bak = path.with_suffix(".json.bak")
+        shutil.copy2(path, bak)
+        print(f"[migration] Backed {path} → {bak}")
+        conn.executemany(
+            "INSERT INTO compressions (ts, session_id, model, original_tokens, compressed_tokens, latency_ms) VALUES (?,?,'llmlingua2',?,?,0.0)",
+            [
+                (
+                    datetime.now().strftime("%Y-%m-%dT%H:%M:%S") if not r.get("ts") else r["ts"],
+                    r.get("session_id", ""),
+                    r.get("original", 0),
+                    r.get("compressed", 0),
+                )
+                for r in rows
+            ],
+        )
+        conn.commit()
+        count = conn.execute("SELECT COUNT(*) FROM compressions").fetchone()[0]
+        print(f"[migration] Imported {count} rows {path} → metrics.db. Backup {bak}.")
+    except Exception as e:
+        print(f"[migration] Failed, skipping: {e}")
 
 
 def load_stats_from_db(conn):
