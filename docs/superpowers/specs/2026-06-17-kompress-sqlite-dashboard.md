@@ -87,6 +87,19 @@ CREATE TABLE IF NOT EXISTS compressions (
 
 Every call to `compress_text` that succeeds writes one row. Failures (where original is returned) are not written.
 
+### Migration from stats.json
+
+Run once on startup, before anything else, if `stats.json` exists and `metrics.db` does not yet contain any rows:
+
+1. **Backup** — copy `stats.json` to `stats.json.bak` in the same directory. Log the path.
+2. **Import** — `stats.json` contains `recent_compressions` (up to 100 entries) with `ts`, `session_id`, `original`, `compressed`. Write each entry as a row in `compressions`, using `model=llmlingua2` (since all historic data predates kompress support) and `latency_ms=0.0` (not recorded historically).
+3. **Verify** — after import, query `SELECT COUNT(*) FROM compressions` and assert it equals `len(recent_compressions)` from the JSON. Log the result:
+   ```
+   [migration] Imported 87 rows from stats.json → metrics.db. Backup at stats.json.bak.
+   ```
+4. If `stats.json` exists and `metrics.db` already has rows, skip migration entirely (idempotent).
+5. If import fails for any reason, log the error and continue — the proxy must still start.
+
 ### Aggregation
 
 - In-memory `stats` dict stays for fast reads (total counts, recent compressions deque).
@@ -95,7 +108,7 @@ Every call to `compress_text` that succeeds writes one row. Failures (where orig
   SELECT COUNT(*), SUM(original_tokens), SUM(compressed_tokens) FROM compressions
   ```
 - Session aggregates are also rebuilt from SQLite on startup.
-- `stats.json` is no longer written or read. Remove that code.
+- `stats.json` is no longer written or read after migration. Remove the `save_stats()` / `load_stats()` functions.
 
 ### New API endpoint: `/stats/timeseries`
 
@@ -195,6 +208,9 @@ No new files needed. No new CLI commands. No Docker.
 - [ ] `GET /stats` includes `compressor` field and `cost_per_mtok`
 - [ ] `GET /stats/timeseries` returns hourly buckets, empty array on fresh start
 - [ ] `metrics.db` is created on first run; totals survive a restart
+- [ ] On first run with existing `stats.json`: `stats.json.bak` is created, all `recent_compressions` entries are imported into `metrics.db`, row count matches, migration log line printed
+- [ ] On second run: migration is skipped (idempotent), no duplicate rows
+- [ ] If `stats.json` is absent: startup proceeds normally with empty DB
 - [ ] Dashboard shows model badge in header
 - [ ] Dashboard shows time-series section (empty bars on fresh start, fills in after compressions)
 - [ ] Dashboard sparkline tooltips include latency
