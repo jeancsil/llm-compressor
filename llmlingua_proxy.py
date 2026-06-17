@@ -389,6 +389,25 @@ async def get_stats():
     for sid, s in stats["sessions"].items():
         sv = s["original_tokens"] - s["compressed_tokens"]
         sessions_out[sid] = {**s, "saved_tokens": sv}
+
+    recent = list(stats["recent_compressions"])
+    avg_latency = (
+        sum(c["latency_ms"] for c in recent) / len(recent) if recent else 0.0
+    )
+
+    if backend and backend.get("type") == "kompress":
+        compressor_info = {
+            "model": "kompress",
+            "param_name": "threshold",
+            "param_value": backend.get("threshold", 0.5),
+        }
+    else:
+        compressor_info = {
+            "model": "llmlingua2",
+            "param_name": "rate",
+            "param_value": backend.get("rate", 0.5) if backend else 0.5,
+        }
+
     return {
         "started_at": stats["started_at"],
         "total_requests": stats["total_requests"],
@@ -397,9 +416,32 @@ async def get_stats():
         "total_saved_tokens": saved,
         "overall_ratio": round(ratio, 2),
         "sessions": sessions_out,
-        "recent_compressions": list(stats["recent_compressions"]),
+        "recent_compressions": recent,
         "rtk": read_rtk_stats(),
+        "compressor": compressor_info,
+        "cost_per_mtok": COST_PER_MTOK,
+        "avg_latency_ms": round(avg_latency, 1),
     }
+
+
+@app.get("/stats/timeseries")
+async def get_timeseries():
+    if _db_conn is None:
+        return JSONResponse([])
+    rows = _db_conn.execute(
+        """
+        SELECT strftime('%Y-%m-%dT%H:00:00', ts) AS hour,
+               COUNT(*) AS requests,
+               ROUND(AVG((original_tokens - compressed_tokens) * 100.0 / original_tokens), 1) AS avg_savings_pct,
+               SUM(original_tokens - compressed_tokens) AS total_saved,
+               ROUND(AVG(latency_ms), 1) AS avg_latency_ms
+        FROM compressions
+        WHERE ts >= datetime('now', '-48 hours')
+        GROUP BY hour
+        ORDER BY hour
+        """
+    ).fetchall()
+    return JSONResponse([dict(r) for r in rows])
 
 
 @app.get("/dashboard", response_class=HTMLResponse)

@@ -179,3 +179,77 @@ def test_load_backend_kompress_raises(monkeypatch):
     from llmlingua_proxy import load_backend
     with pytest.raises(RuntimeError, match="kompress"):
         load_backend()
+
+
+def test_timeseries_empty(client):
+    """Task 10: /stats/timeseries returns [] when there are no rows in the DB."""
+    r = client.get("/stats/timeseries")
+    assert r.status_code == 200
+    assert r.json() == []
+
+
+def test_timeseries_structure(tmp_path, monkeypatch):
+    """Task 10: /stats/timeseries returns hourly buckets with required keys."""
+    from unittest.mock import MagicMock
+    from datetime import datetime, timedelta
+
+    for dep in ("llmlingua", "torch", "transformers"):
+        if dep not in sys.modules:
+            monkeypatch.setitem(sys.modules, dep, MagicMock())
+
+    monkeypatch.delitem(sys.modules, "llmlingua_proxy", raising=False)
+
+    import llmlingua_proxy as proxy
+    from llmlingua_proxy import init_db
+    from tests.conftest import make_mock_llmlingua
+
+    conn = init_db(str(tmp_path / "metrics.db"))
+
+    now = datetime.utcnow()
+    conn.executemany(
+        "INSERT INTO compressions (ts, session_id, model, original_tokens, compressed_tokens, latency_ms) VALUES (?,?,?,?,?,?)",
+        [
+            (
+                (now - timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%S"),
+                "sess1", "llmlingua2", 200, 120, 100.0,
+            ),
+            (
+                (now - timedelta(minutes=20)).strftime("%Y-%m-%dT%H:%M:%S"),
+                "sess2", "llmlingua2", 300, 180, 200.0,
+            ),
+        ],
+    )
+    conn.commit()
+
+    monkeypatch.setattr(proxy, "_db_conn", conn)
+    monkeypatch.setattr(proxy, "backend", {"type": "llmlingua2", "rate": 0.5})
+    monkeypatch.setattr(proxy, "_load_backend", lambda: {"type": "llmlingua2", "rate": 0.5})
+    monkeypatch.setattr(proxy, "DB_PATH", str(tmp_path / "metrics.db"))
+
+    from starlette.testclient import TestClient
+    with TestClient(proxy.app) as c:
+        r = c.get("/stats/timeseries")
+
+    assert r.status_code == 200
+    data = r.json()
+    assert isinstance(data, list)
+    assert len(data) >= 1
+    bucket = data[0]
+    for key in ("hour", "requests", "avg_savings_pct", "avg_latency_ms", "total_saved"):
+        assert key in bucket, f"missing key: {key}"
+
+    conn.close()
+
+
+def test_stats_includes_compressor_cost(client):
+    """Task 11: /stats returns compressor info and cost_per_mtok and avg_latency_ms."""
+    r = client.get("/stats")
+    assert r.status_code == 200
+    d = r.json()
+    assert "compressor" in d
+    assert d["compressor"]["model"] == "llmlingua2"
+    assert d["compressor"]["param_name"] == "rate"
+    assert d["compressor"]["param_value"] == 0.5
+    assert "cost_per_mtok" in d
+    assert d["cost_per_mtok"] == 3.0
+    assert "avg_latency_ms" in d

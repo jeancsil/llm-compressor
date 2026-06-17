@@ -61,5 +61,8 @@ def client(tmp_path, monkeypatch):
     # Redirect DB_PATH to temp path
     monkeypatch.setattr(proxy, "DB_PATH", str(tmp_path / "test_metrics.db"))
 
+    # Suppress JSON migration so the test DB stays empty
+    monkeypatch.setattr(proxy, "migrate_from_json", lambda conn, json_path="stats.json": None)
+
     with TestClient(proxy.app) as c:
         yield c
