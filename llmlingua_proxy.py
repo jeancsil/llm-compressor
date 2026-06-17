@@ -45,6 +45,9 @@ def init_db(path: str):
         """
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_ts ON compressions(ts)")
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)"
+    )
     conn.commit()
     return conn
 
@@ -82,10 +85,60 @@ def migrate_from_json(conn, json_path: str = "stats.json") -> None:
         print(f"[migration] Failed, skipping: {e}")
 
 
+def recover_stats_from_backup(conn, bak_path: str = "stats.json.bak") -> None:
+    """Import full session history from stats.json.bak.
+
+    The initial migration only captured recent_compressions (≤100 rows). This inserts
+    one residual synthetic row per session for the token delta not yet in the DB,
+    then stores a legacy_request_offset so load_stats_from_db produces the correct total.
+    """
+    path = Path(bak_path)
+    if not path.exists():
+        return
+    if conn.execute("SELECT value FROM meta WHERE key='backup_recovered'").fetchone():
+        return
+    try:
+        data = json.loads(path.read_text())
+        sessions = data.get("sessions", {})
+        rows_inserted = 0
+        for session_id, sess in sessions.items():
+            existing = conn.execute(
+                "SELECT COALESCE(SUM(original_tokens),0), COALESCE(SUM(compressed_tokens),0) "
+                "FROM compressions WHERE session_id=?",
+                (session_id,),
+            ).fetchone()
+            remaining_orig = int(sess.get("original_tokens", 0)) - int(existing[0])
+            remaining_comp = int(sess.get("compressed_tokens", 0)) - int(existing[1])
+            if remaining_orig > 0:
+                ts = (sess.get("last_seen") or sess.get("first_seen") or datetime.now().isoformat())[:19]
+                conn.execute(
+                    "INSERT INTO compressions (ts, session_id, model, original_tokens, compressed_tokens, latency_ms) "
+                    "VALUES (?,?,'llmlingua2',?,?,0.0)",
+                    (ts, session_id, remaining_orig, max(0, remaining_comp)),
+                )
+                rows_inserted += 1
+
+        db_rows = conn.execute("SELECT COUNT(*) FROM compressions").fetchone()[0]
+        total_requests = int(data.get("total_requests", 0))
+        legacy_offset = max(0, total_requests - db_rows)
+        conn.execute("INSERT OR REPLACE INTO meta VALUES ('legacy_request_offset', ?)", (str(legacy_offset),))
+        conn.execute("INSERT OR REPLACE INTO meta VALUES ('backup_recovered', '1')")
+        conn.commit()
+        print(f"[recovery] {rows_inserted} synthetic rows from {bak_path}. Request offset: {legacy_offset}.")
+    except Exception as e:
+        print(f"[recovery] Failed: {e}")
+
+
 def load_stats_from_db(conn) -> None:
     row = conn.execute(
         "SELECT COUNT(*), COALESCE(SUM(original_tokens),0), COALESCE(SUM(compressed_tokens),0) FROM compressions"
     ).fetchone()
+    try:
+        offset_row = conn.execute("SELECT value FROM meta WHERE key='legacy_request_offset'").fetchone()
+        legacy_offset = int(offset_row[0]) if offset_row else 0
+    except Exception:
+        legacy_offset = 0
+    stats["total_requests"] = row[0] + legacy_offset
     stats["total_original_tokens"] = row[1]
     stats["total_compressed_tokens"] = row[2]
 
@@ -175,6 +228,7 @@ async def lifespan(app: FastAPI):
     global backend, _db_conn
     _db_conn = init_db(DB_PATH)
     migrate_from_json(_db_conn)
+    recover_stats_from_backup(_db_conn)
     load_stats_from_db(_db_conn)
     backend = _load_backend()
     yield

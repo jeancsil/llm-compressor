@@ -92,6 +92,45 @@ def test_load_stats_from_db(tmp_path):
     conn.close()
 
 
+def test_recover_stats_from_backup(tmp_path):
+    from collections import deque
+    from llmlingua_proxy import init_db, migrate_from_json, recover_stats_from_backup, load_stats_from_db, stats
+
+    stats_json = tmp_path / "stats.json"
+    stats_json.write_text(json.dumps({
+        "total_requests": 50,
+        "total_original_tokens": 5000,
+        "total_compressed_tokens": 3000,
+        "sessions": {
+            "sess-a": {"requests": 30, "original_tokens": 3000, "compressed_tokens": 1800,
+                       "first_seen": "2026-06-01T10:00:00", "last_seen": "2026-06-10T10:00:00"},
+            "sess-b": {"requests": 20, "original_tokens": 2000, "compressed_tokens": 1200,
+                       "first_seen": "2026-06-01T11:00:00", "last_seen": "2026-06-10T11:00:00"},
+        },
+        "recent_compressions": [
+            {"ts": "10:00:00", "session_id": "sess-a", "original": 100, "compressed": 60, "saved": 40},
+        ],
+    }))
+    conn = init_db(str(tmp_path / "metrics.db"))
+    migrate_from_json(conn, json_path=str(stats_json))
+    bak = tmp_path / "stats.json.bak"
+
+    stats["total_requests"] = 0
+    stats["total_original_tokens"] = 0
+    stats["total_compressed_tokens"] = 0
+    stats["sessions"] = {}
+    stats["recent_compressions"] = deque(maxlen=100)
+
+    recover_stats_from_backup(conn, bak_path=str(bak))
+    recover_stats_from_backup(conn, bak_path=str(bak))  # idempotent
+
+    load_stats_from_db(conn)
+    assert stats["total_original_tokens"] == 5000
+    assert stats["total_compressed_tokens"] == 3000
+    assert stats["total_requests"] == 50
+    conn.close()
+
+
 def test_record_compression_writes_to_db(tmp_path):
     """Task 7: record_compression writes a row to SQLite including latency_ms."""
     for dep in ("llmlingua", "torch", "transformers"):
