@@ -374,7 +374,8 @@ def compress_text(text: str, session_id: str) -> str:
         print(f"[compressor] compression failed, forwarding original: {e}")
         return text
     latency_ms = (time.perf_counter() - t0) * 1000
-    print(f"[LLMLingua-2] {orig} → {comp} tokens [{session_id[:8]}]")
+    model_tag = backend.get("type", "compressor") if backend else "compressor"
+    print(f"[{model_tag}] {orig} → {comp} tokens [{session_id[:8]}]")
     record_compression(session_id, orig, comp, latency_ms)
     return compressed
 
