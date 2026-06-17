@@ -195,16 +195,26 @@ def _load_llmlingua2_backend() -> dict:
 
 
 def _load_kompress_backend() -> dict:
-    """Load the kompress backend (chopratejas/kompress-v2 on HuggingFace).
+    """Load chopratejas/kompress-v2-base via headroom-ai[ml].
 
-    Architecture: ModernBERT-base + LoRA token classifier head.
-    Not publicly installable — install the private kompress package and update
-    this function before use.
+    Auto mode tries ONNX CPU first (not in public HF repo, will skip) then
+    falls back to PyTorch on MPS/CPU using model.safetensors (~600 MB).
     """
-    raise RuntimeError(
-        "kompress backend (chopratejas/kompress) is not publicly installable. "
-        "Use COMPRESSOR_MODEL=llmlingua2 or install the private kompress package."
-    )
+    try:
+        from headroom.transforms.kompress_compressor import KompressCompressor, KompressConfig
+    except ImportError:
+        raise RuntimeError(
+            "headroom-ai[ml] is not installed. Run: pip install 'headroom-ai[ml]'"
+        )
+    import torch
+    device = "mps" if torch.backends.mps.is_available() else "cpu"
+    threshold = float(os.environ.get("COMPRESS_THRESHOLD", "0.5"))
+    print(f"Loading kompress-v2-base (device={device}, threshold={threshold})...")
+    config = KompressConfig(device=device, score_threshold=threshold)
+    compressor = KompressCompressor(config=config)
+    compressor.preload()
+    print(f"kompress-v2-base ready.")
+    return {"type": "kompress", "compressor": compressor, "threshold": threshold}
 
 
 def load_backend() -> dict:
@@ -386,11 +396,8 @@ def _compress_llmlingua2(text: str):
 
 
 def _compress_kompress(text: str):
-    """Stub for chopratejas/kompress backend (not yet on PyPI)."""
-    raise RuntimeError(
-        "kompress backend (chopratejas/kompress) is not installed. "
-        "Set COMPRESSOR_MODEL=llmlingua2 or install the kompress ML library."
-    )
+    result = backend["compressor"].compress(text)
+    return result.compressed, result.original_tokens, result.compressed_tokens
 
 def compress_messages(messages: list, session_id: str) -> list:
     out = []

@@ -210,14 +210,20 @@ def test_load_backend_llmlingua2(monkeypatch):
     assert b["rate"] == 0.4
 
 
-def test_load_backend_kompress_raises(monkeypatch):
-    """Task 9: load_backend with COMPRESSOR_MODEL=kompress raises RuntimeError."""
+def test_load_backend_kompress_raises_without_package(monkeypatch):
+    """load_backend with COMPRESSOR_MODEL=kompress raises RuntimeError when headroom-ai is absent."""
     import pytest
+    import unittest.mock as mock
 
     monkeypatch.setenv("COMPRESSOR_MODEL", "kompress")
-    from llmlingua_proxy import load_backend
-    with pytest.raises(RuntimeError, match="kompress"):
-        load_backend()
+    monkeypatch.delitem(sys.modules, "llmlingua_proxy", raising=False)
+
+    with mock.patch.dict(sys.modules, {"headroom": None, "headroom.transforms": None,
+                                        "headroom.transforms.kompress_compressor": None}):
+        import llmlingua_proxy as proxy
+        monkeypatch.setattr(proxy, "_load_backend", proxy.load_backend)
+        with pytest.raises((RuntimeError, ImportError)):
+            proxy._load_kompress_backend()
 
 
 def test_timeseries_empty(client):
