@@ -175,24 +175,28 @@ def load_stats_from_db(conn) -> None:
     )
 
 
+LLMLINGUA2_MODELS = {
+    "llmlingua2": "microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank",
+    "llmlingua2-large": "microsoft/llmlingua-2-xlm-roberta-large-meetingbank",
+}
+
+
 def _load_llmlingua2_backend() -> dict:
     """Load the LLMLingua-2 PromptCompressor and return a backend dict."""
     from llmlingua import PromptCompressor
     rate = float(os.environ.get("COMPRESS_RATE", "0.5"))
-    model_name = os.environ.get(
-        "COMPRESSOR_MODEL",
-        "microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank",
-    )
+    backend_key = os.environ.get("COMPRESSOR_MODEL", "llmlingua2")
+    model_name = LLMLINGUA2_MODELS.get(backend_key, LLMLINGUA2_MODELS["llmlingua2"])
     import torch
     device = "mps" if torch.backends.mps.is_available() else "cpu"
-    print("Loading LLMLingua-2 model...")
+    print(f"Loading LLMLingua-2 model ({backend_key}: {model_name})...")
     c = PromptCompressor(
         model_name=model_name,
         use_llmlingua2=True,
         device_map=device,
     )
     print(f"Model ready. (device={device})")
-    return {"type": "llmlingua2", "compressor": c, "rate": rate}
+    return {"type": "llmlingua2", "backend_key": backend_key, "compressor": c, "rate": rate}
 
 
 def _load_kompress_backend() -> dict:
@@ -543,8 +547,9 @@ async def get_stats():
             "param_value": backend.get("threshold", 0.5),
         }
     else:
+        backend_key = backend.get("backend_key", "llmlingua2") if backend else "llmlingua2"
         compressor_info = {
-            "model": "llmlingua2",
+            "model": backend_key,
             "param_name": "rate",
             "param_value": backend.get("rate", 0.5) if backend else 0.5,
         }

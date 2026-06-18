@@ -385,3 +385,25 @@ def test_compress_llmlingua2_multi_chunk(monkeypatch):
     # Token counts should be aggregated across both chunks
     assert orig_tokens == MOCK_COMPRESS_RESULT["origin_tokens"] * 2       # 100 * 2
     assert comp_tokens == MOCK_COMPRESS_RESULT["compressed_tokens"] * 2   # 60 * 2
+
+
+def test_load_backend_llmlingua2_large(monkeypatch):
+    """Task 3: load_backend with COMPRESSOR_MODEL=llmlingua2-large returns a valid backend dict."""
+    from unittest.mock import MagicMock
+
+    monkeypatch.setenv("COMPRESSOR_MODEL", "llmlingua2-large")
+    monkeypatch.setenv("COMPRESS_RATE", "0.45")
+
+    mock_cls = MagicMock()
+    mock_cls.return_value.compress_prompt.return_value = {
+        "compressed_prompt": "compressed x",
+        "origin_tokens": 10,
+        "compressed_tokens": 6,
+        "ratio": 0.6,
+    }
+
+    monkeypatch.setattr("llmlingua.PromptCompressor", mock_cls)
+    from llmlingua_proxy import load_backend
+    b = load_backend()
+    assert b["type"] == "llmlingua2"
+    assert b["rate"] == 0.45
