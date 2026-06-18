@@ -622,22 +622,38 @@ async def get_stats():
 
 
 @app.get("/stats/timeseries")
-async def get_timeseries():
+async def get_timeseries(model: str | None = None):
     if _db_conn is None:
         return JSONResponse([])
-    rows = _db_conn.execute(
-        """
-        SELECT strftime('%Y-%m-%dT%H:00:00', ts) AS hour,
-               COUNT(*) AS requests,
-               ROUND(AVG((original_tokens - compressed_tokens) * 100.0 / original_tokens), 1) AS avg_savings_pct,
-               SUM(original_tokens - compressed_tokens) AS total_saved,
-               ROUND(AVG(latency_ms), 1) AS avg_latency_ms
-        FROM compressions
-        WHERE ts >= datetime('now', '-48 hours')
-        GROUP BY hour
-        ORDER BY hour
-        """
-    ).fetchall()
+    if model:
+        rows = _db_conn.execute(
+            """
+            SELECT strftime('%Y-%m-%dT%H:00:00', ts) AS hour,
+                   COUNT(*) AS requests,
+                   ROUND(AVG((original_tokens - compressed_tokens) * 100.0 / original_tokens), 1) AS avg_savings_pct,
+                   SUM(original_tokens - compressed_tokens) AS total_saved,
+                   ROUND(AVG(latency_ms), 1) AS avg_latency_ms
+            FROM compressions
+            WHERE ts >= datetime('now', '-48 hours') AND model = ?
+            GROUP BY hour
+            ORDER BY hour
+            """,
+            (model,),
+        ).fetchall()
+    else:
+        rows = _db_conn.execute(
+            """
+            SELECT strftime('%Y-%m-%dT%H:00:00', ts) AS hour,
+                   COUNT(*) AS requests,
+                   ROUND(AVG((original_tokens - compressed_tokens) * 100.0 / original_tokens), 1) AS avg_savings_pct,
+                   SUM(original_tokens - compressed_tokens) AS total_saved,
+                   ROUND(AVG(latency_ms), 1) AS avg_latency_ms
+            FROM compressions
+            WHERE ts >= datetime('now', '-48 hours')
+            GROUP BY hour
+            ORDER BY hour
+            """
+        ).fetchall()
     return JSONResponse([dict(r) for r in rows])
 
 
@@ -1028,11 +1044,14 @@ function ratioBadgeStyle(ratio) {
   return 'background:#1c2128;color:#8b949e';
 }
 
+let _prevLoading = false;
+
 async function switchModel(model) {
   const sel = document.getElementById('model_select');
   const lbl = document.getElementById('model_loading');
   sel.disabled = true;
   lbl.style.display = 'inline';
+  _prevLoading = true;
   try {
     await fetch('/admin/set-model', {
       method: 'POST',
@@ -1040,7 +1059,6 @@ async function switchModel(model) {
       body: JSON.stringify({ model }),
     });
   } catch(e) { console.error(e); }
-  // refresh will re-sync the UI once stats reflect the loading state
 }
 
 async function refresh() {
@@ -1110,12 +1128,14 @@ async function refresh() {
         sel.disabled = true;
         lbl.style.display = 'inline';
         document.getElementById('model_badge').textContent = c.model + ' · loading…';
+        _prevLoading = true;
       } else {
         sel.value = c.model;
         sel.disabled = false;
         lbl.style.display = 'none';
         document.getElementById('model_badge').textContent =
           c.model + (c.param_name ? ' · ' + c.param_name + '=' + c.param_value : '');
+        if (_prevLoading) { _prevLoading = false; refreshTimeseries(); }
       }
     }
 
@@ -1219,7 +1239,9 @@ async function refresh() {
 
 async function refreshTimeseries() {
   try {
-    const r = await fetch('/stats/timeseries');
+    const sel = document.getElementById('model_select');
+    const model = sel ? sel.value : '';
+    const r = await fetch('/stats/timeseries' + (model ? '?model=' + encodeURIComponent(model) : ''));
     const buckets = await r.json();
     const chartEl = document.getElementById('ts_chart');
     const labelsEl = document.getElementById('ts_labels');
@@ -1244,7 +1266,7 @@ async function refreshTimeseries() {
 refresh();
 refreshTimeseries();
 setInterval(refresh, 2000);
-setInterval(refreshTimeseries, 60000);
+setInterval(refreshTimeseries, 10000);
 </script>
 </body>
 </html>"""
