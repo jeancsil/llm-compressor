@@ -554,6 +554,22 @@ async def get_stats():
             "param_value": backend.get("rate", 0.5) if backend else 0.5,
         }
 
+    by_model: list = []
+    if _db_conn is not None:
+        rows = _db_conn.execute(
+            """
+            SELECT model,
+                   COUNT(*) AS requests,
+                   ROUND(AVG((original_tokens - compressed_tokens) * 100.0 / original_tokens), 1) AS avg_savings_pct,
+                   ROUND(AVG(CAST(original_tokens AS REAL) / NULLIF(compressed_tokens, 0)), 2) AS avg_ratio,
+                   SUM(original_tokens - compressed_tokens) AS total_saved
+            FROM compressions
+            GROUP BY model
+            ORDER BY requests DESC
+            """
+        ).fetchall()
+        by_model = [dict(r) for r in rows]
+
     return {
         "started_at": stats["started_at"],
         "total_requests": stats["total_requests"],
@@ -567,6 +583,7 @@ async def get_stats():
         "compressor": compressor_info,
         "cost_per_mtok": COST_PER_MTOK,
         "avg_latency_ms": round(avg_latency, 1),
+        "by_model": by_model,
     }
 
 

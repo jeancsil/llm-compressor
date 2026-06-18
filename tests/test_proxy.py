@@ -300,6 +300,52 @@ def test_stats_includes_compressor_cost(client):
     assert "avg_latency_ms" in d
 
 
+def test_stats_by_model(tmp_path, monkeypatch):
+    """Task 4: /stats returns by_model with per-model aggregated compression stats."""
+    from unittest.mock import MagicMock
+
+    for dep in ("llmlingua", "torch", "transformers"):
+        if dep not in sys.modules:
+            monkeypatch.setitem(sys.modules, dep, MagicMock())
+
+    monkeypatch.delitem(sys.modules, "llmlingua_proxy", raising=False)
+
+    import llmlingua_proxy as proxy
+    from llmlingua_proxy import init_db
+
+    db_path = str(tmp_path / "metrics.db")
+    monkeypatch.setattr(proxy, "DB_PATH", db_path)
+    conn = init_db(db_path)
+    conn.executemany(
+        "INSERT INTO compressions (ts, session_id, model, original_tokens, compressed_tokens, latency_ms) VALUES (?,?,?,?,?,?)",
+        [
+            ("2026-01-01T10:00:00", "s1", "llmlingua2", 200, 100, 10.0),
+            ("2026-01-01T10:01:00", "s2", "llmlingua2", 300, 150, 12.0),
+            ("2026-01-01T10:02:00", "s3", "llmlingua2-large", 400, 160, 20.0),
+        ],
+    )
+    conn.commit()
+    conn.close()
+
+    mock_backend = {"type": "llmlingua2", "rate": 0.5}
+    monkeypatch.setattr(proxy, "_load_backend", lambda: mock_backend)
+    monkeypatch.setattr(proxy, "migrate_from_json", lambda conn, json_path="stats.json": None)
+    monkeypatch.setattr(proxy, "recover_stats_from_backup", lambda conn, bak_path="stats.json.bak": None)
+
+    with TestClient(proxy.app) as c:
+        r = c.get("/stats")
+
+    assert r.status_code == 200
+    d = r.json()
+    assert "by_model" in d
+    models = {m["model"]: m for m in d["by_model"]}
+    assert "llmlingua2" in models
+    assert "llmlingua2-large" in models
+    assert models["llmlingua2"]["requests"] == 2
+    assert models["llmlingua2-large"]["requests"] == 1
+    assert models["llmlingua2"]["avg_savings_pct"] == 50.0
+
+
 def test_no_utcnow_in_source():
     """Task 1: Verify that datetime.utcnow is not used in llmlingua_proxy.py."""
     from pathlib import Path
