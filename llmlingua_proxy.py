@@ -589,20 +589,89 @@ async def get_stats():
         }
 
     by_model: list = []
+    today_stats: dict = {"requests": 0, "tokens_saved": 0, "avg_savings_pct": 0.0, "avg_latency_ms": 0.0, "sessions": 0}
+    alltime_stats: dict = {"requests": 0, "tokens_saved": 0, "avg_savings_pct": 0.0, "avg_latency_ms": 0.0, "sessions": 0}
+    recent_rows: list = []
+
     if _db_conn is not None:
-        rows = _db_conn.execute(
+        by_model_rows = _db_conn.execute(
             """
             SELECT model,
                    COUNT(*) AS requests,
                    ROUND(AVG((original_tokens - compressed_tokens) * 100.0 / original_tokens), 1) AS avg_savings_pct,
                    ROUND(AVG(CAST(original_tokens AS REAL) / NULLIF(compressed_tokens, 0)), 2) AS avg_ratio,
-                   SUM(original_tokens - compressed_tokens) AS total_saved
+                   SUM(original_tokens - compressed_tokens) AS total_saved,
+                   ROUND(AVG(latency_ms), 1) AS avg_latency_ms
             FROM compressions
             GROUP BY model
             ORDER BY requests DESC
             """
         ).fetchall()
-        by_model = [dict(r) for r in rows]
+        by_model = [dict(r) for r in by_model_rows]
+
+        today_row = _db_conn.execute(
+            """
+            SELECT
+                COUNT(*) AS requests,
+                COALESCE(SUM(original_tokens - compressed_tokens), 0) AS tokens_saved,
+                ROUND(AVG((original_tokens - compressed_tokens) * 100.0 / original_tokens), 1) AS avg_savings_pct,
+                ROUND(AVG(latency_ms), 1) AS avg_latency_ms,
+                COUNT(DISTINCT session_id) AS sessions
+            FROM compressions
+            WHERE date(ts) = date('now')
+            """
+        ).fetchone()
+        if today_row:
+            today_stats = {
+                "requests": today_row[0] or 0,
+                "tokens_saved": today_row[1] or 0,
+                "avg_savings_pct": today_row[2] or 0.0,
+                "avg_latency_ms": today_row[3] or 0.0,
+                "sessions": today_row[4] or 0,
+            }
+
+        alltime_row = _db_conn.execute(
+            """
+            SELECT
+                COUNT(*) AS requests,
+                COALESCE(SUM(original_tokens - compressed_tokens), 0) AS tokens_saved,
+                ROUND(AVG((original_tokens - compressed_tokens) * 100.0 / original_tokens), 1) AS avg_savings_pct,
+                ROUND(AVG(latency_ms), 1) AS avg_latency_ms,
+                COUNT(DISTINCT session_id) AS sessions
+            FROM compressions
+            """
+        ).fetchone()
+        if alltime_row:
+            alltime_stats = {
+                "requests": alltime_row[0] or 0,
+                "tokens_saved": alltime_row[1] or 0,
+                "avg_savings_pct": alltime_row[2] or 0.0,
+                "avg_latency_ms": alltime_row[3] or 0.0,
+                "sessions": alltime_row[4] or 0,
+            }
+
+        recent_db_rows = _db_conn.execute(
+            """
+            SELECT ts, session_id, model, original_tokens, compressed_tokens,
+                   ROUND((original_tokens - compressed_tokens) * 100.0 / original_tokens, 1) AS savings_pct,
+                   latency_ms
+            FROM compressions
+            ORDER BY id DESC
+            LIMIT 20
+            """
+        ).fetchall()
+        recent_rows = [
+            {
+                "ts": r[0],
+                "session_id": r[1][:8] if r[1] else "",
+                "model": r[2],
+                "original_tokens": r[3],
+                "compressed_tokens": r[4],
+                "savings_pct": r[5] or 0.0,
+                "latency_ms": round(r[6], 1) if r[6] is not None else 0.0,
+            }
+            for r in recent_db_rows
+        ]
 
     return {
         "started_at": stats["started_at"],
@@ -618,6 +687,9 @@ async def get_stats():
         "cost_per_mtok": COST_PER_MTOK,
         "avg_latency_ms": round(avg_latency, 1),
         "by_model": by_model,
+        "today": today_stats,
+        "alltime": alltime_stats,
+        "recent": recent_rows,
     }
 
 
@@ -815,6 +887,15 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   .rtk-hint { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px 16px; margin-bottom: 12px; font-size: 11px; color: #8b949e; display: flex; align-items: center; gap: 10px; }
   .rtk-hint code { background: #21262d; padding: 1px 6px; border-radius: 3px; color: #c9d1d9; }
 
+  /* ── Today tiles ── */
+  .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 12px; }
+  .tile { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px 18px; cursor: default; transition: transform .15s, box-shadow .15s; }
+  .tile:hover { transform: translateY(-2px); box-shadow: 0 4px 16px rgba(0,0,0,.4); }
+  .tile-num { font-size: 28px; font-weight: 800; color: #f0f6fc; line-height: 1; }
+  .tile-num.blue  { color: #58a6ff; }
+  .tile-num.green { color: #3fb950; }
+  .tile-label { font-size: 9px; color: #8b949e; text-transform: uppercase; letter-spacing: .08em; margin-top: 6px; }
+
   /* ── Metric cards ── */
   .cards { display: grid; grid-template-columns: repeat(7, 1fr); gap: 10px; margin-bottom: 12px; }
   .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px 14px; }
@@ -860,6 +941,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   .ts-bar:hover { opacity: 1; }
   .ts-labels { display: flex; justify-content: space-between; margin-top: 4px; font-size: 9px; color: #484f58; }
 
+  /* ── Model comparison table ── */
+  .model-bar-wrap { flex: 1; background: #21262d; border-radius: 2px; height: 8px; display: inline-block; vertical-align: middle; min-width: 60px; }
+  .model-bar-fill { height: 100%; border-radius: 2px; }
+
   /* ── Session bars ── */
   .sess-bars { display: flex; flex-direction: column; gap: 8px; }
   .sess-bar-row { display: flex; align-items: center; gap: 10px; font-size: 11px; }
@@ -869,7 +954,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   .sess-bar-pct   { width: 36px; text-align: right; color: #3fb950; flex-shrink: 0; }
   .sess-bar-saved { width: 54px; text-align: right; color: #484f58; flex-shrink: 0; font-size: 10px; }
 
-  /* ── Session table ── */
+  /* ── Tables ── */
   table { width: 100%; border-collapse: collapse; font-size: 11px; }
   th { text-align: left; color: #8b949e; padding: 5px 10px; border-bottom: 1px solid #21262d; font-weight: normal; font-size: 9px; text-transform: uppercase; letter-spacing: .06em; }
   td { padding: 7px 10px; border-bottom: 1px solid #21262d; vertical-align: middle; }
@@ -881,8 +966,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   .muted { color: #8b949e; }
   .green { color: #3fb950; }
 
+  /* ── Footer ── */
+  .footer { font-size: 9px; color: #484f58; text-align: center; padding-top: 8px; }
+
   @media (max-width: 700px) {
     .layers, .hero-solo { grid-template-columns: 1fr; }
+    .tiles { grid-template-columns: repeat(2, 1fr); }
     .cards { grid-template-columns: repeat(2, 1fr); }
     .layer-pct, .hero-pct { font-size: 48px; }
   }
@@ -892,7 +981,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
 <div class="header">
   <div style="display:flex;align-items:center;gap:8px">
-    <div class="title">⚡ LLMLingua Proxy</div>
+    <div class="title">LLMLingua Proxy</div>
     <span class="model-badge" id="model_badge">—</span>
     <select class="model-select" id="model_select" onchange="switchModel(this.value)" disabled>
       <option value="llmlingua2">llmlingua2</option>
@@ -951,8 +1040,28 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
 <!-- rtk install hint (shown when rtk absent) -->
 <div class="rtk-hint" id="rtk_hint">
-  <span style="color:#484f58">⬡</span>
+  <span style="color:#484f58">&#x2B21;</span>
   <span>Add shell-layer compression: <code>brew install rtk</code> &nbsp;—&nbsp; rtk compresses CLI output; this proxy compresses API messages. Run both for maximum savings.</span>
+</div>
+
+<!-- Row 1: Today tiles -->
+<div class="tiles">
+  <div class="tile">
+    <div class="tile-num blue" id="tile_requests">—</div>
+    <div class="tile-label">Today · Requests</div>
+  </div>
+  <div class="tile">
+    <div class="tile-num green" id="tile_savings">—</div>
+    <div class="tile-label">Today · Avg Savings %</div>
+  </div>
+  <div class="tile">
+    <div class="tile-num" id="tile_latency">—</div>
+    <div class="tile-label">Today · Avg Latency ms</div>
+  </div>
+  <div class="tile">
+    <div class="tile-num green" id="tile_tokens_saved">—</div>
+    <div class="tile-label">Today · Tokens Saved</div>
+  </div>
 </div>
 
 <!-- Metric cards (API layer) -->
@@ -979,37 +1088,46 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   </table>
 </div>
 
+<!-- Row 2: Model comparison -->
+<div class="section" id="model_section" style="display:none">
+  <div class="section-title">Model comparison</div>
+  <table>
+    <thead><tr><th>Model</th><th style="width:200px">Requests</th><th>Savings %</th><th>Latency ms</th></tr></thead>
+    <tbody id="model_body"></tbody>
+  </table>
+</div>
+
+<!-- Row 3: 48h timeseries -->
+<div class="section">
+  <div class="section-title">compression rate — last 48h (hourly) &nbsp;·&nbsp; height = requests &nbsp;·&nbsp; color = avg savings %</div>
+  <div id="ts_chart" class="ts-chart"><span class="spark-empty">No data</span></div>
+  <div id="ts_labels" class="ts-labels"></div>
+</div>
+
+<!-- Row 4: Recent activity -->
+<div class="section">
+  <div class="section-title">Recent activity</div>
+  <table>
+    <thead><tr><th>Time</th><th>Model</th><th>Tokens</th><th>Savings %</th><th>Latency ms</th></tr></thead>
+    <tbody id="recent_body"></tbody>
+  </table>
+</div>
+
 <!-- LLMLingua sparkline -->
 <div class="section">
   <div class="section-title">LLMLingua-2 — recent compressions &nbsp;·&nbsp; height = original size &nbsp;·&nbsp; color = savings %</div>
   <div id="sparkline" class="sparkline"><span class="spark-empty">No compressions yet</span></div>
   <div class="spark-legend">
-    <span><span class="leg-dot" style="background:#3fb950"></span>≥40% saved</span>
-    <span><span class="leg-dot" style="background:#d29922"></span>20–39% saved</span>
+    <span><span class="leg-dot" style="background:#3fb950"></span>&#x2265;40% saved</span>
+    <span><span class="leg-dot" style="background:#d29922"></span>20&#x2013;39% saved</span>
     <span><span class="leg-dot" style="background:#484f58"></span>&lt;20% saved</span>
   </div>
-</div>
-
-<!-- Per-model breakdown -->
-<div class="section" id="model_section" style="display:none">
-  <div class="section-title">LLMLingua-2 — compression rate by model</div>
-  <table>
-    <thead><tr><th>Model</th><th>Requests</th><th>Avg Savings %</th><th>Avg Ratio</th><th>Total Saved</th></tr></thead>
-    <tbody id="model_body"></tbody>
-  </table>
 </div>
 
 <!-- Session efficiency bars -->
 <div class="section">
   <div class="section-title">LLMLingua-2 — sessions by tokens saved</div>
   <div id="sess_bars" class="sess-bars"><span class="spark-empty">No sessions yet</span></div>
-</div>
-
-<!-- 48-hour time series -->
-<div class="section">
-  <div class="section-title">compression rate — last 48h (hourly) &nbsp;·&nbsp; height = requests &nbsp;·&nbsp; color = avg savings %</div>
-  <div id="ts_chart" class="ts-chart"><span class="spark-empty">No data</span></div>
-  <div id="ts_labels" class="ts-labels"></div>
 </div>
 
 <!-- Session detail table -->
@@ -1021,6 +1139,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   </table>
 </div>
 
+<div class="footer">All data from metrics.db &nbsp;·&nbsp; updated every 2s</div>
+
 <script>
 function fmt(n) {
   if (n == null) return '—';
@@ -1028,6 +1148,9 @@ function fmt(n) {
   if (n >= 1000)    return (n / 1000).toFixed(1) + 'k';
   return n.toLocaleString();
 }
+// alias used by tile population
+var fmtN = fmt;
+
 function fmtUptime(secs) {
   if (secs < 60)   return secs + 's';
   if (secs < 3600) return Math.floor(secs / 60) + 'm';
@@ -1139,19 +1262,26 @@ async function refresh() {
       }
     }
 
-    // ── Per-model breakdown ──
+    // ── Today tiles (DB-driven) ──
+    document.getElementById('tile_requests').textContent = d.today.requests ?? 0;
+    document.getElementById('tile_savings').textContent = (d.today.avg_savings_pct ?? 0) + '%';
+    document.getElementById('tile_latency').textContent = (d.today.avg_latency_ms ?? 0) + 'ms';
+    document.getElementById('tile_tokens_saved').textContent = fmtN(d.today.tokens_saved ?? 0);
+
+    // ── Row 2: Model comparison ──
     if (d.by_model && d.by_model.length > 0) {
       document.getElementById('model_section').style.display = 'block';
+      const maxReq = Math.max(...d.by_model.map(m => m.requests), 1);
       document.getElementById('model_body').innerHTML = d.by_model.map(function(m) {
-        var ratioCell = m.avg_ratio
-          ? '<span class="ratio-badge" style="' + ratioBadgeStyle(m.avg_ratio) + '">' + m.avg_ratio + '×</span>'
-          : '<span class="muted">—</span>';
-        return '<tr>'
+        const isActive = d.compressor && m.model === d.compressor.model;
+        const bg = isActive ? 'background:#1c2128;' : '';
+        const w = Math.round((m.requests / maxReq) * 100);
+        return '<tr style="' + bg + '">'
           + '<td><span class="model-badge">' + m.model + '</span></td>'
-          + '<td>' + m.requests + '</td>'
-          + '<td class="green">' + m.avg_savings_pct + '%</td>'
-          + '<td>' + ratioCell + '</td>'
-          + '<td class="green">' + fmt(m.total_saved) + '</td>'
+          + '<td><div class="model-bar-wrap" style="width:160px"><div class="model-bar-fill" style="width:' + w + '%;background:' + barColor(m.avg_savings_pct || 0) + ';height:100%"></div></div>'
+          + ' <span class="muted" style="font-size:10px">' + m.requests + '</span></td>'
+          + '<td class="green">' + (m.avg_savings_pct ?? '—') + '%</td>'
+          + '<td class="muted">' + (m.avg_latency_ms != null ? m.avg_latency_ms + ' ms' : '—') + '</td>'
           + '</tr>';
       }).join('');
     }
@@ -1171,6 +1301,22 @@ async function refresh() {
       const cost = (d.total_saved_tokens / 1000000) * d.cost_per_mtok;
       document.getElementById('card_cost').textContent = '$' + cost.toFixed(2);
       document.getElementById('card_cost_label').textContent = '@ $' + d.cost_per_mtok.toFixed(2) + ' / MTok';
+    }
+
+    // ── Row 4: Recent activity table ──
+    if (d.recent && d.recent.length > 0) {
+      document.getElementById('recent_body').innerHTML = d.recent.slice(0, 10).map(function(row) {
+        return '<tr>'
+          + '<td class="muted">' + row.ts.slice(11, 16) + '</td>'
+          + '<td><span class="model-badge">' + row.model + '</span></td>'
+          + '<td>' + fmt(row.original_tokens) + ' &#x2192; ' + fmt(row.compressed_tokens) + '</td>'
+          + '<td class="green">' + row.savings_pct + '%</td>'
+          + '<td class="muted">' + row.latency_ms + ' ms</td>'
+          + '</tr>';
+      }).join('');
+    } else {
+      document.getElementById('recent_body').innerHTML =
+        '<tr><td colspan="5" class="muted" style="text-align:center;padding:12px">No data yet</td></tr>';
     }
 
     // ── Sparkline ──
