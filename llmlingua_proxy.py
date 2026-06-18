@@ -665,7 +665,11 @@ async def set_model(request: Request):
     def load():
         global backend, backend_loading
         try:
-            new_backend = load_backend()
+            # Use model from closure directly — avoids reading _db_conn cross-thread
+            if model == "kompress":
+                new_backend = _load_kompress_backend()
+            else:
+                new_backend = _load_llmlingua2_backend(backend_key=model)
             backend = new_backend
         except Exception as e:
             print(f"[set-model] failed to load {model}: {e}")
