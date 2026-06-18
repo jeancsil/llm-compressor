@@ -7,7 +7,7 @@ import httpx
 import uvicorn
 from collections import deque
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse, JSONResponse, HTMLResponse
@@ -266,7 +266,7 @@ def record_compression(session_id: str, original: int, compressed: int, latency_
     stats["total_compressed_tokens"] += compressed
 
     model_name = backend.get("type", "llmlingua2") if backend else "llmlingua2"
-    ts = datetime.utcnow().isoformat(timespec="seconds")
+    ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
     if _db_conn:
         _db_conn.execute(
@@ -286,7 +286,7 @@ def record_compression(session_id: str, original: int, compressed: int, latency_
     sess["last_seen"] = ts
 
     stats["recent_compressions"].appendleft({
-        "ts": datetime.utcnow().strftime("%H:%M:%S"),
+        "ts": datetime.now(timezone.utc).strftime("%H:%M:%S"),
         "session_id": session_id[:8],
         "original": original,
         "compressed": compressed,

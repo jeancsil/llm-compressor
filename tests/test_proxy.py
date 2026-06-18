@@ -298,3 +298,11 @@ def test_stats_includes_compressor_cost(client):
     assert "cost_per_mtok" in d
     assert d["cost_per_mtok"] == 3.0
     assert "avg_latency_ms" in d
+
+
+def test_no_utcnow_in_source():
+    """Task 1: Verify that datetime.utcnow is not used in llmlingua_proxy.py."""
+    from pathlib import Path
+    src = Path(__file__).parent.parent / "llmlingua_proxy.py"
+    source = src.read_text()
+    assert "utcnow" not in source, "Found deprecated datetime.utcnow in llmlingua_proxy.py"
