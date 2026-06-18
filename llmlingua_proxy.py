@@ -3,6 +3,7 @@ import json
 import platform
 import re
 import sqlite3
+import threading
 import time
 import httpx
 import uvicorn
@@ -20,8 +21,11 @@ DB_PATH           = "metrics.db"
 COST_PER_MTOK     = float(os.environ.get("COST_PER_MTOK", "3.0"))
 
 # Module-level globals populated by lifespan
-backend   = None
-_db_conn  = None
+backend          = None
+backend_loading  = None   # set to model name while async load is in progress
+_db_conn         = None
+
+KNOWN_MODELS = ("llmlingua2", "llmlingua2-large", "kompress")
 
 
 # ---------------------------------------------------------------------------
@@ -223,8 +227,23 @@ def _load_kompress_backend() -> dict:
 
 
 def load_backend() -> dict:
-    """Dispatch to the configured backend loader based on COMPRESSOR_MODEL."""
+    """Dispatch to the configured backend loader.
+
+    Resolution order:
+    1. DB meta table key 'current_model' (persists across restarts after set-model)
+    2. COMPRESSOR_MODEL environment variable
+    3. Default: llmlingua2
+    """
     model_name = os.environ.get("COMPRESSOR_MODEL", "llmlingua2")
+    try:
+        if _db_conn is not None:
+            row = _db_conn.execute(
+                "SELECT value FROM meta WHERE key='current_model'"
+            ).fetchone()
+            if row:
+                model_name = row[0]
+    except Exception:
+        pass  # DB not available; fall back to env var
     if model_name == "kompress":
         return _load_kompress_backend()
     return _load_llmlingua2_backend()
@@ -545,11 +564,19 @@ async def get_stats():
         sum(c["latency_ms"] for c in recent) / len(recent) if recent else 0.0
     )
 
-    if backend and backend.get("type") == "kompress":
+    if backend_loading:
+        compressor_info = {
+            "model": backend_loading,
+            "param_name": "",
+            "param_value": "",
+            "loading": True,
+        }
+    elif backend and backend.get("type") == "kompress":
         compressor_info = {
             "model": "kompress",
             "param_name": "threshold",
             "param_value": backend.get("threshold", 0.5),
+            "loading": False,
         }
     else:
         backend_key = backend.get("backend_key", "llmlingua2") if backend else "llmlingua2"
@@ -557,6 +584,7 @@ async def get_stats():
             "model": backend_key,
             "param_name": "rate",
             "param_value": backend.get("rate", 0.5) if backend else 0.5,
+            "loading": False,
         }
 
     by_model: list = []
@@ -615,6 +643,36 @@ async def get_timeseries():
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard():
     return HTMLResponse(DASHBOARD_HTML)
+
+
+@app.post("/admin/set-model")
+async def set_model(request: Request):
+    global backend, backend_loading
+    body = await request.json()
+    model = body.get("model")
+    if model not in KNOWN_MODELS:
+        return JSONResponse({"error": f"Unknown model. Known: {sorted(KNOWN_MODELS)}"}, status_code=400)
+    if _db_conn is not None:
+        _db_conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('current_model', ?)",
+            (model,),
+        )
+        _db_conn.commit()
+    backend = None
+    backend_loading = model
+
+    def load():
+        global backend, backend_loading
+        try:
+            new_backend = load_backend()
+            backend = new_backend
+        except Exception as e:
+            print(f"[set-model] failed to load {model}: {e}")
+        finally:
+            backend_loading = None
+
+    threading.Thread(target=load, daemon=True).start()
+    return JSONResponse({"status": "loading", "model": model})
 
 
 @app.get("/v1/models")
@@ -769,6 +827,11 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   /* ── Model badge ── */
   .model-badge { font-size: 10px; background: #0d1a35; color: #58a6ff; padding: 2px 8px; border-radius: 4px; }
 
+  /* ── Model select (switcher) ── */
+  .model-select { font-size: 10px; background: #0d1a35; color: #58a6ff; padding: 2px 8px; border-radius: 4px; border: none; cursor: pointer; font-family: inherit; outline: none; appearance: none; -webkit-appearance: none; }
+  .model-select:disabled { opacity: 0.5; cursor: wait; }
+  .model-loading { font-size: 10px; color: #d29922; margin-left: 6px; display: none; }
+
   /* ── Time-series chart ── */
   .ts-chart { display: flex; align-items: flex-end; gap: 4px; height: 60px; overflow: hidden; }
   .ts-bar { flex: 1; min-height: 4px; border-radius: 2px 2px 0 0; opacity: .8; transition: opacity .1s; cursor: default; }
@@ -809,6 +872,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   <div style="display:flex;align-items:center;gap:8px">
     <div class="title">⚡ LLMLingua Proxy</div>
     <span class="model-badge" id="model_badge">—</span>
+    <select class="model-select" id="model_select" onchange="switchModel(this.value)" disabled>
+      <option value="llmlingua2">llmlingua2</option>
+      <option value="llmlingua2-large">llmlingua2-large</option>
+      <option value="kompress">kompress</option>
+    </select>
+    <span class="model-loading" id="model_loading">loading…</span>
   </div>
   <div class="header-right">
     <span id="uptime_display">—</span>
@@ -953,6 +1022,21 @@ function ratioBadgeStyle(ratio) {
   return 'background:#1c2128;color:#8b949e';
 }
 
+async function switchModel(model) {
+  const sel = document.getElementById('model_select');
+  const lbl = document.getElementById('model_loading');
+  sel.disabled = true;
+  lbl.style.display = 'inline';
+  try {
+    await fetch('/admin/set-model', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model }),
+    });
+  } catch(e) { console.error(e); }
+  // refresh will re-sync the UI once stats reflect the loading state
+}
+
 async function refresh() {
   try {
     const r = await fetch('/stats');
@@ -1011,11 +1095,22 @@ async function refresh() {
       document.getElementById('t_sessions').textContent  = Object.keys(d.sessions).length;
     }
 
-    // ── Model badge ──
+    // ── Model badge + select sync ──
     if (d.compressor) {
       const c = d.compressor;
-      document.getElementById('model_badge').textContent =
-        (c.model === 'kompress' ? 'kompress' : 'llmlingua2') + ' · ' + c.param_name + '=' + c.param_value;
+      const sel = document.getElementById('model_select');
+      const lbl = document.getElementById('model_loading');
+      if (c.loading) {
+        sel.disabled = true;
+        lbl.style.display = 'inline';
+        document.getElementById('model_badge').textContent = c.model + ' · loading…';
+      } else {
+        sel.value = c.model;
+        sel.disabled = false;
+        lbl.style.display = 'none';
+        document.getElementById('model_badge').textContent =
+          c.model + (c.param_name ? ' · ' + c.param_name + '=' + c.param_value : '');
+      }
     }
 
     // ── Per-model breakdown ──
