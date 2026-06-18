@@ -185,11 +185,12 @@ LLMLINGUA2_MODELS = {
 }
 
 
-def _load_llmlingua2_backend() -> dict:
+def _load_llmlingua2_backend(backend_key: str | None = None) -> dict:
     """Load the LLMLingua-2 PromptCompressor and return a backend dict."""
     from llmlingua import PromptCompressor
     rate = float(os.environ.get("COMPRESS_RATE", "0.5"))
-    backend_key = os.environ.get("COMPRESSOR_MODEL", "llmlingua2")
+    if backend_key is None:
+        backend_key = os.environ.get("COMPRESSOR_MODEL", "llmlingua2")
     model_name = LLMLINGUA2_MODELS.get(backend_key, LLMLINGUA2_MODELS["llmlingua2"])
     import torch
     device = "mps" if torch.backends.mps.is_available() else "cpu"
@@ -246,7 +247,7 @@ def load_backend() -> dict:
         pass  # DB not available; fall back to env var
     if model_name == "kompress":
         return _load_kompress_backend()
-    return _load_llmlingua2_backend()
+    return _load_llmlingua2_backend(backend_key=model_name)
 
 
 # Keep the private alias so existing call-sites (lifespan, tests) still work.
@@ -828,7 +829,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   .model-badge { font-size: 10px; background: #0d1a35; color: #58a6ff; padding: 2px 8px; border-radius: 4px; }
 
   /* ── Model select (switcher) ── */
-  .model-select { font-size: 10px; background: #0d1a35; color: #58a6ff; padding: 2px 8px; border-radius: 4px; border: none; cursor: pointer; font-family: inherit; outline: none; appearance: none; -webkit-appearance: none; }
+  .model-select { font-size: 12px; background: #161b22; color: #58a6ff; padding: 4px 10px; border-radius: 6px; border: 1px solid #30363d; cursor: pointer; font-family: inherit; outline: none; }
+  .model-select:hover:not(:disabled) { border-color: #58a6ff; }
   .model-select:disabled { opacity: 0.5; cursor: wait; }
   .model-loading { font-size: 10px; color: #d29922; margin-left: 6px; display: none; }
 
