@@ -609,6 +609,7 @@ async def get_stats():
         ).fetchall()
         by_model = [dict(r) for r in by_model_rows]
 
+        active_model = compressor_info["model"]
         today_row = _db_conn.execute(
             """
             SELECT
@@ -618,8 +619,9 @@ async def get_stats():
                 ROUND(AVG(latency_ms), 1) AS avg_latency_ms,
                 COUNT(DISTINCT session_id) AS sessions
             FROM compressions
-            WHERE date(ts) = date('now')
-            """
+            WHERE date(ts) = date('now') AND model = ?
+            """,
+            (active_model,),
         ).fetchone()
         if today_row:
             today_stats = {
@@ -656,9 +658,11 @@ async def get_stats():
                    ROUND((original_tokens - compressed_tokens) * 100.0 / original_tokens, 1) AS savings_pct,
                    latency_ms
             FROM compressions
+            WHERE model = ?
             ORDER BY id DESC
             LIMIT 20
-            """
+            """,
+            (active_model,),
         ).fetchall()
         recent_rows = [
             {
