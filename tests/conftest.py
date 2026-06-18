@@ -21,9 +21,15 @@ MOCK_COMPRESS_RESULT = {
 # ---------------------------------------------------------------------------
 
 def make_mock_llmlingua() -> MagicMock:
-    """Return a MagicMock that mimics PromptCompressor."""
+    """Return a MagicMock that mimics PromptCompressor.
+
+    The tokenizer.tokenize side_effect simulates ~1 token per word so tests can
+    control chunk boundaries deterministically.
+    """
     mock = MagicMock()
     mock.compress_prompt.return_value = MOCK_COMPRESS_RESULT
+    # Simulate ~1 token per word for predictable chunk-boundary tests
+    mock.tokenizer.tokenize.side_effect = lambda text: text.split()
     return mock
 
 

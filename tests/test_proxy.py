@@ -306,3 +306,82 @@ def test_no_utcnow_in_source():
     src = Path(__file__).parent.parent / "llmlingua_proxy.py"
     source = src.read_text()
     assert "utcnow" not in source, "Found deprecated datetime.utcnow in llmlingua_proxy.py"
+
+
+# ---------------------------------------------------------------------------
+# Task 2: chunk_text helpers and multi-chunk compress_llmlingua2
+# ---------------------------------------------------------------------------
+
+def test_chunk_text_short_returns_single(monkeypatch):
+    """Text under 400 tokens is returned as a single-element list."""
+    from unittest.mock import MagicMock
+
+    for dep in ("llmlingua", "torch", "transformers"):
+        if dep not in sys.modules:
+            monkeypatch.setitem(sys.modules, dep, MagicMock())
+
+    monkeypatch.delitem(sys.modules, "llmlingua_proxy", raising=False)
+
+    import llmlingua_proxy as proxy
+    from tests.conftest import make_mock_llmlingua
+
+    mock_backend = {"type": "llmlingua2", "compressor": make_mock_llmlingua(), "rate": 0.5}
+    monkeypatch.setattr(proxy, "backend", mock_backend)
+
+    short_text = "word " * 50  # 50 tokens — well under 400
+    result = proxy.chunk_text(short_text.strip())
+    assert len(result) == 1
+
+
+def test_chunk_text_splits_long_paragraphs(monkeypatch):
+    """Two 250-token paragraphs split into two chunks (each exceeds 400 when combined)."""
+    from unittest.mock import MagicMock
+
+    for dep in ("llmlingua", "torch", "transformers"):
+        if dep not in sys.modules:
+            monkeypatch.setitem(sys.modules, dep, MagicMock())
+
+    monkeypatch.delitem(sys.modules, "llmlingua_proxy", raising=False)
+
+    import llmlingua_proxy as proxy
+    from tests.conftest import make_mock_llmlingua
+
+    mock_backend = {"type": "llmlingua2", "compressor": make_mock_llmlingua(), "rate": 0.5}
+    monkeypatch.setattr(proxy, "backend", mock_backend)
+
+    para = "word " * 250  # ~250 tokens per paragraph
+    text = para.strip() + "\n\n" + para.strip()
+    chunks = proxy.chunk_text(text)
+    assert len(chunks) == 2
+    for c in chunks:
+        # Each chunk should be at most CHUNK_MAX_TOKENS words
+        assert len(c.split()) <= proxy.CHUNK_MAX_TOKENS
+
+
+def test_compress_llmlingua2_multi_chunk(monkeypatch):
+    """compress_backend calls compress_prompt once per chunk and combines output."""
+    from unittest.mock import MagicMock
+
+    for dep in ("llmlingua", "torch", "transformers"):
+        if dep not in sys.modules:
+            monkeypatch.setitem(sys.modules, dep, MagicMock())
+
+    monkeypatch.delitem(sys.modules, "llmlingua_proxy", raising=False)
+
+    import llmlingua_proxy as proxy
+    from tests.conftest import make_mock_llmlingua, MOCK_COMPRESS_RESULT
+
+    mock_compressor = make_mock_llmlingua()
+    mock_backend = {"type": "llmlingua2", "compressor": mock_compressor, "rate": 0.5}
+    monkeypatch.setattr(proxy, "backend", mock_backend)
+
+    para = "word " * 250
+    text = para.strip() + "\n\n" + para.strip()  # 2 chunks
+
+    compressed, orig_tokens, comp_tokens = proxy._compress_llmlingua2(text)
+
+    # compress_prompt should have been called once per chunk (2 total)
+    assert mock_compressor.compress_prompt.call_count == 2
+    # Token counts should be aggregated across both chunks
+    assert orig_tokens == MOCK_COMPRESS_RESULT["origin_tokens"] * 2       # 100 * 2
+    assert comp_tokens == MOCK_COMPRESS_RESULT["compressed_tokens"] * 2   # 60 * 2

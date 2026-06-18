@@ -1,6 +1,7 @@
 import os
 import json
 import platform
+import re
 import sqlite3
 import time
 import httpx
@@ -359,6 +360,68 @@ def read_rtk_stats() -> dict | None:
         return None
 
 # ---------------------------------------------------------------------------
+# Chunking helpers (prevent BERT 512-token overflow in LLMLingua-2)
+# ---------------------------------------------------------------------------
+
+CHUNK_MAX_TOKENS = 400
+
+
+def _count_tokens(text: str) -> int:
+    """Count tokens using the backend tokenizer (falls back to whitespace split)."""
+    try:
+        return len(backend["compressor"].tokenizer.tokenize(text))
+    except Exception:
+        return len(text.split())
+
+
+def _split_into_segments(text: str) -> list[str]:
+    """Return a flat list of natural-boundary segments, splitting finer as needed."""
+    paras = [p.strip() for p in re.split(r"\n\n+", text) if p.strip()]
+    if len(paras) > 1:
+        segs: list[str] = []
+        for p in paras:
+            if _count_tokens(p) > CHUNK_MAX_TOKENS:
+                lines = [ln.strip() for ln in p.split("\n") if ln.strip()]
+                if len(lines) > 1:
+                    segs.extend(lines)
+                else:
+                    segs.extend(
+                        s.strip()
+                        for s in re.split(r"(?<=[?.!])\s+", p)
+                        if s.strip()
+                    )
+            else:
+                segs.append(p)
+        return segs
+    # Single paragraph — try sentence splitting
+    sents = [s.strip() for s in re.split(r"(?<=[?.!])\s+", text) if s.strip()]
+    if len(sents) > 1:
+        return sents
+    return [text]
+
+
+def chunk_text(text: str) -> list[str]:
+    """Group segments into chunks of at most CHUNK_MAX_TOKENS tokens each."""
+    if _count_tokens(text) <= CHUNK_MAX_TOKENS:
+        return [text]
+    segments = _split_into_segments(text)
+    chunks: list[str] = []
+    buf: list[str] = []
+    buf_count = 0
+    for seg in segments:
+        seg_count = _count_tokens(seg)
+        if buf and buf_count + seg_count > CHUNK_MAX_TOKENS:
+            chunks.append("\n\n".join(buf))
+            buf = []
+            buf_count = 0
+        buf.append(seg)
+        buf_count += seg_count
+    if buf:
+        chunks.append("\n\n".join(buf))
+    return chunks
+
+
+# ---------------------------------------------------------------------------
 # Compression
 # ---------------------------------------------------------------------------
 
@@ -388,12 +451,28 @@ def compress_backend(text: str):
 
 
 def _compress_llmlingua2(text: str):
-    result = backend["compressor"].compress_prompt(
-        text,
-        rate=backend.get("rate", 0.5),
-        force_tokens=['\n', '?', '.', '!'],
-    )
-    return result["compressed_prompt"], result["origin_tokens"], result["compressed_tokens"]
+    chunks = chunk_text(text)
+    if len(chunks) == 1:
+        result = backend["compressor"].compress_prompt(
+            chunks[0],
+            rate=backend.get("rate", 0.5),
+            force_tokens=["\n", "?", ".", "!"],
+        )
+        return result["compressed_prompt"], result["origin_tokens"], result["compressed_tokens"]
+
+    parts: list[str] = []
+    total_orig = 0
+    total_comp = 0
+    for chunk in chunks:
+        result = backend["compressor"].compress_prompt(
+            chunk,
+            rate=backend.get("rate", 0.5),
+            force_tokens=["\n", "?", ".", "!"],
+        )
+        parts.append(result["compressed_prompt"])
+        total_orig += result["origin_tokens"]
+        total_comp += result["compressed_tokens"]
+    return "\n\n".join(parts), total_orig, total_comp
 
 
 def _compress_kompress(text: str):
