@@ -894,6 +894,15 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   </div>
 </div>
 
+<!-- Per-model breakdown -->
+<div class="section" id="model_section" style="display:none">
+  <div class="section-title">LLMLingua-2 — compression rate by model</div>
+  <table>
+    <thead><tr><th>Model</th><th>Requests</th><th>Avg Savings %</th><th>Avg Ratio</th><th>Total Saved</th></tr></thead>
+    <tbody id="model_body"></tbody>
+  </table>
+</div>
+
 <!-- Session efficiency bars -->
 <div class="section">
   <div class="section-title">LLMLingua-2 — sessions by tokens saved</div>
@@ -1002,6 +1011,23 @@ async function refresh() {
       const c = d.compressor;
       document.getElementById('model_badge').textContent =
         (c.model === 'kompress' ? 'kompress' : 'llmlingua2') + ' · ' + c.param_name + '=' + c.param_value;
+    }
+
+    // ── Per-model breakdown ──
+    if (d.by_model && d.by_model.length > 0) {
+      document.getElementById('model_section').style.display = 'block';
+      document.getElementById('model_body').innerHTML = d.by_model.map(function(m) {
+        var ratioCell = m.avg_ratio
+          ? '<span class="ratio-badge" style="' + ratioBadgeStyle(m.avg_ratio) + '">' + m.avg_ratio + '×</span>'
+          : '<span class="muted">—</span>';
+        return '<tr>'
+          + '<td><span class="model-badge">' + m.model + '</span></td>'
+          + '<td>' + m.requests + '</td>'
+          + '<td class="green">' + m.avg_savings_pct + '%</td>'
+          + '<td>' + ratioCell + '</td>'
+          + '<td class="green">' + fmt(m.total_saved) + '</td>'
+          + '</tr>';
+      }).join('');
     }
 
     // ── Metric cards ──
