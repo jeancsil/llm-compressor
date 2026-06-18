@@ -368,6 +368,7 @@ def read_rtk_stats() -> dict | None:
 # ---------------------------------------------------------------------------
 
 CHUNK_MAX_TOKENS = 400
+_CHUNK_MAX_CHARS = 1400  # ~400 BERT tokens for mixed code/prose
 
 
 def _count_tokens(text: str) -> int:
@@ -376,6 +377,13 @@ def _count_tokens(text: str) -> int:
         return len(backend["compressor"].tokenizer.tokenize(text))
     except Exception:
         return len(text.split())
+
+
+def _char_split(text: str) -> list[str]:
+    """Split text into _CHUNK_MAX_CHARS-sized pieces (last resort for code/dense text)."""
+    if len(text) <= _CHUNK_MAX_CHARS:
+        return [text]
+    return [text[i:i + _CHUNK_MAX_CHARS] for i in range(0, len(text), _CHUNK_MAX_CHARS)]
 
 
 def _split_into_segments(text: str) -> list[str]:
@@ -389,11 +397,8 @@ def _split_into_segments(text: str) -> list[str]:
                 if len(lines) > 1:
                     segs.extend(lines)
                 else:
-                    segs.extend(
-                        s.strip()
-                        for s in re.split(r"(?<=[?.!])\s+", p)
-                        if s.strip()
-                    )
+                    sents = [s.strip() for s in re.split(r"(?<=[?.!])\s+", p) if s.strip()]
+                    segs.extend(sents if len(sents) > 1 else _char_split(p))
             else:
                 segs.append(p)
         return segs
@@ -401,7 +406,7 @@ def _split_into_segments(text: str) -> list[str]:
     sents = [s.strip() for s in re.split(r"(?<=[?.!])\s+", text) if s.strip()]
     if len(sents) > 1:
         return sents
-    return [text]
+    return _char_split(text)
 
 
 def chunk_text(text: str) -> list[str]:
