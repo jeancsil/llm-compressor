@@ -53,6 +53,18 @@ def init_db(path: str):
     conn.execute(
         "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)"
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS trackers (
+            slug        TEXT PRIMARY KEY,
+            name        TEXT NOT NULL,
+            status      TEXT NOT NULL DEFAULT 'pending',
+            session_id  TEXT,
+            created_at  TEXT NOT NULL,
+            linked_at   TEXT
+        )
+        """
+    )
     conn.commit()
     return conn
 
@@ -132,6 +144,14 @@ def recover_stats_from_backup(conn, bak_path: str = "stats.json.bak") -> None:
         print(f"[recovery] {rows_inserted} synthetic rows from {bak_path}. Request offset: {legacy_offset}.")
     except Exception as e:
         print(f"[recovery] Failed: {e}")
+
+
+def make_slug(name: str, conn) -> str:
+    base = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "tracker"
+    slug, i = base, 2
+    while conn.execute("SELECT 1 FROM trackers WHERE slug=?", (slug,)).fetchone():
+        slug, i = f"{base}-{i}", i + 1
+    return slug
 
 
 def load_stats_from_db(conn) -> None:
@@ -222,7 +242,11 @@ def _load_kompress_backend() -> dict:
     print(f"Loading kompress-v2-base (device={device}, threshold={threshold})...")
     config = KompressConfig(device=device, score_threshold=threshold)
     compressor = KompressCompressor(config=config)
+    import transformers as _tf
+    _prev_level = _tf.logging.get_verbosity()
+    _tf.logging.set_verbosity_error()
     compressor.preload()
+    _tf.logging.set_verbosity(_prev_level)
     print(f"kompress-v2-base ready.")
     return {"type": "kompress", "compressor": compressor, "threshold": threshold}
 
@@ -639,9 +663,12 @@ async def get_stats():
                 COALESCE(SUM(original_tokens - compressed_tokens), 0) AS tokens_saved,
                 ROUND(AVG((original_tokens - compressed_tokens) * 100.0 / original_tokens), 1) AS avg_savings_pct,
                 ROUND(AVG(latency_ms), 1) AS avg_latency_ms,
-                COUNT(DISTINCT session_id) AS sessions
+                COUNT(DISTINCT session_id) AS sessions,
+                ROUND(AVG(CAST(original_tokens AS REAL) / NULLIF(compressed_tokens, 0)), 2) AS avg_ratio
             FROM compressions
-            """
+            WHERE model = ?
+            """,
+            (active_model,),
         ).fetchone()
         if alltime_row:
             alltime_stats = {
@@ -650,6 +677,7 @@ async def get_stats():
                 "avg_savings_pct": alltime_row[2] or 0.0,
                 "avg_latency_ms": alltime_row[3] or 0.0,
                 "sessions": alltime_row[4] or 0,
+                "avg_ratio": alltime_row[5] or 0.0,
             }
 
         recent_db_rows = _db_conn.execute(
@@ -1013,9 +1041,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     </div>
   </div>
   <div class="layer layer-api">
-    <div class="layer-label">API layer <span class="layer-badge">LLMLingua-2</span></div>
+    <div class="layer-label">API layer <span class="layer-badge" id="api_layer_badge">LLMLingua-2</span></div>
     <div class="layer-pct" id="api_pct_layers">—%</div>
-    <div class="layer-sub">Prompt compression · LLMLingua-2 tokenizer units</div>
+    <div class="layer-sub" id="api_layer_sub">Prompt compression · LLMLingua-2 tokenizer units</div>
     <div class="layer-stats">
       <div class="layer-stat"><span class="layer-stat-k">requests</span><span class="layer-stat-v" id="api_reqs_layers">—</span></div>
       <div class="layer-stat"><span class="layer-stat-k">tokens saved</span><span class="layer-stat-v" id="api_saved_layers">—</span></div>
@@ -1029,7 +1057,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   <div class="hero-left">
     <div class="hero-pct" id="savings_pct">—%</div>
     <div class="hero-label">tokens saved overall</div>
-    <div class="hero-sublabel">LLMLingua-2 tokenizer units</div>
+    <div class="hero-sublabel" id="api_layer_sub_solo">LLMLingua-2 tokenizer units</div>
   </div>
   <div class="hero-right">
     <div class="term-prompt">$ llmlingua-proxy --status</div>
@@ -1199,9 +1227,9 @@ async function refresh() {
     document.getElementById('uptime_display').textContent = 'up ' + uptimeStr;
     document.getElementById('card_uptime').textContent = uptimeStr;
 
-    // ── API layer numbers ──
-    const apiPct = d.total_original_tokens > 0
-      ? Math.round((1 - d.total_compressed_tokens / d.total_original_tokens) * 100) : 0;
+    // ── API layer numbers (DB-driven, filtered by active model) ──
+    const at = d.alltime || {};
+    const apiPctDisplay = at.avg_savings_pct != null ? Math.round(at.avg_savings_pct) : 0;
 
     // ── Hero: two-layer vs solo ──
     const hasRtk = d.rtk && d.rtk.total_commands > 0;
@@ -1209,6 +1237,15 @@ async function refresh() {
     document.getElementById('hero_solo').style.display   = hasRtk ? 'none' : 'grid';
     document.getElementById('rtk_hint').style.display    = hasRtk ? 'none' : 'flex';
     document.getElementById('rtk_section').style.display = hasRtk ? 'block' : 'none';
+
+    // ── Update API layer model badge (both hero variants) ──
+    const activeModel = d.compressor ? d.compressor.model : 'LLMLingua';
+    const apiBadgeEl = document.getElementById('api_layer_badge');
+    if (apiBadgeEl) apiBadgeEl.textContent = activeModel;
+    const apiSubEl = document.getElementById('api_layer_sub');
+    if (apiSubEl) apiSubEl.textContent = 'Prompt compression · ' + activeModel + ' tokenizer units';
+    const apiSubSoloEl = document.getElementById('api_layer_sub_solo');
+    if (apiSubSoloEl) apiSubSoloEl.textContent = activeModel + ' tokenizer units';
 
     if (hasRtk) {
       const rtk = d.rtk;
@@ -1218,10 +1255,10 @@ async function refresh() {
       document.getElementById('rtk_cmds').textContent   = fmt(rtk.total_commands);
       document.getElementById('rtk_saved').textContent  = fmt(rtk.total_saved_tokens);
       document.getElementById('rtk_avg').textContent    = rtk.avg_savings_pct + '%';
-      document.getElementById('api_pct_layers').textContent   = apiPct + '%';
-      document.getElementById('api_reqs_layers').textContent  = fmt(d.total_requests);
-      document.getElementById('api_saved_layers').textContent = fmt(d.total_saved_tokens);
-      document.getElementById('api_ratio_layers').textContent = d.overall_ratio + '×';
+      document.getElementById('api_pct_layers').textContent   = apiPctDisplay + '%';
+      document.getElementById('api_reqs_layers').textContent  = fmt(at.requests);
+      document.getElementById('api_saved_layers').textContent = fmt(at.tokens_saved);
+      document.getElementById('api_ratio_layers').textContent = at.avg_ratio ? at.avg_ratio + '×' : '—';
 
       // rtk command table
       const maxSaved = Math.max(...rtk.top_commands.map(c => c.saved), 1);
@@ -1236,14 +1273,12 @@ async function refresh() {
           + '</tr>';
       }).join('');
     } else {
-      // Solo hero
-      document.getElementById('savings_pct').textContent = apiPct + '%';
-      document.getElementById('t_requests').textContent  = fmt(d.total_requests);
-      document.getElementById('t_original').textContent  = fmt(d.total_original_tokens);
-      document.getElementById('t_compressed').textContent = fmt(d.total_compressed_tokens);
-      document.getElementById('t_saved').textContent     = fmt(d.total_saved_tokens) + ' (' + apiPct + '%)';
-      document.getElementById('t_ratio').textContent     = d.overall_ratio + '×';
-      document.getElementById('t_sessions').textContent  = Object.keys(d.sessions).length;
+      // Solo hero (DB-driven, filtered by active model)
+      document.getElementById('savings_pct').textContent = apiPctDisplay + '%';
+      document.getElementById('t_requests').textContent  = fmt(at.requests);
+      document.getElementById('t_sessions').textContent  = at.sessions ?? Object.keys(d.sessions).length;
+      document.getElementById('t_saved').textContent     = fmt(at.tokens_saved) + ' (' + apiPctDisplay + '%)';
+      document.getElementById('t_ratio').textContent     = at.avg_ratio ? at.avg_ratio + '×' : '—';
     }
 
     // ── Model badge + select sync ──
@@ -1290,19 +1325,19 @@ async function refresh() {
       }).join('');
     }
 
-    // ── Metric cards ──
-    document.getElementById('card_requests').textContent = fmt(d.total_requests);
-    document.getElementById('card_saved').textContent    = fmt(d.total_saved_tokens);
-    document.getElementById('card_sessions').textContent = Object.keys(d.sessions).length;
-    document.getElementById('card_ratio').textContent    = d.overall_ratio + '×';
+    // ── Metric cards (DB-driven, filtered by active model) ──
+    document.getElementById('card_requests').textContent = fmt(at.requests);
+    document.getElementById('card_saved').textContent    = fmt(at.tokens_saved);
+    document.getElementById('card_sessions').textContent = at.sessions ?? Object.keys(d.sessions).length;
+    document.getElementById('card_ratio').textContent    = at.avg_ratio ? at.avg_ratio + '×' : '—';
 
     // ── Latency card ──
     document.getElementById('card_latency').textContent =
-      d.avg_latency_ms != null ? Math.round(d.avg_latency_ms) + ' ms' : '—';
+      at.avg_latency_ms != null ? Math.round(at.avg_latency_ms) + ' ms' : '—';
 
     // ── Cost card ──
-    if (d.cost_per_mtok != null && d.total_saved_tokens != null) {
-      const cost = (d.total_saved_tokens / 1000000) * d.cost_per_mtok;
+    if (d.cost_per_mtok != null && at.tokens_saved != null) {
+      const cost = (at.tokens_saved / 1000000) * d.cost_per_mtok;
       document.getElementById('card_cost').textContent = '$' + cost.toFixed(2);
       document.getElementById('card_cost_label').textContent = '@ $' + d.cost_per_mtok.toFixed(2) + ' / MTok';
     }
