@@ -358,15 +358,12 @@ def record_request(session_id: str, session_name: str | None = None):
         sess["name"] = session_name
 
     if _db_conn is not None:
-        pending = _db_conn.execute(
-            "SELECT slug FROM trackers WHERE status='pending'"
-        ).fetchone()
-        if pending:
-            ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
-            _db_conn.execute(
-                "UPDATE trackers SET status='active', session_id=?, linked_at=? WHERE slug=?",
-                (session_id, ts, pending[0]),
-            )
+        ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        result = _db_conn.execute(
+            "UPDATE trackers SET status='active', session_id=?, linked_at=? WHERE status='pending'",
+            (session_id, ts),
+        )
+        if result.rowcount > 0:
             _db_conn.commit()
 
 # ---------------------------------------------------------------------------
@@ -631,7 +628,6 @@ async def get_stats(session_id: str | None = None):
 
     if _db_conn is not None:
         active_model = compressor_info["model"]
-        sess_filter = " AND session_id = ?" if session_id else ""
         sess_args   = (session_id,) if session_id else ()
 
         by_model_rows = _db_conn.execute(
@@ -650,19 +646,35 @@ async def get_stats(session_id: str | None = None):
             sess_args,
         ).fetchall()
         by_model = [dict(r) for r in by_model_rows]
-        today_row = _db_conn.execute(
-            f"""
-            SELECT
-                COUNT(*) AS requests,
-                COALESCE(SUM(original_tokens - compressed_tokens), 0) AS tokens_saved,
-                ROUND(AVG((original_tokens - compressed_tokens) * 100.0 / original_tokens), 1) AS avg_savings_pct,
-                ROUND(AVG(latency_ms), 1) AS avg_latency_ms,
-                COUNT(DISTINCT session_id) AS sessions
-            FROM compressions
-            WHERE date(ts) = date('now') AND model = ?{sess_filter}
-            """,
-            (active_model, *sess_args),
-        ).fetchone()
+
+        if session_id:
+            today_row = _db_conn.execute(
+                """
+                SELECT
+                    COUNT(*) AS requests,
+                    COALESCE(SUM(original_tokens - compressed_tokens), 0) AS tokens_saved,
+                    ROUND(AVG((original_tokens - compressed_tokens) * 100.0 / original_tokens), 1) AS avg_savings_pct,
+                    ROUND(AVG(latency_ms), 1) AS avg_latency_ms,
+                    COUNT(DISTINCT session_id) AS sessions
+                FROM compressions
+                WHERE date(ts) = date('now') AND session_id = ?
+                """,
+                (session_id,),
+            ).fetchone()
+        else:
+            today_row = _db_conn.execute(
+                """
+                SELECT
+                    COUNT(*) AS requests,
+                    COALESCE(SUM(original_tokens - compressed_tokens), 0) AS tokens_saved,
+                    ROUND(AVG((original_tokens - compressed_tokens) * 100.0 / original_tokens), 1) AS avg_savings_pct,
+                    ROUND(AVG(latency_ms), 1) AS avg_latency_ms,
+                    COUNT(DISTINCT session_id) AS sessions
+                FROM compressions
+                WHERE date(ts) = date('now') AND model = ?
+                """,
+                (active_model,),
+            ).fetchone()
         if today_row:
             today_stats = {
                 "requests": today_row[0] or 0,
@@ -672,20 +684,36 @@ async def get_stats(session_id: str | None = None):
                 "sessions": today_row[4] or 0,
             }
 
-        alltime_row = _db_conn.execute(
-            f"""
-            SELECT
-                COUNT(*) AS requests,
-                COALESCE(SUM(original_tokens - compressed_tokens), 0) AS tokens_saved,
-                ROUND(AVG((original_tokens - compressed_tokens) * 100.0 / original_tokens), 1) AS avg_savings_pct,
-                ROUND(AVG(latency_ms), 1) AS avg_latency_ms,
-                COUNT(DISTINCT session_id) AS sessions,
-                ROUND(AVG(CAST(original_tokens AS REAL) / NULLIF(compressed_tokens, 0)), 2) AS avg_ratio
-            FROM compressions
-            WHERE model = ?{sess_filter}
-            """,
-            (active_model, *sess_args),
-        ).fetchone()
+        if session_id:
+            alltime_row = _db_conn.execute(
+                """
+                SELECT
+                    COUNT(*) AS requests,
+                    COALESCE(SUM(original_tokens - compressed_tokens), 0) AS tokens_saved,
+                    ROUND(AVG((original_tokens - compressed_tokens) * 100.0 / original_tokens), 1) AS avg_savings_pct,
+                    ROUND(AVG(latency_ms), 1) AS avg_latency_ms,
+                    COUNT(DISTINCT session_id) AS sessions,
+                    ROUND(AVG(CAST(original_tokens AS REAL) / NULLIF(compressed_tokens, 0)), 2) AS avg_ratio
+                FROM compressions
+                WHERE session_id = ?
+                """,
+                (session_id,),
+            ).fetchone()
+        else:
+            alltime_row = _db_conn.execute(
+                """
+                SELECT
+                    COUNT(*) AS requests,
+                    COALESCE(SUM(original_tokens - compressed_tokens), 0) AS tokens_saved,
+                    ROUND(AVG((original_tokens - compressed_tokens) * 100.0 / original_tokens), 1) AS avg_savings_pct,
+                    ROUND(AVG(latency_ms), 1) AS avg_latency_ms,
+                    COUNT(DISTINCT session_id) AS sessions,
+                    ROUND(AVG(CAST(original_tokens AS REAL) / NULLIF(compressed_tokens, 0)), 2) AS avg_ratio
+                FROM compressions
+                WHERE model = ?
+                """,
+                (active_model,),
+            ).fetchone()
         if alltime_row:
             alltime_stats = {
                 "requests": alltime_row[0] or 0,
@@ -696,18 +724,32 @@ async def get_stats(session_id: str | None = None):
                 "avg_ratio": alltime_row[5] or 0.0,
             }
 
-        recent_db_rows = _db_conn.execute(
-            f"""
-            SELECT ts, session_id, model, original_tokens, compressed_tokens,
-                   ROUND((original_tokens - compressed_tokens) * 100.0 / original_tokens, 1) AS savings_pct,
-                   latency_ms
-            FROM compressions
-            WHERE model = ?{sess_filter}
-            ORDER BY id DESC
-            LIMIT 20
-            """,
-            (active_model, *sess_args),
-        ).fetchall()
+        if session_id:
+            recent_db_rows = _db_conn.execute(
+                """
+                SELECT ts, session_id, model, original_tokens, compressed_tokens,
+                       ROUND((original_tokens - compressed_tokens) * 100.0 / original_tokens, 1) AS savings_pct,
+                       latency_ms
+                FROM compressions
+                WHERE session_id = ?
+                ORDER BY id DESC
+                LIMIT 20
+                """,
+                (session_id,),
+            ).fetchall()
+        else:
+            recent_db_rows = _db_conn.execute(
+                """
+                SELECT ts, session_id, model, original_tokens, compressed_tokens,
+                       ROUND((original_tokens - compressed_tokens) * 100.0 / original_tokens, 1) AS savings_pct,
+                       latency_ms
+                FROM compressions
+                WHERE model = ?
+                ORDER BY id DESC
+                LIMIT 20
+                """,
+                (active_model,),
+            ).fetchall()
         recent_rows = [
             {
                 "ts": r[0],
@@ -868,7 +910,7 @@ async def get_tracker():
         return JSONResponse(None)
     row = _db_conn.execute(
         "SELECT slug, name, status, session_id, created_at, linked_at "
-        "FROM trackers ORDER BY created_at DESC LIMIT 1"
+        "FROM trackers ORDER BY (status='pending') DESC, created_at DESC LIMIT 1"
     ).fetchone()
     return JSONResponse(dict(row) if row else None)
 
