@@ -1091,9 +1091,26 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     .cards { grid-template-columns: repeat(2, 1fr); }
     .layer-pct, .hero-pct { font-size: 48px; }
   }
+
+  /* ── Tracker banner ── */
+  .tracker-banner { display: none; align-items: center; gap: 12px; background: #0d1a35; border: 1px solid #1e2f50; border-radius: 8px; padding: 10px 16px; margin-bottom: 12px; font-size: 12px; }
+  .tracker-banner a { color: #58a6ff; text-decoration: none; flex-shrink: 0; }
+  .tracker-banner a:hover { text-decoration: underline; }
+  .tracker-sep { color: #30363d; }
+  .tracker-name { color: #f0f6fc; font-weight: 700; }
+  .tracker-status-active { color: #3fb950; }
+  .tracker-status-pending { color: #d29922; }
 </style>
 </head>
 <body>
+
+<!-- Session tracker banner (populated by JS when TRACKER is defined) -->
+<div class="tracker-banner" id="tracker_banner">
+  <a href="/dashboard">← global</a>
+  <span class="tracker-sep">|</span>
+  <span class="tracker-name" id="tracker_banner_name"></span>
+  <span id="tracker_banner_status"></span>
+</div>
 
 <div class="header">
   <div style="display:flex;align-items:center;gap:8px">
@@ -1258,6 +1275,25 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <div class="footer">All data from metrics.db &nbsp;·&nbsp; updated every 2s</div>
 
 <script>
+const TRACKER = (typeof window !== 'undefined' && window.TRACKER) ? window.TRACKER : null;
+let FILTER_SESSION = TRACKER ? TRACKER.session_id : null;
+
+function updateBanner() {
+  if (!TRACKER) return;
+  const bannerEl = document.getElementById('tracker_banner');
+  bannerEl.style.display = 'flex';
+  document.getElementById('tracker_banner_name').textContent = TRACKER.name;
+  const statusEl = document.getElementById('tracker_banner_status');
+  if (TRACKER.status === 'active') {
+    const sid = (TRACKER.session_id || '').slice(0, 8);
+    statusEl.className = 'tracker-status-active';
+    statusEl.textContent = 'active · ' + sid;
+  } else {
+    statusEl.className = 'tracker-status-pending';
+    statusEl.innerHTML = '<span class="live-dot" style="background:#d29922;margin-right:4px"></span>waiting for next session…';
+  }
+}
+
 function fmt(n) {
   if (n == null) return '—';
   if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
@@ -1302,7 +1338,25 @@ async function switchModel(model) {
 
 async function refresh() {
   try {
-    const r = await fetch('/stats');
+  // Session tracker: poll for link while pending
+  if (TRACKER && TRACKER.status === 'pending') {
+    try {
+      const t = await fetch('/admin/tracker').then(r => r.json());
+      if (t && t.slug === TRACKER.slug && t.status === 'active') {
+        TRACKER.status = 'active';
+        TRACKER.session_id = t.session_id;
+        FILTER_SESSION = t.session_id;
+      }
+    } catch(e) {}
+    updateBanner();
+    if (!FILTER_SESSION) return; // still pending — no stats to show yet
+  }
+  if (TRACKER) updateBanner();
+
+  // Build stats URL (with session filter when on session dashboard)
+  const statsUrl = '/stats' + (FILTER_SESSION ? '?session_id=' + encodeURIComponent(FILTER_SESSION) : '');
+
+    const r = await fetch(statsUrl);
     const d = await r.json();
 
     // ── Uptime ──
@@ -1510,7 +1564,10 @@ async function refreshTimeseries() {
   try {
     const sel = document.getElementById('model_select');
     const model = sel ? sel.value : '';
-    const r = await fetch('/stats/timeseries' + (model ? '?model=' + encodeURIComponent(model) : ''));
+    const params = [];
+    if (model) params.push('model=' + encodeURIComponent(model));
+    if (FILTER_SESSION) params.push('session_id=' + encodeURIComponent(FILTER_SESSION));
+    const r = await fetch('/stats/timeseries' + (params.length ? '?' + params.join('&') : ''));
     const buckets = await r.json();
     const chartEl = document.getElementById('ts_chart');
     const labelsEl = document.getElementById('ts_labels');
@@ -1532,6 +1589,7 @@ async function refreshTimeseries() {
   } catch(e) { console.error(e); }
 }
 
+updateBanner();
 refresh();
 refreshTimeseries();
 setInterval(refresh, 2000);
