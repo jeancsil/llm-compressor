@@ -34,7 +34,7 @@ KNOWN_MODELS = ("llmlingua2", "llmlingua2-large", "kompress")
 
 def init_db(path: str):
     import sqlite3 as _sqlite3
-    conn = _sqlite3.connect(path)
+    conn = _sqlite3.connect(path, check_same_thread=False)
     conn.row_factory = _sqlite3.Row
     conn.execute(
         """
@@ -356,6 +356,18 @@ def record_request(session_id: str, session_name: str | None = None):
     sess["last_seen"] = datetime.now().isoformat()
     if session_name:
         sess["name"] = session_name
+
+    if _db_conn is not None:
+        pending = _db_conn.execute(
+            "SELECT slug FROM trackers WHERE status='pending'"
+        ).fetchone()
+        if pending:
+            ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            _db_conn.execute(
+                "UPDATE trackers SET status='active', session_id=?, linked_at=? WHERE slug=?",
+                (session_id, ts, pending[0]),
+            )
+            _db_conn.commit()
 
 # ---------------------------------------------------------------------------
 # rtk integration (optional — gracefully absent when rtk not installed)

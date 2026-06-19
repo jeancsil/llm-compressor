@@ -79,3 +79,28 @@ def test_delete_tracker(client: TestClient):
 def test_delete_tracker_404(client: TestClient):
     r = client.delete("/admin/tracker/nonexistent")
     assert r.status_code == 404
+
+
+def test_auto_link_pending_tracker(client: TestClient):
+    import sys
+    proxy = sys.modules["llmlingua_proxy"]
+
+    # Create a pending tracker
+    client.post("/admin/tracker", json={"name": "Auto Link Test"})
+    assert client.get("/admin/tracker").json()["status"] == "pending"
+
+    # Simulate a session request arriving
+    proxy.record_request("session-abc-123")
+
+    tracker = client.get("/admin/tracker").json()
+    assert tracker["status"] == "active"
+    assert tracker["session_id"] == "session-abc-123"
+    assert tracker["linked_at"] is not None
+
+
+def test_no_tracker_record_request_is_safe(client: TestClient):
+    import sys
+    proxy = sys.modules["llmlingua_proxy"]
+    # No tracker exists — should not raise
+    proxy.record_request("session-xyz")
+    assert client.get("/admin/tracker").json() is None
