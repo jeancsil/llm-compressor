@@ -34,7 +34,7 @@ KNOWN_MODELS = ("llmlingua2", "llmlingua2-large", "kompress")
 
 def init_db(path: str):
     import sqlite3 as _sqlite3
-    conn = _sqlite3.connect(path)
+    conn = _sqlite3.connect(path, check_same_thread=False)
     conn.row_factory = _sqlite3.Row
     conn.execute(
         """
@@ -52,6 +52,18 @@ def init_db(path: str):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_ts ON compressions(ts)")
     conn.execute(
         "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS trackers (
+            slug        TEXT PRIMARY KEY,
+            name        TEXT NOT NULL,
+            status      TEXT NOT NULL DEFAULT 'pending',
+            session_id  TEXT,
+            created_at  TEXT NOT NULL,
+            linked_at   TEXT
+        )
+        """
     )
     conn.commit()
     return conn
@@ -132,6 +144,14 @@ def recover_stats_from_backup(conn, bak_path: str = "stats.json.bak") -> None:
         print(f"[recovery] {rows_inserted} synthetic rows from {bak_path}. Request offset: {legacy_offset}.")
     except Exception as e:
         print(f"[recovery] Failed: {e}")
+
+
+def make_slug(name: str, conn) -> str:
+    base = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "tracker"
+    slug, i = base, 2
+    while conn.execute("SELECT 1 FROM trackers WHERE slug=?", (slug,)).fetchone():
+        slug, i = f"{base}-{i}", i + 1
+    return slug
 
 
 def load_stats_from_db(conn) -> None:
@@ -222,7 +242,11 @@ def _load_kompress_backend() -> dict:
     print(f"Loading kompress-v2-base (device={device}, threshold={threshold})...")
     config = KompressConfig(device=device, score_threshold=threshold)
     compressor = KompressCompressor(config=config)
+    import transformers as _tf
+    _prev_level = _tf.logging.get_verbosity()
+    _tf.logging.set_verbosity_error()
     compressor.preload()
+    _tf.logging.set_verbosity(_prev_level)
     print(f"kompress-v2-base ready.")
     return {"type": "kompress", "compressor": compressor, "threshold": threshold}
 
@@ -332,6 +356,15 @@ def record_request(session_id: str, session_name: str | None = None):
     sess["last_seen"] = datetime.now().isoformat()
     if session_name:
         sess["name"] = session_name
+
+    if _db_conn is not None:
+        ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        result = _db_conn.execute(
+            "UPDATE trackers SET status='active', session_id=?, linked_at=? WHERE status='pending'",
+            (session_id, ts),
+        )
+        if result.rowcount > 0:
+            _db_conn.commit()
 
 # ---------------------------------------------------------------------------
 # rtk integration (optional — gracefully absent when rtk not installed)
@@ -551,7 +584,7 @@ async def health():
 
 
 @app.get("/stats")
-async def get_stats():
+async def get_stats(session_id: str | None = None):
     saved = stats["total_original_tokens"] - stats["total_compressed_tokens"]
     ratio = (stats["total_original_tokens"] / stats["total_compressed_tokens"]
              if stats["total_compressed_tokens"] > 0 else 1.0)
@@ -594,8 +627,11 @@ async def get_stats():
     recent_rows: list = []
 
     if _db_conn is not None:
+        active_model = compressor_info["model"]
+        sess_args   = (session_id,) if session_id else ()
+
         by_model_rows = _db_conn.execute(
-            """
+            f"""
             SELECT model,
                    COUNT(*) AS requests,
                    ROUND(AVG((original_tokens - compressed_tokens) * 100.0 / original_tokens), 1) AS avg_savings_pct,
@@ -603,26 +639,42 @@ async def get_stats():
                    SUM(original_tokens - compressed_tokens) AS total_saved,
                    ROUND(AVG(latency_ms), 1) AS avg_latency_ms
             FROM compressions
+            {'WHERE session_id = ?' if session_id else ''}
             GROUP BY model
             ORDER BY requests DESC
-            """
+            """,
+            sess_args,
         ).fetchall()
         by_model = [dict(r) for r in by_model_rows]
 
-        active_model = compressor_info["model"]
-        today_row = _db_conn.execute(
-            """
-            SELECT
-                COUNT(*) AS requests,
-                COALESCE(SUM(original_tokens - compressed_tokens), 0) AS tokens_saved,
-                ROUND(AVG((original_tokens - compressed_tokens) * 100.0 / original_tokens), 1) AS avg_savings_pct,
-                ROUND(AVG(latency_ms), 1) AS avg_latency_ms,
-                COUNT(DISTINCT session_id) AS sessions
-            FROM compressions
-            WHERE date(ts) = date('now') AND model = ?
-            """,
-            (active_model,),
-        ).fetchone()
+        if session_id:
+            today_row = _db_conn.execute(
+                """
+                SELECT
+                    COUNT(*) AS requests,
+                    COALESCE(SUM(original_tokens - compressed_tokens), 0) AS tokens_saved,
+                    ROUND(AVG((original_tokens - compressed_tokens) * 100.0 / original_tokens), 1) AS avg_savings_pct,
+                    ROUND(AVG(latency_ms), 1) AS avg_latency_ms,
+                    COUNT(DISTINCT session_id) AS sessions
+                FROM compressions
+                WHERE date(ts) = date('now') AND session_id = ?
+                """,
+                (session_id,),
+            ).fetchone()
+        else:
+            today_row = _db_conn.execute(
+                """
+                SELECT
+                    COUNT(*) AS requests,
+                    COALESCE(SUM(original_tokens - compressed_tokens), 0) AS tokens_saved,
+                    ROUND(AVG((original_tokens - compressed_tokens) * 100.0 / original_tokens), 1) AS avg_savings_pct,
+                    ROUND(AVG(latency_ms), 1) AS avg_latency_ms,
+                    COUNT(DISTINCT session_id) AS sessions
+                FROM compressions
+                WHERE date(ts) = date('now') AND model = ?
+                """,
+                (active_model,),
+            ).fetchone()
         if today_row:
             today_stats = {
                 "requests": today_row[0] or 0,
@@ -632,17 +684,36 @@ async def get_stats():
                 "sessions": today_row[4] or 0,
             }
 
-        alltime_row = _db_conn.execute(
-            """
-            SELECT
-                COUNT(*) AS requests,
-                COALESCE(SUM(original_tokens - compressed_tokens), 0) AS tokens_saved,
-                ROUND(AVG((original_tokens - compressed_tokens) * 100.0 / original_tokens), 1) AS avg_savings_pct,
-                ROUND(AVG(latency_ms), 1) AS avg_latency_ms,
-                COUNT(DISTINCT session_id) AS sessions
-            FROM compressions
-            """
-        ).fetchone()
+        if session_id:
+            alltime_row = _db_conn.execute(
+                """
+                SELECT
+                    COUNT(*) AS requests,
+                    COALESCE(SUM(original_tokens - compressed_tokens), 0) AS tokens_saved,
+                    ROUND(AVG((original_tokens - compressed_tokens) * 100.0 / original_tokens), 1) AS avg_savings_pct,
+                    ROUND(AVG(latency_ms), 1) AS avg_latency_ms,
+                    COUNT(DISTINCT session_id) AS sessions,
+                    ROUND(AVG(CAST(original_tokens AS REAL) / NULLIF(compressed_tokens, 0)), 2) AS avg_ratio
+                FROM compressions
+                WHERE session_id = ?
+                """,
+                (session_id,),
+            ).fetchone()
+        else:
+            alltime_row = _db_conn.execute(
+                """
+                SELECT
+                    COUNT(*) AS requests,
+                    COALESCE(SUM(original_tokens - compressed_tokens), 0) AS tokens_saved,
+                    ROUND(AVG((original_tokens - compressed_tokens) * 100.0 / original_tokens), 1) AS avg_savings_pct,
+                    ROUND(AVG(latency_ms), 1) AS avg_latency_ms,
+                    COUNT(DISTINCT session_id) AS sessions,
+                    ROUND(AVG(CAST(original_tokens AS REAL) / NULLIF(compressed_tokens, 0)), 2) AS avg_ratio
+                FROM compressions
+                WHERE model = ?
+                """,
+                (active_model,),
+            ).fetchone()
         if alltime_row:
             alltime_stats = {
                 "requests": alltime_row[0] or 0,
@@ -650,20 +721,35 @@ async def get_stats():
                 "avg_savings_pct": alltime_row[2] or 0.0,
                 "avg_latency_ms": alltime_row[3] or 0.0,
                 "sessions": alltime_row[4] or 0,
+                "avg_ratio": alltime_row[5] or 0.0,
             }
 
-        recent_db_rows = _db_conn.execute(
-            """
-            SELECT ts, session_id, model, original_tokens, compressed_tokens,
-                   ROUND((original_tokens - compressed_tokens) * 100.0 / original_tokens, 1) AS savings_pct,
-                   latency_ms
-            FROM compressions
-            WHERE model = ?
-            ORDER BY id DESC
-            LIMIT 20
-            """,
-            (active_model,),
-        ).fetchall()
+        if session_id:
+            recent_db_rows = _db_conn.execute(
+                """
+                SELECT ts, session_id, model, original_tokens, compressed_tokens,
+                       ROUND((original_tokens - compressed_tokens) * 100.0 / original_tokens, 1) AS savings_pct,
+                       latency_ms
+                FROM compressions
+                WHERE session_id = ?
+                ORDER BY id DESC
+                LIMIT 20
+                """,
+                (session_id,),
+            ).fetchall()
+        else:
+            recent_db_rows = _db_conn.execute(
+                """
+                SELECT ts, session_id, model, original_tokens, compressed_tokens,
+                       ROUND((original_tokens - compressed_tokens) * 100.0 / original_tokens, 1) AS savings_pct,
+                       latency_ms
+                FROM compressions
+                WHERE model = ?
+                ORDER BY id DESC
+                LIMIT 20
+                """,
+                (active_model,),
+            ).fetchall()
         recent_rows = [
             {
                 "ts": r[0],
@@ -698,39 +784,59 @@ async def get_stats():
 
 
 @app.get("/stats/timeseries")
-async def get_timeseries(model: str | None = None):
+async def get_timeseries(model: str | None = None, session_id: str | None = None):
     if _db_conn is None:
         return JSONResponse([])
+    sess_filter = " AND session_id = ?" if session_id else ""
+    sess_args   = (session_id,) if session_id else ()
     if model:
         rows = _db_conn.execute(
-            """
+            f"""
             SELECT strftime('%Y-%m-%dT%H:00:00', ts) AS hour,
                    COUNT(*) AS requests,
                    ROUND(AVG((original_tokens - compressed_tokens) * 100.0 / original_tokens), 1) AS avg_savings_pct,
                    SUM(original_tokens - compressed_tokens) AS total_saved,
                    ROUND(AVG(latency_ms), 1) AS avg_latency_ms
             FROM compressions
-            WHERE ts >= datetime('now', '-48 hours') AND model = ?
+            WHERE ts >= datetime('now', '-48 hours') AND model = ?{sess_filter}
             GROUP BY hour
             ORDER BY hour
             """,
-            (model,),
+            (model, *sess_args),
         ).fetchall()
     else:
         rows = _db_conn.execute(
-            """
+            f"""
             SELECT strftime('%Y-%m-%dT%H:00:00', ts) AS hour,
                    COUNT(*) AS requests,
                    ROUND(AVG((original_tokens - compressed_tokens) * 100.0 / original_tokens), 1) AS avg_savings_pct,
                    SUM(original_tokens - compressed_tokens) AS total_saved,
                    ROUND(AVG(latency_ms), 1) AS avg_latency_ms
             FROM compressions
-            WHERE ts >= datetime('now', '-48 hours')
+            WHERE ts >= datetime('now', '-48 hours'){sess_filter}
             GROUP BY hour
             ORDER BY hour
-            """
+            """,
+            sess_args,
         ).fetchall()
     return JSONResponse([dict(r) for r in rows])
+
+
+@app.get("/dashboard/{slug}", response_class=HTMLResponse)
+async def session_dashboard(slug: str):
+    if _db_conn is None:
+        return HTMLResponse("<h1>DB not ready</h1>", status_code=503)
+    row = _db_conn.execute(
+        "SELECT slug, name, status, session_id, created_at, linked_at "
+        "FROM trackers WHERE slug=?",
+        (slug,),
+    ).fetchone()
+    if row is None:
+        return HTMLResponse(f"<h1>Tracker '{slug}' not found</h1>", status_code=404)
+    tracker = dict(row)
+    bootstrap = f'<script>window.TRACKER = {json.dumps(tracker)};</script>'
+    html = DASHBOARD_HTML.replace("</head>", bootstrap + "\n</head>", 1)
+    return HTMLResponse(html)
 
 
 @app.get("/dashboard", response_class=HTMLResponse)
@@ -770,6 +876,54 @@ async def set_model(request: Request):
 
     threading.Thread(target=load, daemon=True).start()
     return JSONResponse({"status": "loading", "model": model})
+
+
+@app.post("/admin/tracker")
+async def create_tracker(request: Request):
+    body = await request.json()
+    name = (body.get("name") or "").strip()
+    if not name:
+        return JSONResponse({"error": "name required"}, status_code=400)
+    if _db_conn is None:
+        return JSONResponse({"error": "db not ready"}, status_code=503)
+    pending = _db_conn.execute(
+        "SELECT slug FROM trackers WHERE status='pending'"
+    ).fetchone()
+    if pending:
+        return JSONResponse(
+            {"error": "a pending tracker already exists", "slug": pending[0]},
+            status_code=409,
+        )
+    slug = make_slug(name, _db_conn)
+    ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    _db_conn.execute(
+        "INSERT INTO trackers (slug, name, status, created_at) VALUES (?,?,'pending',?)",
+        (slug, name, ts),
+    )
+    _db_conn.commit()
+    return JSONResponse({"slug": slug, "name": name, "status": "pending", "session_id": None, "created_at": ts})
+
+
+@app.get("/admin/tracker")
+async def get_tracker():
+    if _db_conn is None:
+        return JSONResponse(None)
+    row = _db_conn.execute(
+        "SELECT slug, name, status, session_id, created_at, linked_at "
+        "FROM trackers ORDER BY (status='pending') DESC, created_at DESC LIMIT 1"
+    ).fetchone()
+    return JSONResponse(dict(row) if row else None)
+
+
+@app.delete("/admin/tracker/{slug}")
+async def delete_tracker(slug: str):
+    if _db_conn is None:
+        return JSONResponse({"error": "db not ready"}, status_code=503)
+    result = _db_conn.execute("DELETE FROM trackers WHERE slug=?", (slug,))
+    _db_conn.commit()
+    if result.rowcount == 0:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return JSONResponse({"deleted": slug})
 
 
 @app.get("/v1/models")
@@ -979,9 +1133,37 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     .cards { grid-template-columns: repeat(2, 1fr); }
     .layer-pct, .hero-pct { font-size: 48px; }
   }
+
+  /* ── Tracker banner ── */
+  .tracker-banner { display: none; align-items: center; gap: 12px; background: #0d1a35; border: 1px solid #1e2f50; border-radius: 8px; padding: 10px 16px; margin-bottom: 12px; font-size: 12px; }
+  .tracker-banner a { color: #58a6ff; text-decoration: none; flex-shrink: 0; }
+  .tracker-banner a:hover { text-decoration: underline; }
+  .tracker-sep { color: #30363d; }
+  .tracker-name { color: #f0f6fc; font-weight: 700; }
+  .tracker-status-active { color: #3fb950; }
+  .tracker-status-pending { color: #d29922; }
+  /* ── Track button / chip ── */
+  .track-btn { font-size: 11px; background: #161b22; color: #58a6ff; border: 1px solid #30363d; border-radius: 6px; padding: 4px 10px; cursor: pointer; font-family: inherit; }
+  .track-btn:hover { border-color: #58a6ff; }
+  .track-form { display: none; align-items: center; gap: 6px; }
+  .track-input { font-size: 11px; background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; border-radius: 5px; padding: 3px 8px; font-family: inherit; outline: none; width: 160px; }
+  .track-input:focus { border-color: #58a6ff; }
+  .track-start { font-size: 11px; background: #0d1a35; color: #58a6ff; border: 1px solid #1e2f50; border-radius: 5px; padding: 3px 8px; cursor: pointer; font-family: inherit; }
+  .track-chip { display: none; align-items: center; gap: 6px; font-size: 11px; }
+  .track-chip a { color: #58a6ff; text-decoration: none; }
+  .track-chip a:hover { text-decoration: underline; }
+  .track-cancel { background: none; color: #8b949e; border: none; cursor: pointer; font-size: 14px; padding: 0 2px; line-height: 1; }
 </style>
 </head>
 <body>
+
+<!-- Session tracker banner (populated by JS when TRACKER is defined) -->
+<div class="tracker-banner" id="tracker_banner">
+  <a href="/dashboard">← global</a>
+  <span class="tracker-sep">|</span>
+  <span class="tracker-name" id="tracker_banner_name"></span>
+  <span id="tracker_banner_status"></span>
+</div>
 
 <div class="header">
   <div style="display:flex;align-items:center;gap:8px">
@@ -993,6 +1175,18 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       <option value="kompress">kompress</option>
     </select>
     <span class="model-loading" id="model_loading">loading…</span>
+    <!-- Track new session controls -->
+    <div class="track-chip" id="track_chip">
+      <a id="track_chip_link" href="#"></a>
+      <span id="track_chip_status" style="font-size:10px"></span>
+      <button class="track-cancel" id="track_cancel_btn" onclick="">✕</button>
+    </div>
+    <button class="track-btn" id="track_btn" onclick="openTrackForm()">Track new session</button>
+    <div class="track-form" id="track_form">
+      <input class="track-input" id="track_name" type="text" placeholder="session name" />
+      <button class="track-start" onclick="submitTracker()">Start</button>
+      <button class="track-cancel" onclick="closeTrackForm()">✕</button>
+    </div>
   </div>
   <div class="header-right">
     <span id="uptime_display">—</span>
@@ -1013,9 +1207,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     </div>
   </div>
   <div class="layer layer-api">
-    <div class="layer-label">API layer <span class="layer-badge">LLMLingua-2</span></div>
+    <div class="layer-label">API layer <span class="layer-badge" id="api_layer_badge">LLMLingua-2</span></div>
     <div class="layer-pct" id="api_pct_layers">—%</div>
-    <div class="layer-sub">Prompt compression · LLMLingua-2 tokenizer units</div>
+    <div class="layer-sub" id="api_layer_sub">Prompt compression · LLMLingua-2 tokenizer units</div>
     <div class="layer-stats">
       <div class="layer-stat"><span class="layer-stat-k">requests</span><span class="layer-stat-v" id="api_reqs_layers">—</span></div>
       <div class="layer-stat"><span class="layer-stat-k">tokens saved</span><span class="layer-stat-v" id="api_saved_layers">—</span></div>
@@ -1029,7 +1223,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   <div class="hero-left">
     <div class="hero-pct" id="savings_pct">—%</div>
     <div class="hero-label">tokens saved overall</div>
-    <div class="hero-sublabel">LLMLingua-2 tokenizer units</div>
+    <div class="hero-sublabel" id="api_layer_sub_solo">LLMLingua-2 tokenizer units</div>
   </div>
   <div class="hero-right">
     <div class="term-prompt">$ llmlingua-proxy --status</div>
@@ -1146,6 +1340,82 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <div class="footer">All data from metrics.db &nbsp;·&nbsp; updated every 2s</div>
 
 <script>
+const TRACKER = (typeof window !== 'undefined' && window.TRACKER) ? window.TRACKER : null;
+let FILTER_SESSION = TRACKER ? TRACKER.session_id : null;
+
+function updateBanner() {
+  if (!TRACKER) return;
+  const bannerEl = document.getElementById('tracker_banner');
+  bannerEl.style.display = 'flex';
+  document.getElementById('tracker_banner_name').textContent = TRACKER.name;
+  const statusEl = document.getElementById('tracker_banner_status');
+  if (TRACKER.status === 'active') {
+    const sid = (TRACKER.session_id || '').slice(0, 8);
+    statusEl.className = 'tracker-status-active';
+    statusEl.textContent = 'active · ' + sid;
+  } else {
+    statusEl.className = 'tracker-status-pending';
+    statusEl.innerHTML = '<span class="live-dot" style="background:#d29922;margin-right:4px"></span>waiting for next session…';
+  }
+}
+
+function openTrackForm() {
+  document.getElementById('track_btn').style.display = 'none';
+  document.getElementById('track_form').style.display = 'flex';
+  document.getElementById('track_name').focus();
+}
+
+function closeTrackForm() {
+  document.getElementById('track_form').style.display = 'none';
+  document.getElementById('track_btn').style.display = '';
+  document.getElementById('track_name').value = '';
+}
+
+async function submitTracker() {
+  const name = (document.getElementById('track_name').value || '').trim();
+  if (!name) return;
+  try {
+    const r = await fetch('/admin/tracker', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    const data = await r.json();
+    if (r.ok) {
+      window.location.href = '/dashboard/' + data.slug;
+    } else {
+      alert(data.error || 'Error creating tracker');
+      closeTrackForm();
+    }
+  } catch(e) { console.error(e); }
+}
+
+async function cancelTracker(slug) {
+  try { await fetch('/admin/tracker/' + encodeURIComponent(slug), { method: 'DELETE' }); } catch(e) {}
+  document.getElementById('track_chip').style.display = 'none';
+  document.getElementById('track_btn').style.display = '';
+}
+
+function updateTrackerChip(tracker) {
+  const chip = document.getElementById('track_chip');
+  const btn  = document.getElementById('track_btn');
+  if (!tracker) {
+    chip.style.display = 'none';
+    btn.style.display = '';
+    return;
+  }
+  btn.style.display = 'none';
+  chip.style.display = 'flex';
+  const color = tracker.status === 'active' ? '#3fb950' : '#d29922';
+  document.getElementById('track_chip_link').href = '/dashboard/' + tracker.slug;
+  document.getElementById('track_chip_link').textContent = tracker.name;
+  const statusEl = document.getElementById('track_chip_status');
+  statusEl.style.color = color;
+  statusEl.textContent = '· ' + tracker.status;
+  const cancelBtn = document.getElementById('track_cancel_btn');
+  cancelBtn.onclick = () => cancelTracker(tracker.slug);
+}
+
 function fmt(n) {
   if (n == null) return '—';
   if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
@@ -1190,7 +1460,25 @@ async function switchModel(model) {
 
 async function refresh() {
   try {
-    const r = await fetch('/stats');
+  // Session tracker: poll for link while pending
+  if (TRACKER && TRACKER.status === 'pending') {
+    try {
+      const t = await fetch('/admin/tracker').then(r => r.json());
+      if (t && t.slug === TRACKER.slug && t.status === 'active') {
+        TRACKER.status = 'active';
+        TRACKER.session_id = t.session_id;
+        FILTER_SESSION = t.session_id;
+      }
+    } catch(e) {}
+    updateBanner();
+    if (!FILTER_SESSION) return; // still pending — no stats to show yet
+  }
+  if (TRACKER) updateBanner();
+
+  // Build stats URL (with session filter when on session dashboard)
+  const statsUrl = '/stats' + (FILTER_SESSION ? '?session_id=' + encodeURIComponent(FILTER_SESSION) : '');
+
+    const r = await fetch(statsUrl);
     const d = await r.json();
 
     // ── Uptime ──
@@ -1199,9 +1487,9 @@ async function refresh() {
     document.getElementById('uptime_display').textContent = 'up ' + uptimeStr;
     document.getElementById('card_uptime').textContent = uptimeStr;
 
-    // ── API layer numbers ──
-    const apiPct = d.total_original_tokens > 0
-      ? Math.round((1 - d.total_compressed_tokens / d.total_original_tokens) * 100) : 0;
+    // ── API layer numbers (DB-driven, filtered by active model) ──
+    const at = d.alltime || {};
+    const apiPctDisplay = at.avg_savings_pct != null ? Math.round(at.avg_savings_pct) : 0;
 
     // ── Hero: two-layer vs solo ──
     const hasRtk = d.rtk && d.rtk.total_commands > 0;
@@ -1209,6 +1497,15 @@ async function refresh() {
     document.getElementById('hero_solo').style.display   = hasRtk ? 'none' : 'grid';
     document.getElementById('rtk_hint').style.display    = hasRtk ? 'none' : 'flex';
     document.getElementById('rtk_section').style.display = hasRtk ? 'block' : 'none';
+
+    // ── Update API layer model badge (both hero variants) ──
+    const activeModel = d.compressor ? d.compressor.model : 'LLMLingua';
+    const apiBadgeEl = document.getElementById('api_layer_badge');
+    if (apiBadgeEl) apiBadgeEl.textContent = activeModel;
+    const apiSubEl = document.getElementById('api_layer_sub');
+    if (apiSubEl) apiSubEl.textContent = 'Prompt compression · ' + activeModel + ' tokenizer units';
+    const apiSubSoloEl = document.getElementById('api_layer_sub_solo');
+    if (apiSubSoloEl) apiSubSoloEl.textContent = activeModel + ' tokenizer units';
 
     if (hasRtk) {
       const rtk = d.rtk;
@@ -1218,10 +1515,10 @@ async function refresh() {
       document.getElementById('rtk_cmds').textContent   = fmt(rtk.total_commands);
       document.getElementById('rtk_saved').textContent  = fmt(rtk.total_saved_tokens);
       document.getElementById('rtk_avg').textContent    = rtk.avg_savings_pct + '%';
-      document.getElementById('api_pct_layers').textContent   = apiPct + '%';
-      document.getElementById('api_reqs_layers').textContent  = fmt(d.total_requests);
-      document.getElementById('api_saved_layers').textContent = fmt(d.total_saved_tokens);
-      document.getElementById('api_ratio_layers').textContent = d.overall_ratio + '×';
+      document.getElementById('api_pct_layers').textContent   = apiPctDisplay + '%';
+      document.getElementById('api_reqs_layers').textContent  = fmt(at.requests);
+      document.getElementById('api_saved_layers').textContent = fmt(at.tokens_saved);
+      document.getElementById('api_ratio_layers').textContent = at.avg_ratio ? at.avg_ratio + '×' : '—';
 
       // rtk command table
       const maxSaved = Math.max(...rtk.top_commands.map(c => c.saved), 1);
@@ -1236,14 +1533,12 @@ async function refresh() {
           + '</tr>';
       }).join('');
     } else {
-      // Solo hero
-      document.getElementById('savings_pct').textContent = apiPct + '%';
-      document.getElementById('t_requests').textContent  = fmt(d.total_requests);
-      document.getElementById('t_original').textContent  = fmt(d.total_original_tokens);
-      document.getElementById('t_compressed').textContent = fmt(d.total_compressed_tokens);
-      document.getElementById('t_saved').textContent     = fmt(d.total_saved_tokens) + ' (' + apiPct + '%)';
-      document.getElementById('t_ratio').textContent     = d.overall_ratio + '×';
-      document.getElementById('t_sessions').textContent  = Object.keys(d.sessions).length;
+      // Solo hero (DB-driven, filtered by active model)
+      document.getElementById('savings_pct').textContent = apiPctDisplay + '%';
+      document.getElementById('t_requests').textContent  = fmt(at.requests);
+      document.getElementById('t_sessions').textContent  = at.sessions ?? Object.keys(d.sessions).length;
+      document.getElementById('t_saved').textContent     = fmt(at.tokens_saved) + ' (' + apiPctDisplay + '%)';
+      document.getElementById('t_ratio').textContent     = at.avg_ratio ? at.avg_ratio + '×' : '—';
     }
 
     // ── Model badge + select sync ──
@@ -1290,19 +1585,19 @@ async function refresh() {
       }).join('');
     }
 
-    // ── Metric cards ──
-    document.getElementById('card_requests').textContent = fmt(d.total_requests);
-    document.getElementById('card_saved').textContent    = fmt(d.total_saved_tokens);
-    document.getElementById('card_sessions').textContent = Object.keys(d.sessions).length;
-    document.getElementById('card_ratio').textContent    = d.overall_ratio + '×';
+    // ── Metric cards (DB-driven, filtered by active model) ──
+    document.getElementById('card_requests').textContent = fmt(at.requests);
+    document.getElementById('card_saved').textContent    = fmt(at.tokens_saved);
+    document.getElementById('card_sessions').textContent = at.sessions ?? Object.keys(d.sessions).length;
+    document.getElementById('card_ratio').textContent    = at.avg_ratio ? at.avg_ratio + '×' : '—';
 
     // ── Latency card ──
     document.getElementById('card_latency').textContent =
-      d.avg_latency_ms != null ? Math.round(d.avg_latency_ms) + ' ms' : '—';
+      at.avg_latency_ms != null ? Math.round(at.avg_latency_ms) + ' ms' : '—';
 
     // ── Cost card ──
-    if (d.cost_per_mtok != null && d.total_saved_tokens != null) {
-      const cost = (d.total_saved_tokens / 1000000) * d.cost_per_mtok;
+    if (d.cost_per_mtok != null && at.tokens_saved != null) {
+      const cost = (at.tokens_saved / 1000000) * d.cost_per_mtok;
       document.getElementById('card_cost').textContent = '$' + cost.toFixed(2);
       document.getElementById('card_cost_label').textContent = '@ $' + d.cost_per_mtok.toFixed(2) + ' / MTok';
     }
@@ -1384,6 +1679,14 @@ async function refresh() {
         + '</tr>';
     }).join('');
 
+    // Update main dashboard tracker chip (only on global dashboard, not session dashboard)
+    if (!TRACKER) {
+      try {
+        const tr = await fetch('/admin/tracker').then(r => r.json());
+        updateTrackerChip(tr);
+      } catch(e) {}
+    }
+
   } catch(e) { console.error(e); }
 }
 
@@ -1391,7 +1694,10 @@ async function refreshTimeseries() {
   try {
     const sel = document.getElementById('model_select');
     const model = sel ? sel.value : '';
-    const r = await fetch('/stats/timeseries' + (model ? '?model=' + encodeURIComponent(model) : ''));
+    const params = [];
+    if (model) params.push('model=' + encodeURIComponent(model));
+    if (FILTER_SESSION) params.push('session_id=' + encodeURIComponent(FILTER_SESSION));
+    const r = await fetch('/stats/timeseries' + (params.length ? '?' + params.join('&') : ''));
     const buckets = await r.json();
     const chartEl = document.getElementById('ts_chart');
     const labelsEl = document.getElementById('ts_labels');
@@ -1413,6 +1719,7 @@ async function refreshTimeseries() {
   } catch(e) { console.error(e); }
 }
 
+updateBanner();
 refresh();
 refreshTimeseries();
 setInterval(refresh, 2000);
