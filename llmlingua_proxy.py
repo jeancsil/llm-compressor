@@ -792,7 +792,7 @@ async def session_dashboard(slug: str):
     if row is None:
         return HTMLResponse(f"<h1>Tracker '{slug}' not found</h1>", status_code=404)
     tracker = dict(row)
-    bootstrap = f'<script>const TRACKER = {json.dumps(tracker)};</script>'
+    bootstrap = f'<script>window.TRACKER = {json.dumps(tracker)};</script>'
     html = DASHBOARD_HTML.replace("</head>", bootstrap + "\n</head>", 1)
     return HTMLResponse(html)
 
@@ -1100,6 +1100,17 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   .tracker-name { color: #f0f6fc; font-weight: 700; }
   .tracker-status-active { color: #3fb950; }
   .tracker-status-pending { color: #d29922; }
+  /* ── Track button / chip ── */
+  .track-btn { font-size: 11px; background: #161b22; color: #58a6ff; border: 1px solid #30363d; border-radius: 6px; padding: 4px 10px; cursor: pointer; font-family: inherit; }
+  .track-btn:hover { border-color: #58a6ff; }
+  .track-form { display: none; align-items: center; gap: 6px; }
+  .track-input { font-size: 11px; background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; border-radius: 5px; padding: 3px 8px; font-family: inherit; outline: none; width: 160px; }
+  .track-input:focus { border-color: #58a6ff; }
+  .track-start { font-size: 11px; background: #0d1a35; color: #58a6ff; border: 1px solid #1e2f50; border-radius: 5px; padding: 3px 8px; cursor: pointer; font-family: inherit; }
+  .track-chip { display: none; align-items: center; gap: 6px; font-size: 11px; }
+  .track-chip a { color: #58a6ff; text-decoration: none; }
+  .track-chip a:hover { text-decoration: underline; }
+  .track-cancel { background: none; color: #8b949e; border: none; cursor: pointer; font-size: 14px; padding: 0 2px; line-height: 1; }
 </style>
 </head>
 <body>
@@ -1122,6 +1133,18 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       <option value="kompress">kompress</option>
     </select>
     <span class="model-loading" id="model_loading">loading…</span>
+    <!-- Track new session controls -->
+    <div class="track-chip" id="track_chip">
+      <a id="track_chip_link" href="#"></a>
+      <span id="track_chip_status" style="font-size:10px"></span>
+      <button class="track-cancel" id="track_cancel_btn" onclick="">✕</button>
+    </div>
+    <button class="track-btn" id="track_btn" onclick="openTrackForm()">Track new session</button>
+    <div class="track-form" id="track_form">
+      <input class="track-input" id="track_name" type="text" placeholder="session name" />
+      <button class="track-start" onclick="submitTracker()">Start</button>
+      <button class="track-cancel" onclick="closeTrackForm()">✕</button>
+    </div>
   </div>
   <div class="header-right">
     <span id="uptime_display">—</span>
@@ -1292,6 +1315,63 @@ function updateBanner() {
     statusEl.className = 'tracker-status-pending';
     statusEl.innerHTML = '<span class="live-dot" style="background:#d29922;margin-right:4px"></span>waiting for next session…';
   }
+}
+
+function openTrackForm() {
+  document.getElementById('track_btn').style.display = 'none';
+  document.getElementById('track_form').style.display = 'flex';
+  document.getElementById('track_name').focus();
+}
+
+function closeTrackForm() {
+  document.getElementById('track_form').style.display = 'none';
+  document.getElementById('track_btn').style.display = '';
+  document.getElementById('track_name').value = '';
+}
+
+async function submitTracker() {
+  const name = (document.getElementById('track_name').value || '').trim();
+  if (!name) return;
+  try {
+    const r = await fetch('/admin/tracker', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    const data = await r.json();
+    if (r.ok) {
+      window.location.href = '/dashboard/' + data.slug;
+    } else {
+      alert(data.error || 'Error creating tracker');
+      closeTrackForm();
+    }
+  } catch(e) { console.error(e); }
+}
+
+async function cancelTracker(slug) {
+  try { await fetch('/admin/tracker/' + encodeURIComponent(slug), { method: 'DELETE' }); } catch(e) {}
+  document.getElementById('track_chip').style.display = 'none';
+  document.getElementById('track_btn').style.display = '';
+}
+
+function updateTrackerChip(tracker) {
+  const chip = document.getElementById('track_chip');
+  const btn  = document.getElementById('track_btn');
+  if (!tracker) {
+    chip.style.display = 'none';
+    btn.style.display = '';
+    return;
+  }
+  btn.style.display = 'none';
+  chip.style.display = 'flex';
+  const color = tracker.status === 'active' ? '#3fb950' : '#d29922';
+  document.getElementById('track_chip_link').href = '/dashboard/' + tracker.slug;
+  document.getElementById('track_chip_link').textContent = tracker.name;
+  const statusEl = document.getElementById('track_chip_status');
+  statusEl.style.color = color;
+  statusEl.textContent = '· ' + tracker.status;
+  const cancelBtn = document.getElementById('track_cancel_btn');
+  cancelBtn.onclick = () => cancelTracker(tracker.slug);
 }
 
 function fmt(n) {
@@ -1556,6 +1636,14 @@ async function refresh() {
         + '<td class="muted">' + (s.last_seen ? new Date(s.last_seen).toLocaleTimeString() : '—') + '</td>'
         + '</tr>';
     }).join('');
+
+    // Update main dashboard tracker chip (only on global dashboard, not session dashboard)
+    if (!TRACKER) {
+      try {
+        const tr = await fetch('/admin/tracker').then(r => r.json());
+        updateTrackerChip(tr);
+      } catch(e) {}
+    }
 
   } catch(e) { console.error(e); }
 }
