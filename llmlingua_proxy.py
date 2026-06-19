@@ -800,6 +800,54 @@ async def set_model(request: Request):
     return JSONResponse({"status": "loading", "model": model})
 
 
+@app.post("/admin/tracker")
+async def create_tracker(request: Request):
+    body = await request.json()
+    name = (body.get("name") or "").strip()
+    if not name:
+        return JSONResponse({"error": "name required"}, status_code=400)
+    if _db_conn is None:
+        return JSONResponse({"error": "db not ready"}, status_code=503)
+    pending = _db_conn.execute(
+        "SELECT slug FROM trackers WHERE status='pending'"
+    ).fetchone()
+    if pending:
+        return JSONResponse(
+            {"error": "a pending tracker already exists", "slug": pending[0]},
+            status_code=409,
+        )
+    slug = make_slug(name, _db_conn)
+    ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    _db_conn.execute(
+        "INSERT INTO trackers (slug, name, status, created_at) VALUES (?,?,'pending',?)",
+        (slug, name, ts),
+    )
+    _db_conn.commit()
+    return JSONResponse({"slug": slug, "name": name, "status": "pending", "session_id": None, "created_at": ts})
+
+
+@app.get("/admin/tracker")
+async def get_tracker():
+    if _db_conn is None:
+        return JSONResponse(None)
+    row = _db_conn.execute(
+        "SELECT slug, name, status, session_id, created_at, linked_at "
+        "FROM trackers ORDER BY created_at DESC LIMIT 1"
+    ).fetchone()
+    return JSONResponse(dict(row) if row else None)
+
+
+@app.delete("/admin/tracker/{slug}")
+async def delete_tracker(slug: str):
+    if _db_conn is None:
+        return JSONResponse({"error": "db not ready"}, status_code=503)
+    result = _db_conn.execute("DELETE FROM trackers WHERE slug=?", (slug,))
+    _db_conn.commit()
+    if result.rowcount == 0:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return JSONResponse({"deleted": slug})
+
+
 @app.get("/v1/models")
 async def list_models(request: Request):
     headers = build_headers(request)
