@@ -104,3 +104,45 @@ def test_no_tracker_record_request_is_safe(client: TestClient):
     # No tracker exists — should not raise
     proxy.record_request("session-xyz")
     assert client.get("/admin/tracker").json() is None
+
+
+def test_stats_session_filter(client: TestClient):
+    import sys
+    proxy = sys.modules["llmlingua_proxy"]
+
+    # Record two compressions in different sessions
+    proxy.record_compression("session-A", 500, 300, 50.0)
+    proxy.record_compression("session-B", 400, 200, 40.0)
+
+    r = client.get("/stats?session_id=session-A")
+    assert r.status_code == 200
+    data = r.json()
+    # alltime for session-A only: 1 request, 200 tokens saved
+    assert data["alltime"]["requests"] == 1
+    assert data["alltime"]["tokens_saved"] == 200
+
+
+def test_stats_no_filter_returns_all(client: TestClient):
+    import sys
+    proxy = sys.modules["llmlingua_proxy"]
+
+    proxy.record_compression("session-A", 500, 300, 50.0)
+    proxy.record_compression("session-B", 400, 200, 40.0)
+
+    r = client.get("/stats")
+    data = r.json()
+    assert data["alltime"]["requests"] == 2
+
+
+def test_timeseries_session_filter(client: TestClient):
+    import sys
+    proxy = sys.modules["llmlingua_proxy"]
+
+    proxy.record_compression("session-A", 500, 300, 50.0)
+    proxy.record_compression("session-B", 400, 200, 40.0)
+
+    r = client.get("/stats/timeseries?session_id=session-A")
+    assert r.status_code == 200
+    buckets = r.json()
+    total_reqs = sum(b["requests"] for b in buckets)
+    assert total_reqs == 1

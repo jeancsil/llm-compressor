@@ -587,7 +587,7 @@ async def health():
 
 
 @app.get("/stats")
-async def get_stats():
+async def get_stats(session_id: str | None = None):
     saved = stats["total_original_tokens"] - stats["total_compressed_tokens"]
     ratio = (stats["total_original_tokens"] / stats["total_compressed_tokens"]
              if stats["total_compressed_tokens"] > 0 else 1.0)
@@ -630,8 +630,12 @@ async def get_stats():
     recent_rows: list = []
 
     if _db_conn is not None:
+        active_model = compressor_info["model"]
+        sess_filter = " AND session_id = ?" if session_id else ""
+        sess_args   = (session_id,) if session_id else ()
+
         by_model_rows = _db_conn.execute(
-            """
+            f"""
             SELECT model,
                    COUNT(*) AS requests,
                    ROUND(AVG((original_tokens - compressed_tokens) * 100.0 / original_tokens), 1) AS avg_savings_pct,
@@ -639,15 +643,15 @@ async def get_stats():
                    SUM(original_tokens - compressed_tokens) AS total_saved,
                    ROUND(AVG(latency_ms), 1) AS avg_latency_ms
             FROM compressions
+            {'WHERE session_id = ?' if session_id else ''}
             GROUP BY model
             ORDER BY requests DESC
-            """
+            """,
+            sess_args,
         ).fetchall()
         by_model = [dict(r) for r in by_model_rows]
-
-        active_model = compressor_info["model"]
         today_row = _db_conn.execute(
-            """
+            f"""
             SELECT
                 COUNT(*) AS requests,
                 COALESCE(SUM(original_tokens - compressed_tokens), 0) AS tokens_saved,
@@ -655,9 +659,9 @@ async def get_stats():
                 ROUND(AVG(latency_ms), 1) AS avg_latency_ms,
                 COUNT(DISTINCT session_id) AS sessions
             FROM compressions
-            WHERE date(ts) = date('now') AND model = ?
+            WHERE date(ts) = date('now') AND model = ?{sess_filter}
             """,
-            (active_model,),
+            (active_model, *sess_args),
         ).fetchone()
         if today_row:
             today_stats = {
@@ -669,7 +673,7 @@ async def get_stats():
             }
 
         alltime_row = _db_conn.execute(
-            """
+            f"""
             SELECT
                 COUNT(*) AS requests,
                 COALESCE(SUM(original_tokens - compressed_tokens), 0) AS tokens_saved,
@@ -678,9 +682,9 @@ async def get_stats():
                 COUNT(DISTINCT session_id) AS sessions,
                 ROUND(AVG(CAST(original_tokens AS REAL) / NULLIF(compressed_tokens, 0)), 2) AS avg_ratio
             FROM compressions
-            WHERE model = ?
+            WHERE model = ?{sess_filter}
             """,
-            (active_model,),
+            (active_model, *sess_args),
         ).fetchone()
         if alltime_row:
             alltime_stats = {
@@ -693,16 +697,16 @@ async def get_stats():
             }
 
         recent_db_rows = _db_conn.execute(
-            """
+            f"""
             SELECT ts, session_id, model, original_tokens, compressed_tokens,
                    ROUND((original_tokens - compressed_tokens) * 100.0 / original_tokens, 1) AS savings_pct,
                    latency_ms
             FROM compressions
-            WHERE model = ?
+            WHERE model = ?{sess_filter}
             ORDER BY id DESC
             LIMIT 20
             """,
-            (active_model,),
+            (active_model, *sess_args),
         ).fetchall()
         recent_rows = [
             {
@@ -738,37 +742,40 @@ async def get_stats():
 
 
 @app.get("/stats/timeseries")
-async def get_timeseries(model: str | None = None):
+async def get_timeseries(model: str | None = None, session_id: str | None = None):
     if _db_conn is None:
         return JSONResponse([])
+    sess_filter = " AND session_id = ?" if session_id else ""
+    sess_args   = (session_id,) if session_id else ()
     if model:
         rows = _db_conn.execute(
-            """
+            f"""
             SELECT strftime('%Y-%m-%dT%H:00:00', ts) AS hour,
                    COUNT(*) AS requests,
                    ROUND(AVG((original_tokens - compressed_tokens) * 100.0 / original_tokens), 1) AS avg_savings_pct,
                    SUM(original_tokens - compressed_tokens) AS total_saved,
                    ROUND(AVG(latency_ms), 1) AS avg_latency_ms
             FROM compressions
-            WHERE ts >= datetime('now', '-48 hours') AND model = ?
+            WHERE ts >= datetime('now', '-48 hours') AND model = ?{sess_filter}
             GROUP BY hour
             ORDER BY hour
             """,
-            (model,),
+            (model, *sess_args),
         ).fetchall()
     else:
         rows = _db_conn.execute(
-            """
+            f"""
             SELECT strftime('%Y-%m-%dT%H:00:00', ts) AS hour,
                    COUNT(*) AS requests,
                    ROUND(AVG((original_tokens - compressed_tokens) * 100.0 / original_tokens), 1) AS avg_savings_pct,
                    SUM(original_tokens - compressed_tokens) AS total_saved,
                    ROUND(AVG(latency_ms), 1) AS avg_latency_ms
             FROM compressions
-            WHERE ts >= datetime('now', '-48 hours')
+            WHERE ts >= datetime('now', '-48 hours'){sess_filter}
             GROUP BY hour
             ORDER BY hour
-            """
+            """,
+            sess_args,
         ).fetchall()
     return JSONResponse([dict(r) for r in rows])
 
