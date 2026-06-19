@@ -1,4 +1,3 @@
-import re
 import pytest
 from starlette.testclient import TestClient
 
@@ -34,52 +33,6 @@ def test_make_slug_collision(tmp_path):
     slug = make_slug("my test", conn)
     assert slug == "my-test-2"
     conn.close()
-
-
-@pytest.fixture
-def client(tmp_path, monkeypatch):
-    """FastAPI test client with a temporary database."""
-    import llmlingua_proxy
-    import sqlite3
-    db_path = str(tmp_path / "test.db")
-    conn = llmlingua_proxy.init_db(db_path)
-    # Enable check_same_thread=False to allow cross-thread access
-    conn = sqlite3.connect(db_path, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    # Initialize tables
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS compressions (
-            id               INTEGER PRIMARY KEY AUTOINCREMENT,
-            ts               TEXT,
-            session_id       TEXT,
-            model            TEXT,
-            original_tokens  INTEGER,
-            compressed_tokens INTEGER,
-            latency_ms       REAL
-        )
-        """
-    )
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_ts ON compressions(ts)")
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)"
-    )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS trackers (
-            slug        TEXT PRIMARY KEY,
-            name        TEXT NOT NULL,
-            status      TEXT NOT NULL DEFAULT 'pending',
-            session_id  TEXT,
-            created_at  TEXT NOT NULL,
-            linked_at   TEXT
-        )
-        """
-    )
-    conn.commit()
-    monkeypatch.setattr(llmlingua_proxy, "_db_conn", conn)
-    from starlette.testclient import TestClient
-    return TestClient(llmlingua_proxy.app)
 
 
 def test_create_tracker(client: TestClient):
