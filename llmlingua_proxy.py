@@ -780,6 +780,23 @@ async def get_timeseries(model: str | None = None, session_id: str | None = None
     return JSONResponse([dict(r) for r in rows])
 
 
+@app.get("/dashboard/{slug}", response_class=HTMLResponse)
+async def session_dashboard(slug: str):
+    if _db_conn is None:
+        return HTMLResponse("<h1>DB not ready</h1>", status_code=503)
+    row = _db_conn.execute(
+        "SELECT slug, name, status, session_id, created_at, linked_at "
+        "FROM trackers WHERE slug=?",
+        (slug,),
+    ).fetchone()
+    if row is None:
+        return HTMLResponse(f"<h1>Tracker '{slug}' not found</h1>", status_code=404)
+    tracker = dict(row)
+    bootstrap = f'<script>const TRACKER = {json.dumps(tracker)};</script>'
+    html = DASHBOARD_HTML.replace("</head>", bootstrap + "\n</head>", 1)
+    return HTMLResponse(html)
+
+
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard():
     return HTMLResponse(DASHBOARD_HTML)

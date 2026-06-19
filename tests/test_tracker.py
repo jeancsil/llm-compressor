@@ -146,3 +146,23 @@ def test_timeseries_session_filter(client: TestClient):
     buckets = r.json()
     total_reqs = sum(b["requests"] for b in buckets)
     assert total_reqs == 1
+
+
+def test_session_dashboard_404_for_unknown_slug(client: TestClient):
+    r = client.get("/dashboard/does-not-exist")
+    assert r.status_code == 404
+
+
+def test_session_dashboard_injects_tracker(client: TestClient):
+    client.post("/admin/tracker", json={"name": "My Test"})
+    r = client.get("/dashboard/my-test")
+    assert r.status_code == 200
+    assert "const TRACKER" in r.text
+    assert '"slug": "my-test"' in r.text
+    assert '"status": "pending"' in r.text
+
+
+def test_dashboard_slug_returns_html(client: TestClient):
+    client.post("/admin/tracker", json={"name": "HTML Test"})
+    r = client.get("/dashboard/html-test")
+    assert r.headers["content-type"].startswith("text/html")
