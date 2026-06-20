@@ -1474,8 +1474,9 @@ async function refresh() {
   // Session tracker: poll for link while pending
   if (TRACKER && TRACKER.status === 'pending') {
     try {
-      const t = await fetch('/admin/tracker').then(r => r.json());
-      if (t && t.slug === TRACKER.slug && t.status === 'active') {
+      const list = await fetch('/admin/tracker').then(r => r.json());
+      const t = Array.isArray(list) ? list.find(x => x.slug === TRACKER.slug) : null;
+      if (t && t.status === 'active') {
         TRACKER.status = 'active';
         TRACKER.session_id = t.session_id;
         FILTER_SESSION = t.session_id;
