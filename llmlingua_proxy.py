@@ -1406,6 +1406,10 @@ async function cancelTracker(slug) {
   } catch(e) {}
 }
 
+function escapeHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
 function renderTrackerChips(trackers) {
   const container = document.getElementById('track_chips');
   if (!trackers || trackers.length === 0) {
@@ -1414,10 +1418,11 @@ function renderTrackerChips(trackers) {
   }
   container.innerHTML = trackers.map(t => {
     const color = t.status === 'active' ? '#3fb950' : '#d29922';
+    const slug = encodeURIComponent(t.slug);
     return '<div class="track-chip" style="display:flex">'
-      + '<a class="track-chip-link" href="/dashboard/' + t.slug + '">' + t.name + '</a>'
-      + '<span style="font-size:10px;color:' + color + '">· ' + t.status + '</span>'
-      + '<button class="track-cancel" onclick="cancelTracker(\'' + t.slug + '\')">✕</button>'
+      + '<a class="track-chip-link" href="/dashboard/' + slug + '">' + escapeHtml(t.name) + '</a>'
+      + '<span style="font-size:10px;color:' + color + '">· ' + escapeHtml(t.status) + '</span>'
+      + '<button class="track-cancel" onclick="cancelTracker(\'' + slug + '\')">✕</button>'
       + '</div>';
   }).join('');
 }
