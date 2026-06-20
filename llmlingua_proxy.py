@@ -1188,11 +1188,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     </select>
     <span class="model-loading" id="model_loading">loading…</span>
     <!-- Track new session controls -->
-    <div class="track-chip" id="track_chip">
-      <a id="track_chip_link" href="#"></a>
-      <span id="track_chip_status" style="font-size:10px"></span>
-      <button class="track-cancel" id="track_cancel_btn" onclick="">✕</button>
-    </div>
+    <div id="track_chips"></div>
     <button class="track-btn" id="track_btn" onclick="openTrackForm()">Track new session</button>
     <div class="track-form" id="track_form">
       <input class="track-input" id="track_name" type="text" placeholder="session name" />
@@ -1404,28 +1400,26 @@ async function submitTracker() {
 
 async function cancelTracker(slug) {
   try { await fetch('/admin/tracker/' + encodeURIComponent(slug), { method: 'DELETE' }); } catch(e) {}
-  document.getElementById('track_chip').style.display = 'none';
-  document.getElementById('track_btn').style.display = '';
+  try {
+    const trackers = await fetch('/admin/tracker').then(r => r.json());
+    renderTrackerChips(trackers);
+  } catch(e) {}
 }
 
-function updateTrackerChip(tracker) {
-  const chip = document.getElementById('track_chip');
-  const btn  = document.getElementById('track_btn');
-  if (!tracker) {
-    chip.style.display = 'none';
-    btn.style.display = '';
+function renderTrackerChips(trackers) {
+  const container = document.getElementById('track_chips');
+  if (!trackers || trackers.length === 0) {
+    container.innerHTML = '';
     return;
   }
-  btn.style.display = 'none';
-  chip.style.display = 'flex';
-  const color = tracker.status === 'active' ? '#3fb950' : '#d29922';
-  document.getElementById('track_chip_link').href = '/dashboard/' + tracker.slug;
-  document.getElementById('track_chip_link').textContent = tracker.name;
-  const statusEl = document.getElementById('track_chip_status');
-  statusEl.style.color = color;
-  statusEl.textContent = '· ' + tracker.status;
-  const cancelBtn = document.getElementById('track_cancel_btn');
-  cancelBtn.onclick = () => cancelTracker(tracker.slug);
+  container.innerHTML = trackers.map(t => {
+    const color = t.status === 'active' ? '#3fb950' : '#d29922';
+    return '<div class="track-chip" style="display:flex">'
+      + '<a class="track-chip-link" href="/dashboard/' + t.slug + '">' + t.name + '</a>'
+      + '<span style="font-size:10px;color:' + color + '">· ' + t.status + '</span>'
+      + '<button class="track-cancel" onclick="cancelTracker(\'' + t.slug + '\')">✕</button>'
+      + '</div>';
+  }).join('');
 }
 
 function fmt(n) {
@@ -1691,11 +1685,11 @@ async function refresh() {
         + '</tr>';
     }).join('');
 
-    // Update main dashboard tracker chip (only on global dashboard, not session dashboard)
+    // Update main dashboard tracker chips (only on global dashboard, not session dashboard)
     if (!TRACKER) {
       try {
-        const tr = await fetch('/admin/tracker').then(r => r.json());
-        updateTrackerChip(tr);
+        const trackers = await fetch('/admin/tracker').then(r => r.json());
+        renderTrackerChips(trackers);
       } catch(e) {}
     }
 
