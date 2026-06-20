@@ -360,7 +360,11 @@ def record_request(session_id: str, session_name: str | None = None):
     if _db_conn is not None:
         ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
         result = _db_conn.execute(
-            "UPDATE trackers SET status='active', session_id=?, linked_at=? WHERE status='pending'",
+            """UPDATE trackers SET status='active', session_id=?, linked_at=?
+               WHERE slug = (
+                 SELECT slug FROM trackers WHERE status='pending'
+                 ORDER BY created_at ASC LIMIT 1
+               )""",
             (session_id, ts),
         )
         if result.rowcount > 0:
@@ -902,14 +906,6 @@ async def create_tracker(request: Request):
         return JSONResponse({"error": "name required"}, status_code=400)
     if _db_conn is None:
         return JSONResponse({"error": "db not ready"}, status_code=503)
-    pending = _db_conn.execute(
-        "SELECT slug FROM trackers WHERE status='pending'"
-    ).fetchone()
-    if pending:
-        return JSONResponse(
-            {"error": "a pending tracker already exists", "slug": pending[0]},
-            status_code=409,
-        )
     slug = make_slug(name, _db_conn)
     ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
     _db_conn.execute(
@@ -923,12 +919,12 @@ async def create_tracker(request: Request):
 @app.get("/admin/tracker")
 async def get_tracker():
     if _db_conn is None:
-        return JSONResponse(None)
-    row = _db_conn.execute(
+        return JSONResponse([])
+    rows = _db_conn.execute(
         "SELECT slug, name, status, session_id, created_at, linked_at "
-        "FROM trackers ORDER BY (status='pending') DESC, created_at DESC LIMIT 1"
-    ).fetchone()
-    return JSONResponse(dict(row) if row else None)
+        "FROM trackers ORDER BY created_at DESC"
+    ).fetchall()
+    return JSONResponse([dict(r) for r in rows])
 
 
 @app.delete("/admin/tracker/{slug}")
