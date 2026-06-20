@@ -1419,12 +1419,16 @@ function renderTrackerChips(trackers) {
   container.innerHTML = trackers.map(t => {
     const color = t.status === 'active' ? '#3fb950' : '#d29922';
     const slug = encodeURIComponent(t.slug);
-    return '<div class="track-chip" style="display:flex">'
+    return '<div class="track-chip" style="display:flex" data-slug="' + escapeHtml(t.slug) + '">'
       + '<a class="track-chip-link" href="/dashboard/' + slug + '">' + escapeHtml(t.name) + '</a>'
       + '<span style="font-size:10px;color:' + color + '">· ' + escapeHtml(t.status) + '</span>'
-      + '<button class="track-cancel" onclick="cancelTracker(\'' + slug + '\')">✕</button>'
+      + '<button class="track-cancel">✕</button>'
       + '</div>';
   }).join('');
+  container.onclick = function(e) {
+    const btn = e.target.closest('.track-cancel');
+    if (btn) cancelTracker(btn.closest('[data-slug]').dataset.slug);
+  };
 }
 
 function fmt(n) {
