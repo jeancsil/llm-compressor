@@ -1,14 +1,16 @@
 HOST  := 127.0.0.1
 PORT  := 9099
 URL   := http://$(HOST):$(PORT)
+PID_FILE := .proxy.pid
 
-.PHONY: install start dashboard stats rtk-stats check help
+.PHONY: install start restart dashboard stats rtk-stats check help
 
 help:
 	@echo "Usage: make <target>"
 	@echo ""
 	@echo "  install     Install dependencies via uv"
 	@echo "  start       Start the proxy (requires ANTHROPIC_API_KEY)"
+	@echo "  restart     Kill running proxy (via .proxy.pid) and start fresh"
 	@echo "  dashboard   Open the dashboard in the browser"
 	@echo "  stats       Print proxy compression stats (JSON)"
 	@echo "  rtk-stats   Print rtk shell-layer savings"
@@ -22,6 +24,20 @@ start:
 		echo "Error: ANTHROPIC_API_KEY is not set"; exit 1; \
 	fi
 	uv run python llmlingua_proxy.py
+
+restart:
+	@if [ -f $(PID_FILE) ]; then \
+		PID=$$(cat $(PID_FILE)); \
+		kill $$PID 2>/dev/null && echo "Stopped PID $$PID" || echo "PID $$PID not running"; \
+		rm -f $(PID_FILE); \
+	else \
+		echo "No $(PID_FILE) found — nothing to stop"; \
+	fi
+	@lsof -ti :$(PORT) | xargs kill -9 2>/dev/null || true
+	@if [ -z "$$ANTHROPIC_API_KEY" ]; then \
+		echo "Error: ANTHROPIC_API_KEY is not set"; exit 1; \
+	fi
+	@nohup uv run python llmlingua_proxy.py >> proxy.log 2>&1 & echo $$! > $(PID_FILE) && echo "Started PID $$(cat $(PID_FILE))"
 
 dashboard:
 	open $(URL)/dashboard
