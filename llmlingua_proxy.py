@@ -378,7 +378,7 @@ def _rtk_db_path() -> Path:
         return Path(os.environ.get("APPDATA", "")) / "rtk" / "history.db"
     return Path.home() / ".local" / "share" / "rtk" / "history.db"
 
-def read_rtk_stats() -> dict | None:
+def read_rtk_stats(since: str | None = None) -> dict | None:
     db = _rtk_db_path()
     if not db.exists():
         return None
@@ -387,16 +387,21 @@ def read_rtk_stats() -> dict | None:
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
 
+        where = "WHERE timestamp >= ?" if since else ""
+        args  = (since,) if since else ()
+
         row = cur.execute(
-            "SELECT COUNT(*) as n, SUM(input_tokens) as inp, "
-            "SUM(output_tokens) as out, SUM(saved_tokens) as saved, "
-            "AVG(savings_pct) as avg_pct FROM commands"
+            f"SELECT COUNT(*) as n, SUM(input_tokens) as inp, "
+            f"SUM(output_tokens) as out, SUM(saved_tokens) as saved, "
+            f"AVG(savings_pct) as avg_pct FROM commands {where}",
+            args,
         ).fetchone()
 
         top = cur.execute(
-            "SELECT rtk_cmd, COUNT(*) as cnt, SUM(saved_tokens) as saved, "
-            "AVG(savings_pct) as avg_pct FROM commands "
-            "GROUP BY rtk_cmd ORDER BY saved DESC LIMIT 8"
+            f"SELECT rtk_cmd, COUNT(*) as cnt, SUM(saved_tokens) as saved, "
+            f"AVG(savings_pct) as avg_pct FROM commands {where} "
+            f"GROUP BY rtk_cmd ORDER BY saved DESC LIMIT 8",
+            args,
         ).fetchall()
 
         conn.close()
@@ -576,6 +581,17 @@ def build_headers(request: Request) -> dict:
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
+
+def _rtk_since(session_id: str | None) -> str | None:
+    """Return the tracker created_at for a session, to filter RTK stats since session start."""
+    if not session_id or _db_conn is None:
+        return None
+    row = _db_conn.execute(
+        "SELECT created_at FROM trackers WHERE session_id = ? ORDER BY created_at ASC LIMIT 1",
+        (session_id,),
+    ).fetchone()
+    return row[0] if row else None
+
 
 @app.get("/")
 @app.head("/")
@@ -772,7 +788,7 @@ async def get_stats(session_id: str | None = None):
         "overall_ratio": round(ratio, 2),
         "sessions": sessions_out,
         "recent_compressions": recent,
-        "rtk": read_rtk_stats(),
+        "rtk": read_rtk_stats(since=_rtk_since(session_id)),
         "compressor": compressor_info,
         "cost_per_mtok": COST_PER_MTOK,
         "avg_latency_ms": round(avg_latency, 1),
