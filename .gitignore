@@ -13,3 +13,12 @@ wheels/
 stats.json
 stats.json.bak
 metrics.db
+proxy.log
+.proxy.pid
+
+# OS / tooling
+.DS_Store
+.playwright-mcp/
+
+# Local docs (superpowers plans/specs — kept untracked)
+docs/superpowers/
