@@ -55,6 +55,15 @@ def init_db(path: str):
     )
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS compression_texts (
+            compression_id INTEGER PRIMARY KEY REFERENCES compressions(id),
+            original_text  TEXT NOT NULL,
+            compressed_text TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS trackers (
             slug        TEXT PRIMARY KEY,
             name        TEXT NOT NULL,
@@ -221,7 +230,7 @@ def _load_llmlingua2_backend(backend_key: str | None = None) -> dict:
         device_map=device,
     )
     print(f"Model ready. (device={device})")
-    return {"type": "llmlingua2", "backend_key": backend_key, "compressor": c, "rate": rate}
+    return {"type": backend_key, "backend_key": backend_key, "compressor": c, "rate": rate}
 
 
 def _load_kompress_backend() -> dict:
@@ -310,7 +319,14 @@ stats = {
     "recent_compressions": deque(maxlen=100),
 }
 
-def record_compression(session_id: str, original: int, compressed: int, latency_ms: float = 0.0):
+def record_compression(
+    session_id: str,
+    original: int,
+    compressed: int,
+    latency_ms: float = 0.0,
+    original_text: str | None = None,
+    compressed_text: str | None = None,
+):
     stats["total_original_tokens"] += original
     stats["total_compressed_tokens"] += compressed
 
@@ -318,10 +334,15 @@ def record_compression(session_id: str, original: int, compressed: int, latency_
     ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
     if _db_conn:
-        _db_conn.execute(
+        cur = _db_conn.execute(
             "INSERT INTO compressions (ts, session_id, model, original_tokens, compressed_tokens, latency_ms) VALUES (?,?,?,?,?,?)",
             (ts, session_id, model_name, original, compressed, latency_ms),
         )
+        if original_text is not None and compressed_text is not None:
+            _db_conn.execute(
+                "INSERT INTO compression_texts (compression_id, original_text, compressed_text) VALUES (?,?,?)",
+                (cur.lastrowid, original_text, compressed_text),
+            )
         _db_conn.commit()
 
     sess = stats["sessions"].setdefault(session_id, {
@@ -510,7 +531,7 @@ def compress_text(text: str, session_id: str) -> str:
     latency_ms = (time.perf_counter() - t0) * 1000
     model_tag = backend.get("type", "compressor") if backend else "compressor"
     print(f"[{model_tag}] {orig} → {comp} tokens [{session_id[:8]}]")
-    record_compression(session_id, orig, comp, latency_ms)
+    record_compression(session_id, orig, comp, latency_ms, text, compressed)
     return compressed
 
 
@@ -896,6 +917,29 @@ async def set_model(request: Request):
 
     threading.Thread(target=load, daemon=True).start()
     return JSONResponse({"status": "loading", "model": model})
+
+
+@app.delete("/admin/compression-texts")
+async def clear_compression_texts(request: Request):
+    """Delete stored original/compressed texts without touching compression metrics."""
+    if _db_conn is None:
+        return JSONResponse({"error": "db not ready"}, status_code=503)
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    session_id = body.get("session_id")
+    if session_id:
+        cur = _db_conn.execute(
+            "DELETE FROM compression_texts WHERE compression_id IN "
+            "(SELECT id FROM compressions WHERE session_id = ?)",
+            (session_id,),
+        )
+    else:
+        cur = _db_conn.execute("DELETE FROM compression_texts")
+    _db_conn.commit()
+    return JSONResponse({"deleted": cur.rowcount, "session_id": session_id})
 
 
 @app.post("/admin/tracker")
