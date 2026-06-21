@@ -74,7 +74,7 @@ def test_make_slug_collision(tmp_path):
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-cd /Users/jeancsil/code/llm-lingua && uv run pytest tests/test_tracker.py -v
+cd /Users/jeancsil/code/llm-compressor && uv run pytest tests/test_tracker.py -v
 ```
 
 Expected: 3 failures — `trackers` table missing, `make_slug` not defined.

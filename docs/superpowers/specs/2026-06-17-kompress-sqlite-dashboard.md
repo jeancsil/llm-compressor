@@ -1,7 +1,7 @@
 # Spec: kompress-v2 model switching + SQLite metrics + dashboard improvements
 
 **Date:** 2026-06-17  
-**Repo:** `/Users/jeancsil/code/llm-lingua`  
+**Repo:** `/Users/jeancsil/code/llm-compressor`  
 **Single file to modify:** `llmlingua_proxy.py` (plus `pyproject.toml` for deps)
 
 ---

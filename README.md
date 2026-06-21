@@ -21,7 +21,7 @@ Running both gives you savings at both layers. The dashboard automatically detec
 
 ```bash
 git clone <this repo>
-cd llm-lingua
+cd llm-compressor
 uv sync
 ```
 

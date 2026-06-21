@@ -74,6 +74,23 @@ def init_db(path: str):
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS rtk_events (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            rtk_id        INTEGER UNIQUE,
+            ts            TEXT NOT NULL,
+            session_id    TEXT NOT NULL,
+            rtk_cmd       TEXT NOT NULL,
+            input_tokens  INTEGER NOT NULL DEFAULT 0,
+            output_tokens INTEGER NOT NULL DEFAULT 0,
+            saved_tokens  INTEGER NOT NULL DEFAULT 0,
+            savings_pct   REAL    NOT NULL DEFAULT 0.0
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_rtk_events_session ON rtk_events(session_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_rtk_events_ts      ON rtk_events(ts)")
     conn.commit()
     return conn
 
@@ -364,6 +381,23 @@ def record_compression(
         "latency_ms": round(latency_ms, 1),
     })
 
+def _try_link_pending_tracker(session_id: str) -> None:
+    """Link the oldest pending tracker to session_id if one exists and session_id is known."""
+    if _db_conn is None or not session_id or session_id == "unknown":
+        return
+    ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    result = _db_conn.execute(
+        """UPDATE trackers SET status='active', session_id=?, linked_at=?
+           WHERE slug = (
+             SELECT slug FROM trackers WHERE status='pending'
+             ORDER BY created_at ASC LIMIT 1
+           )""",
+        (session_id, ts),
+    )
+    if result.rowcount > 0:
+        _db_conn.commit()
+
+
 def record_request(session_id: str, session_name: str | None = None):
     stats["total_requests"] += 1
     sess = stats["sessions"].setdefault(session_id, {
@@ -378,18 +412,7 @@ def record_request(session_id: str, session_name: str | None = None):
     if session_name:
         sess["name"] = session_name
 
-    if _db_conn is not None:
-        ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        result = _db_conn.execute(
-            """UPDATE trackers SET status='active', session_id=?, linked_at=?
-               WHERE slug = (
-                 SELECT slug FROM trackers WHERE status='pending'
-                 ORDER BY created_at ASC LIMIT 1
-               )""",
-            (session_id, ts),
-        )
-        if result.rowcount > 0:
-            _db_conn.commit()
+    _try_link_pending_tracker(session_id)
 
 # ---------------------------------------------------------------------------
 # rtk integration (optional — gracefully absent when rtk not installed)
@@ -607,17 +630,6 @@ def build_headers(request: Request) -> dict:
 # Routes
 # ---------------------------------------------------------------------------
 
-def _rtk_since(session_id: str | None) -> str | None:
-    """Return the tracker created_at for a session, to filter RTK stats since session start."""
-    if not session_id or _db_conn is None:
-        return None
-    row = _db_conn.execute(
-        "SELECT created_at FROM trackers WHERE session_id = ? ORDER BY created_at ASC LIMIT 1",
-        (session_id,),
-    ).fetchone()
-    return row[0] if row else None
-
-
 @app.get("/")
 @app.head("/")
 async def health():
@@ -804,6 +816,35 @@ async def get_stats(session_id: str | None = None):
             for r in recent_db_rows
         ]
 
+    rtk_stats = None
+    if _db_conn is not None:
+        rtk_where = "WHERE session_id = ?" if session_id else ""
+        rtk_args  = (session_id,) if session_id else ()
+        rtk_row = _db_conn.execute(
+            f"""SELECT COUNT(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),
+                       COALESCE(SUM(saved_tokens),0), COALESCE(AVG(savings_pct),0)
+                FROM rtk_events {rtk_where}""",
+            rtk_args,
+        ).fetchone()
+        if rtk_row and rtk_row[0] > 0:
+            rtk_top = _db_conn.execute(
+                f"""SELECT rtk_cmd, COUNT(*) AS cnt, SUM(saved_tokens) AS saved, AVG(savings_pct) AS avg_pct
+                    FROM rtk_events {rtk_where}
+                    GROUP BY rtk_cmd ORDER BY saved DESC LIMIT 8""",
+                rtk_args,
+            ).fetchall()
+            rtk_stats = {
+                "total_commands":     rtk_row[0],
+                "total_input_tokens": rtk_row[1],
+                "total_output_tokens":rtk_row[2],
+                "total_saved_tokens": rtk_row[3],
+                "avg_savings_pct":    round(rtk_row[4], 1),
+                "top_commands": [
+                    {"cmd": r[0], "count": r[1], "saved": r[2], "avg_pct": round(r[3], 1)}
+                    for r in rtk_top
+                ],
+            }
+
     return {
         "started_at": stats["started_at"],
         "total_requests": stats["total_requests"],
@@ -813,7 +854,7 @@ async def get_stats(session_id: str | None = None):
         "overall_ratio": round(ratio, 2),
         "sessions": sessions_out,
         "recent_compressions": recent,
-        "rtk": read_rtk_stats(since=_rtk_since(session_id)),
+        "rtk": rtk_stats,
         "compressor": compressor_info,
         "cost_per_mtok": COST_PER_MTOK,
         "avg_latency_ms": round(avg_latency, 1),
@@ -863,6 +904,35 @@ async def get_timeseries(model: str | None = None, session_id: str | None = None
     return JSONResponse([dict(r) for r in rows])
 
 
+@app.post("/rtk/log")
+async def rtk_log(request: Request):
+    if _db_conn is None:
+        return JSONResponse({"error": "db not ready"}, status_code=503)
+    body = await request.json()
+    session_id = body.get("session_id", "unknown")
+    try:
+        _db_conn.execute(
+            """INSERT OR IGNORE INTO rtk_events
+               (rtk_id, ts, session_id, rtk_cmd, input_tokens, output_tokens, saved_tokens, savings_pct)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                body.get("rtk_id"),
+                body.get("ts", datetime.now(timezone.utc).isoformat()),
+                session_id,
+                body.get("rtk_cmd", ""),
+                int(body.get("input_tokens", 0)),
+                int(body.get("output_tokens", 0)),
+                int(body.get("saved_tokens", 0)),
+                float(body.get("savings_pct", 0.0)),
+            ),
+        )
+        _db_conn.commit()
+        _try_link_pending_tracker(session_id)
+        return JSONResponse({"ok": True})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 @app.get("/dashboard/{slug}", response_class=HTMLResponse)
 async def session_dashboard(slug: str):
     if _db_conn is None:
@@ -883,6 +953,82 @@ async def session_dashboard(slug: str):
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard():
     return HTMLResponse(DASHBOARD_HTML)
+
+
+@app.get("/play", response_class=HTMLResponse)
+async def play():
+    return HTMLResponse(PLAY_HTML)
+
+
+@app.post("/play/compress")
+async def play_compress(request: Request):
+    global backend, backend_loading
+    body = await request.json()
+    text = body.get("text", "")
+    model = body.get("model", "")
+
+    if model and model not in KNOWN_MODELS:
+        return JSONResponse({"error": f"Unknown model: {model}"}, status_code=400)
+
+    orig_chars = len(text)
+    orig_tokens_est = max(1, orig_chars // 4)
+
+    active_type = backend.get("type") if backend else None
+
+    if model and model != active_type:
+        if backend_loading == model:
+            return JSONResponse({"loading": True, "model": model}, status_code=202)
+        if backend_loading:
+            return JSONResponse({"loading": True, "model": backend_loading}, status_code=202)
+        # Trigger async model switch
+        if _db_conn is not None:
+            _db_conn.execute(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES ('current_model', ?)", (model,)
+            )
+            _db_conn.commit()
+        backend = None
+        backend_loading = model
+        _target = model
+        def _load():
+            global backend, backend_loading
+            try:
+                if _target == "kompress":
+                    backend = _load_kompress_backend()
+                else:
+                    backend = _load_llmlingua2_backend(backend_key=_target)
+            except Exception as e:
+                print(f"[play] load {_target}: {e}")
+            finally:
+                backend_loading = None
+        threading.Thread(target=_load, daemon=True).start()
+        return JSONResponse({"loading": True, "model": model}, status_code=202)
+
+    if backend is None:
+        if backend_loading:
+            return JSONResponse({"loading": True, "model": backend_loading}, status_code=202)
+        return JSONResponse({"error": "No model loaded. Select a model to load it."}, status_code=503)
+
+    t0 = time.perf_counter()
+    try:
+        compressed, _orig_tok, _comp_tok = compress_backend(text)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+    latency_ms = round((time.perf_counter() - t0) * 1000, 1)
+
+    comp_chars = len(compressed)
+    comp_tokens_est = max(1, comp_chars // 4)
+    char_pct = round((1 - comp_chars / max(1, orig_chars)) * 100, 1)
+    token_pct = round((1 - comp_tokens_est / orig_tokens_est) * 100, 1)
+
+    return JSONResponse({
+        "original": text, "compressed": compressed,
+        "original_chars": orig_chars, "compressed_chars": comp_chars,
+        "char_pct": char_pct,
+        "original_tokens_est": orig_tokens_est, "compressed_tokens_est": comp_tokens_est,
+        "token_pct": token_pct,
+        "model": backend.get("type") if backend else model,
+        "latency_ms": latency_ms,
+    })
 
 
 @app.post("/admin/set-model")
@@ -1241,6 +1387,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     </div>
   </div>
   <div class="header-right">
+    <a href="/play" style="color:#8b949e;font-size:11px;text-decoration:none;letter-spacing:.02em">▶ play</a>
     <span id="uptime_display">—</span>
     <span><span class="live-dot"></span>live</span>
   </div>
@@ -1288,10 +1435,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   </div>
 </div>
 
-<!-- rtk install hint (shown when rtk absent) -->
+<!-- rtk hint (shown when no rtk_events recorded yet) -->
 <div class="rtk-hint" id="rtk_hint">
   <span style="color:#484f58">&#x2B21;</span>
-  <span>Add shell-layer compression: <code>brew install rtk</code> &nbsp;—&nbsp; rtk compresses CLI output; this proxy compresses API messages. Run both for maximum savings.</span>
+  <span>Shell-layer compression not yet logging. Add the PostToolUse hook for Bash in Claude Code settings to capture rtk savings per session.</span>
 </div>
 
 <!-- Row 1: Today tiles -->
@@ -1784,6 +1931,270 @@ refresh();
 refreshTimeseries();
 setInterval(refresh, 2000);
 setInterval(refreshTimeseries, 10000);
+</script>
+</body>
+</html>"""
+
+
+PLAY_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Playground — LLMLingua</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'SF Mono', 'Fira Code', monospace; background: #0d1117; color: #c9d1d9;
+         display: flex; flex-direction: column; height: 100vh; padding: 16px; gap: 12px; }
+
+  .header { display: flex; align-items: center; gap: 10px; padding-bottom: 12px;
+             border-bottom: 1px solid #21262d; flex-shrink: 0; }
+  .back-link { font-size: 11px; color: #58a6ff; text-decoration: none; }
+  .back-link:hover { text-decoration: underline; }
+  .title { color: #58a6ff; font-size: 14px; font-weight: 700; letter-spacing: .04em; }
+  .sep { color: #30363d; }
+
+  .controls { display: flex; align-items: center; gap: 10px; flex: 1; }
+  .model-select { font-size: 12px; background: #161b22; color: #58a6ff; padding: 4px 10px;
+                   border-radius: 6px; border: 1px solid #30363d; cursor: pointer;
+                   font-family: inherit; outline: none; }
+  .model-select:hover:not(:disabled) { border-color: #58a6ff; }
+  .model-select:disabled { opacity: 0.5; cursor: wait; }
+  .model-loading { font-size: 10px; color: #d29922; display: none; }
+
+  .compress-btn { font-size: 12px; background: #0d1a35; color: #58a6ff; border: 1px solid #1e2f50;
+                   border-radius: 6px; padding: 5px 14px; cursor: pointer; font-family: inherit; }
+  .compress-btn:hover:not(:disabled) { border-color: #58a6ff; }
+  .compress-btn:disabled { opacity: 0.5; cursor: wait; }
+
+  .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; flex: 1; min-height: 0; }
+  .panel { display: flex; flex-direction: column; gap: 6px; min-height: 0; }
+  .panel-label { font-size: 9px; color: #8b949e; text-transform: uppercase; letter-spacing: .1em;
+                  display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+  textarea { flex: 1; width: 100%; background: #161b22; color: #c9d1d9; border: 1px solid #30363d;
+              border-radius: 8px; padding: 14px; font-family: inherit; font-size: 12px;
+              resize: none; outline: none; line-height: 1.6; min-height: 0; }
+  textarea.compressed     { border-color: #1e3a2a; background: #0f1e14; color: #aed6ae; }
+  textarea.compressed.dim { border-color: #2a2a30; background: #13131a; color: #6a7a6a; }
+  textarea.unchanged      { color: #8b949e; }
+  .copy-btn { font-size: 10px; background: none; border: none; color: #8b949e;
+               cursor: pointer; font-family: inherit; padding: 0; }
+  .copy-btn:hover { color: #c9d1d9; }
+
+  .stats-bar { flex-shrink: 0; display: flex; align-items: center; gap: 20px; font-size: 11px;
+                background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+                padding: 10px 16px; }
+  .stats-bar.hidden { visibility: hidden; }
+  .stat-label { color: #8b949e; font-size: 10px; margin-right: 4px; }
+  .stat-nums  { color: #c9d1d9; }
+  .stat-pct   { font-weight: 700; margin-left: 6px; }
+  .green { color: #3fb950; }
+  .dim   { color: #484f58; }
+  .stat-latency { color: #484f58; font-size: 10px; margin-left: auto; }
+
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+  .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+          background: #d29922; animation: pulse 1s infinite; vertical-align: middle; margin-right: 4px; }
+
+  @media (max-width: 700px) { .panels { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <a class="back-link" href="/dashboard">← dashboard</a>
+  <span class="sep">|</span>
+  <div class="title">Playground</div>
+
+  <div class="controls">
+    <select class="model-select" id="model_select">
+      <option value="llmlingua2">llmlingua2</option>
+      <option value="llmlingua2-large">llmlingua2-large</option>
+      <option value="kompress">kompress</option>
+    </select>
+    <span class="model-loading" id="model_loading"><span class="dot"></span>loading model…</span>
+
+    <button class="compress-btn" id="compress_btn" onclick="compress()">▶ Compress</button>
+  </div>
+</div>
+
+<div class="panels">
+  <div class="panel">
+    <div class="panel-label">
+      <span>Input</span>
+      <span id="input_meta" style="color:#484f58;font-size:10px"></span>
+    </div>
+    <textarea id="input_text" placeholder="Paste text to compress…" oninput="onInput()"></textarea>
+  </div>
+
+  <div class="panel">
+    <div class="panel-label">
+      <span>Compressed</span>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span id="output_meta" style="color:#484f58;font-size:10px"></span>
+        <button class="copy-btn" id="copy_btn" onclick="copyOutput()" style="display:none">Copy</button>
+      </div>
+    </div>
+    <textarea id="output_text" readonly placeholder="Output appears here…"></textarea>
+  </div>
+</div>
+
+<div class="stats-bar hidden" id="stats_bar">
+  <div>
+    <span class="stat-label">Chars</span>
+    <span class="stat-nums" id="s_chars"></span>
+    <span class="stat-pct" id="s_chars_pct"></span>
+  </div>
+  <div>
+    <span class="stat-label">~Claude tokens</span>
+    <span class="stat-nums" id="s_toks"></span>
+    <span class="stat-pct" id="s_toks_pct"></span>
+  </div>
+  <span class="stat-latency" id="s_lat"></span>
+</div>
+
+<script>
+let debounceTimer = null;
+let pollTimer = null;
+let lastResult = null;
+let suppressModelChange = false;
+
+function onInput() {
+  const n = document.getElementById('input_text').value.length;
+  document.getElementById('input_meta').textContent = n ? fmt(n) + ' chars' : '';
+  clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(compress, 600);
+}
+
+function applyDisplay(d) {
+  const outEl = document.getElementById('output_text');
+  outEl.value = d.compressed;
+  outEl.className = d.char_pct > 0 ? 'compressed' : 'unchanged';
+  const outLen = d.compressed.length;
+  document.getElementById('output_meta').textContent = outLen ? fmt(outLen) + ' chars' : '';
+  document.getElementById('copy_btn').style.display = outLen ? 'inline' : 'none';
+  renderStats(d);
+}
+
+async function compress() {
+  clearTimeout(pollTimer);
+  const text = document.getElementById('input_text').value;
+
+  if (!text.trim()) {
+    lastResult = null; reset(); return;
+  }
+
+  const model = document.getElementById('model_select').value;
+  setBusy(true);
+
+  try {
+    const resp = await fetch('/play/compress', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, model }),
+    });
+    const data = await resp.json();
+
+    if (resp.status === 202 && data.loading) {
+      showLoading();
+      pollTimer = setTimeout(compress, 1500);
+      return;
+    }
+
+    hideLoading();
+
+    if (data.error) {
+      document.getElementById('output_text').value = '⚠ ' + data.error;
+      document.getElementById('output_text').className = 'unchanged';
+      setBusy(false); return;
+    }
+
+    lastResult = data;
+    applyDisplay(data);
+  } catch(e) {
+    document.getElementById('output_text').value = '⚠ ' + e.message;
+  } finally {
+    setBusy(false);
+  }
+}
+
+function renderStats(d) {
+  const bar = document.getElementById('stats_bar');
+  bar.className = 'stats-bar';
+
+  document.getElementById('s_chars').textContent = fmt(d.original_chars) + ' → ' + fmt(d.compressed_chars);
+  const cpEl = document.getElementById('s_chars_pct');
+  cpEl.textContent = d.char_pct > 0 ? '-' + d.char_pct + '%' : '0%';
+  cpEl.className = 'stat-pct ' + (d.char_pct > 0 ? 'green' : 'dim');
+
+  document.getElementById('s_toks').textContent = fmt(d.original_tokens_est) + ' → ' + fmt(d.compressed_tokens_est);
+  const tpEl = document.getElementById('s_toks_pct');
+  tpEl.textContent = d.token_pct > 0 ? '-' + d.token_pct + '%' : '0%';
+  tpEl.className = 'stat-pct ' + (d.token_pct > 0 ? 'green' : 'dim');
+
+  document.getElementById('s_lat').textContent = d.latency_ms > 0 ? d.latency_ms + 'ms' : '';
+}
+
+function reset() {
+  document.getElementById('output_text').value = '';
+  document.getElementById('output_text').className = '';
+  document.getElementById('output_meta').textContent = '';
+  document.getElementById('copy_btn').style.display = 'none';
+  document.getElementById('stats_bar').className = 'stats-bar hidden';
+  document.getElementById('input_meta').textContent = '';
+}
+
+function setBusy(on) {
+  const btn = document.getElementById('compress_btn');
+  btn.disabled = on;
+  btn.textContent = on ? '…' : '▶ Compress';
+}
+
+function showLoading() {
+  document.getElementById('model_loading').style.display = 'inline';
+  document.getElementById('model_select').disabled = true;
+}
+function hideLoading() {
+  document.getElementById('model_loading').style.display = 'none';
+  suppressModelChange = true;
+  document.getElementById('model_select').disabled = false;
+  suppressModelChange = false;
+}
+
+function fmt(n) {
+  return n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n);
+}
+
+async function copyOutput() {
+  const text = document.getElementById('output_text').value;
+  if (!text) return;
+  await navigator.clipboard.writeText(text);
+  const btn = document.getElementById('copy_btn');
+  btn.textContent = 'Copied!';
+  setTimeout(() => btn.textContent = 'Copy', 1500);
+}
+
+async function init() {
+  try {
+    const data = await fetch('/stats').then(r => r.json());
+    const info = data.compressor_info;
+    if (!info) return;
+    const sel = document.getElementById('model_select');
+    const m = info.model || '';
+    if (m && [...sel.options].some(o => o.value === m)) {
+      suppressModelChange = true;
+      sel.value = m;
+      suppressModelChange = false;
+    }
+    if (info.loading) { showLoading(); pollTimer = setTimeout(init, 2000); }
+  } catch(e) {}
+}
+
+document.getElementById('model_select').addEventListener('change', () => {
+  if (!suppressModelChange) compress();
+});
+
+init();
 </script>
 </body>
 </html>"""

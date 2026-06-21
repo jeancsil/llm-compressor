@@ -1,5 +1,5 @@
 [project]
-name = "llm-lingua"
+name = "llm-compressor"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
