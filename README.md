@@ -98,16 +98,61 @@ brew install rtk   # macOS
 Claude Code → POST /v1/messages → proxy → Anthropic API
                      ↓
              LLMLingua-2 compresses
-             each user message
-             (skips messages ≤ 200 chars)
+             system field + user messages
+             (skips ≤ 200 chars; skips assistant)
 ```
 
 1. The proxy receives the full request body from Claude Code.
-2. `compress_messages()` runs LLMLingua-2 on every `role=user` text block longer than 200 characters. System and assistant turns are forwarded as-is.
+2. The proxy compresses the top-level `system` field and every `role=user` text block longer than 200 characters. Assistant turns are forwarded unchanged to preserve the model's reasoning history.
 3. The compressed body is forwarded to `api.anthropic.com`. Streaming responses are piped through unchanged.
 4. Stats are persisted to `stats.json` between restarts.
 
 If LLMLingua-2 fails on a particular input (e.g. very short or malformed text), the original message is forwarded and the error is logged — requests never fail due to compression.
+
+## Compression modes
+
+Every Anthropic API call is **stateless**: client resends full conversation on each request. The `system` field (CLAUDE.md, RTK.md, injected context) and all previous `user` turns are retransmitted every time — compressing saves tokens on every call, not just the first.
+
+### What gets compressed
+
+| Part | Compressed? | Reason |
+|---|---|---|
+| `system` field | **Yes** | Heaviest payload; pure boilerplate sent on every call |
+| `user` messages | **Yes** | User intent; compression applied with care |
+| `assistant` messages | **No** | Model reads its own prior reasoning; compressing them causes self-confusion |
+
+### Single-model mode (default)
+
+One compression model handles everything. Select from the dashboard or via API:
+
+```bash
+curl -s -X POST http://127.0.0.1:9099/admin/set-model \
+  -H 'Content-Type: application/json' \
+  -d '{"model": "llmlingua2-large"}'
+```
+
+### Dual mode
+
+Select **"dual (system→large · user→kompress)"** from the dashboard or via API:
+
+```bash
+curl -s -X POST http://127.0.0.1:9099/admin/set-model \
+  -H 'Content-Type: application/json' \
+  -d '{"model": "dual"}'
+```
+
+Dual mode loads models simultaneously (~1.5 GB RAM). Cold start takes 60–90 seconds.
+
+### Auditing compressions
+
+Compression is logged to `metrics.db` with the `role` column (`system` or `user`). Query directly:
+
+```bash
+sqlite3 metrics.db \
+  "SELECT role, model, COUNT(*), ROUND(AVG((1.0 - compressed_tokens*1.0/original_tokens)*100),1) as compressions FROM role, model"
+```
+
+The dashboard recent-activity table shows each row's role with a color-coded badge (blue = system, green = user).
 
 ## Endpoints
 
