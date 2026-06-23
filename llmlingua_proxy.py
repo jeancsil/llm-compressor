@@ -2,6 +2,7 @@ import os
 import json
 import platform
 import re
+import secrets
 import sqlite3
 import threading
 import time
@@ -91,6 +92,10 @@ def init_db(path: str):
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_rtk_events_session ON rtk_events(session_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_rtk_events_ts      ON rtk_events(ts)")
+    try:
+        conn.execute("ALTER TABLE trackers ADD COLUMN closed_at TEXT")
+    except Exception:
+        pass  # column already exists
     conn.commit()
     return conn
 
@@ -174,10 +179,7 @@ def recover_stats_from_backup(conn, bak_path: str = "stats.json.bak") -> None:
 
 def make_slug(name: str, conn) -> str:
     base = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "tracker"
-    slug, i = base, 2
-    while conn.execute("SELECT 1 FROM trackers WHERE slug=?", (slug,)).fetchone():
-        slug, i = f"{base}-{i}", i + 1
-    return slug
+    return f"{base}-{secrets.token_hex(2)}"
 
 
 def load_stats_from_db(conn) -> None:
@@ -845,6 +847,20 @@ async def get_stats(session_id: str | None = None):
                 ],
             }
 
+    tracked_stats = {"sessions": 0, "tokens_saved": 0}
+    if _db_conn is not None:
+        trow = _db_conn.execute(
+            """
+            SELECT COUNT(DISTINCT t.slug),
+                   COALESCE(SUM(c.original_tokens - c.compressed_tokens), 0)
+            FROM trackers t
+            JOIN compressions c ON c.session_id = t.session_id
+            WHERE t.status IN ('active', 'closed') AND t.session_id IS NOT NULL
+            """
+        ).fetchone()
+        if trow:
+            tracked_stats = {"sessions": trow[0] or 0, "tokens_saved": trow[1] or 0}
+
     return {
         "started_at": stats["started_at"],
         "total_requests": stats["total_requests"],
@@ -862,6 +878,7 @@ async def get_stats(session_id: str | None = None):
         "today": today_stats,
         "alltime": alltime_stats,
         "recent": recent_rows,
+        "tracked": tracked_stats,
     }
 
 
@@ -958,6 +975,11 @@ async def dashboard():
 @app.get("/play", response_class=HTMLResponse)
 async def play():
     return HTMLResponse(PLAY_HTML)
+
+
+@app.get("/play/list", response_class=HTMLResponse)
+async def play_list():
+    return HTMLResponse(LIST_HTML)
 
 
 @app.post("/play/compress")
@@ -1112,7 +1134,7 @@ async def get_tracker():
         return JSONResponse([])
     rows = _db_conn.execute(
         "SELECT slug, name, status, session_id, created_at, linked_at "
-        "FROM trackers ORDER BY created_at DESC"
+        "FROM trackers WHERE status IN ('pending','active') ORDER BY created_at DESC"
     ).fetchall()
     return JSONResponse([dict(r) for r in rows])
 
@@ -1121,11 +1143,34 @@ async def get_tracker():
 async def delete_tracker(slug: str):
     if _db_conn is None:
         return JSONResponse({"error": "db not ready"}, status_code=503)
-    result = _db_conn.execute("DELETE FROM trackers WHERE slug=?", (slug,))
+    ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    result = _db_conn.execute(
+        "UPDATE trackers SET status='closed', closed_at=? WHERE slug=?",
+        (ts, slug),
+    )
     _db_conn.commit()
     if result.rowcount == 0:
         return JSONResponse({"error": "not found"}, status_code=404)
-    return JSONResponse({"deleted": slug})
+    return JSONResponse({"closed": slug})
+
+
+@app.get("/admin/tracker/all")
+async def get_all_trackers():
+    if _db_conn is None:
+        return JSONResponse([])
+    rows = _db_conn.execute(
+        """
+        SELECT t.slug, t.name, t.status, t.session_id,
+               t.created_at, t.linked_at, t.closed_at,
+               COALESCE(SUM(c.original_tokens - c.compressed_tokens), 0) AS tokens_saved,
+               COUNT(c.id) AS requests
+        FROM trackers t
+        LEFT JOIN compressions c ON c.session_id = t.session_id
+        GROUP BY t.slug
+        ORDER BY t.created_at DESC
+        """
+    ).fetchall()
+    return JSONResponse([dict(r) for r in rows])
 
 
 @app.get("/v1/models")
@@ -1388,6 +1433,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   </div>
   <div class="header-right">
     <a href="/play" style="color:#8b949e;font-size:11px;text-decoration:none;letter-spacing:.02em">▶ play</a>
+    <a href="/play/list" style="color:#8b949e;font-size:11px;text-decoration:none;letter-spacing:.02em">▶ history</a>
     <span id="uptime_display">—</span>
     <span><span class="live-dot"></span>live</span>
   </div>
@@ -1440,6 +1486,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   <span style="color:#484f58">&#x2B21;</span>
   <span>Shell-layer compression not yet logging. Add the PostToolUse hook for Bash in Claude Code settings to capture rtk savings per session.</span>
 </div>
+
+<!-- Tracked sessions summary (hidden until data arrives) -->
+<div id="tracked_summary" style="display:none;font-size:11px;color:#8b949e;margin-bottom:10px;text-align:center"></div>
 
 <!-- Row 1: Today tiles -->
 <div class="tiles">
@@ -1766,6 +1815,21 @@ async function refresh() {
           c.model + (c.param_name ? ' · ' + c.param_name + '=' + c.param_value : '');
         if (_prevLoading) { _prevLoading = false; refreshTimeseries(); }
       }
+    }
+
+    // ── Tracked sessions summary ──
+    const tracked = d.tracked || {};
+    const trackedEl = document.getElementById('tracked_summary');
+    if (trackedEl && !TRACKER && tracked.sessions > 0) {
+      trackedEl.textContent = fmt(tracked.tokens_saved) + ' tokens saved across ' + tracked.sessions + ' tracked session' + (tracked.sessions !== 1 ? 's' : '') + ' · ';
+      const link = document.createElement('a');
+      link.href = '/play/list';
+      link.textContent = 'view history';
+      link.style.cssText = 'color:#58a6ff;font-size:11px';
+      trackedEl.appendChild(link);
+      trackedEl.style.display = '';
+    } else if (trackedEl) {
+      trackedEl.style.display = 'none';
     }
 
     // ── Today tiles (DB-driven) ──
@@ -2195,6 +2259,101 @@ document.getElementById('model_select').addEventListener('change', () => {
 });
 
 init();
+</script>
+</body>
+</html>"""
+
+
+LIST_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Session History · LLMLingua</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'SF Mono','Fira Code',monospace; background: #0d1117; color: #c9d1d9; padding: 20px; max-width: 900px; margin: 0 auto; }
+  .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid #21262d; }
+  .title { color: #58a6ff; font-size: 14px; font-weight: 700; letter-spacing: .04em; }
+  a { color: #58a6ff; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .summary { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 14px 18px; margin-bottom: 16px; font-size: 12px; color: #8b949e; display: flex; gap: 24px; flex-wrap: wrap; }
+  .summary b { color: #c9d1d9; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { text-align: left; color: #8b949e; font-weight: 600; padding: 8px 12px; border-bottom: 1px solid #21262d; letter-spacing: .04em; font-size: 10px; text-transform: uppercase; }
+  td { padding: 10px 12px; border-bottom: 1px solid #161b22; vertical-align: middle; }
+  tr:hover td { background: #161b22; }
+  .badge { display: inline-block; font-size: 10px; padding: 1px 7px; border-radius: 3px; font-weight: 600; letter-spacing: .03em; }
+  .badge-pending { background: #2b2200; color: #d29922; }
+  .badge-active  { background: #0d2b1a; color: #3fb950; }
+  .badge-closed  { background: #1c2128; color: #484f58; }
+  .slug-hint { font-size: 10px; color: #484f58; margin-top: 2px; }
+  .empty { text-align: center; color: #484f58; padding: 40px; font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="header">
+  <span class="title">SESSION HISTORY</span>
+  <a href="/dashboard" style="font-size:11px;color:#8b949e">← dashboard</a>
+</div>
+<div class="summary" id="summary">loading…</div>
+<table>
+  <thead>
+    <tr>
+      <th>Name</th>
+      <th>Status</th>
+      <th>Tokens saved</th>
+      <th>Requests</th>
+      <th>Created</th>
+      <th>Linked</th>
+      <th>Closed</th>
+    </tr>
+  </thead>
+  <tbody id="rows"></tbody>
+</table>
+<script>
+function fmt(n) {
+  if (!n) return '—';
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
+  return n.toLocaleString();
+}
+function fmtDate(s) {
+  if (!s) return '—';
+  return s.replace('T', ' ').slice(0, 16);
+}
+function escapeHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+async function load() {
+  const data = await fetch('/admin/tracker/all').then(r => r.json());
+  const totalSaved = data.reduce((a, t) => a + (t.tokens_saved || 0), 0);
+  const linked = data.filter(t => t.session_id);
+  document.getElementById('summary').innerHTML =
+    '<span><b>' + data.length + '</b> sessions total</span>' +
+    '<span><b>' + linked.length + '</b> linked to a Claude session</span>' +
+    '<span><b>' + fmt(totalSaved) + '</b> tokens saved across all tracked</span>';
+  const tbody = document.getElementById('rows');
+  if (!data.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="empty">No tracked sessions yet.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = data.map(t => {
+    const slug = encodeURIComponent(t.slug);
+    const badge = '<span class="badge badge-' + escapeHtml(t.status) + '">' + escapeHtml(t.status) + '</span>';
+    return '<tr>'
+      + '<td><a href="/dashboard/' + slug + '">' + escapeHtml(t.name) + '</a>'
+      + '<div class="slug-hint">' + escapeHtml(t.slug) + '</div></td>'
+      + '<td>' + badge + '</td>'
+      + '<td style="color:#3fb950;font-weight:600">' + fmt(t.tokens_saved) + '</td>'
+      + '<td>' + (t.requests || '—') + '</td>'
+      + '<td style="color:#484f58">' + fmtDate(t.created_at) + '</td>'
+      + '<td style="color:#484f58">' + fmtDate(t.linked_at) + '</td>'
+      + '<td style="color:#484f58">' + fmtDate(t.closed_at) + '</td>'
+      + '</tr>';
+  }).join('');
+}
+load();
 </script>
 </body>
 </html>"""
