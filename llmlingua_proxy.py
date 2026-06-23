@@ -1,4 +1,5 @@
 import os
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 import json
 import platform
 import re
@@ -25,6 +26,9 @@ COST_PER_MTOK     = float(os.environ.get("COST_PER_MTOK", "3.0"))
 backend          = None
 backend_loading  = None   # set to model name while async load is in progress
 _db_conn         = None
+backend_user     = None   # kompress instance in dual mode
+backend_system   = None   # llmlingua2-large instance in dual mode
+dual_mode        = False
 
 KNOWN_MODELS = ("llmlingua2", "llmlingua2-large", "kompress")
 
@@ -94,6 +98,10 @@ def init_db(path: str):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_rtk_events_ts      ON rtk_events(ts)")
     try:
         conn.execute("ALTER TABLE trackers ADD COLUMN closed_at TEXT")
+    except Exception:
+        pass  # column already exists
+    try:
+        conn.execute("ALTER TABLE compressions ADD COLUMN role TEXT DEFAULT 'user'")
     except Exception:
         pass  # column already exists
     conn.commit()
@@ -236,6 +244,8 @@ LLMLINGUA2_MODELS = {
 def _load_llmlingua2_backend(backend_key: str | None = None) -> dict:
     """Load the LLMLingua-2 PromptCompressor and return a backend dict."""
     from llmlingua import PromptCompressor
+    import transformers as _tf
+    import logging as _logging
     rate = float(os.environ.get("COMPRESS_RATE", "0.5"))
     if backend_key is None:
         backend_key = os.environ.get("COMPRESSOR_MODEL", "llmlingua2")
@@ -243,11 +253,19 @@ def _load_llmlingua2_backend(backend_key: str | None = None) -> dict:
     import torch
     device = "mps" if torch.backends.mps.is_available() else "cpu"
     print(f"Loading LLMLingua-2 model ({backend_key}: {model_name})...")
-    c = PromptCompressor(
-        model_name=model_name,
-        use_llmlingua2=True,
-        device_map=device,
-    )
+    _tf.logging.set_verbosity_error()
+    _hf_log = _logging.getLogger("huggingface_hub")
+    _prev_hf = _hf_log.level
+    _hf_log.setLevel(_logging.ERROR)
+    try:
+        c = PromptCompressor(
+            model_name=model_name,
+            use_llmlingua2=True,
+            device_map=device,
+        )
+    finally:
+        _tf.logging.set_verbosity_warning()
+        _hf_log.setLevel(_prev_hf)
     print(f"Model ready. (device={device})")
     return {"type": backend_key, "backend_key": backend_key, "compressor": c, "rate": rate}
 
@@ -306,6 +324,12 @@ def load_backend() -> dict:
 _load_backend = load_backend
 
 
+def _pick_backend(role: str) -> dict | None:
+    if dual_mode and backend_user is not None and backend_system is not None:
+        return backend_system if role == "system" else backend_user
+    return backend
+
+
 # ---------------------------------------------------------------------------
 # Lifespan
 # ---------------------------------------------------------------------------
@@ -319,6 +343,17 @@ async def lifespan(app: FastAPI):
     load_stats_from_db(_db_conn)
     backend = _load_backend()
     yield
+    # Release model references before process exit to avoid MPS semaphore leaks
+    backend = None
+    import gc
+    gc.collect()
+    try:
+        import torch
+        if torch.backends.mps.is_available():
+            torch.mps.synchronize()
+            torch.mps.empty_cache()
+    except Exception:
+        pass
     if _db_conn:
         _db_conn.close()
 
@@ -345,17 +380,20 @@ def record_compression(
     latency_ms: float = 0.0,
     original_text: str | None = None,
     compressed_text: str | None = None,
+    role: str = "user",
+    active_backend: dict | None = None,
 ):
     stats["total_original_tokens"] += original
     stats["total_compressed_tokens"] += compressed
 
-    model_name = backend.get("type", "llmlingua2") if backend else "llmlingua2"
+    active = active_backend if active_backend is not None else backend
+    model_name = active.get("type", "llmlingua2") if active else "llmlingua2"
     ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
     if _db_conn:
         cur = _db_conn.execute(
-            "INSERT INTO compressions (ts, session_id, model, original_tokens, compressed_tokens, latency_ms) VALUES (?,?,?,?,?,?)",
-            (ts, session_id, model_name, original, compressed, latency_ms),
+            "INSERT INTO compressions (ts, session_id, model, original_tokens, compressed_tokens, latency_ms, role) VALUES (?,?,?,?,?,?,?)",
+            (ts, session_id, model_name, original, compressed, latency_ms, role),
         )
         if original_text is not None and compressed_text is not None:
             _db_conn.execute(
@@ -542,37 +580,49 @@ def chunk_text(text: str) -> list[str]:
 # Compression
 # ---------------------------------------------------------------------------
 
-def compress_text(text: str, session_id: str) -> str:
+def compress_text(text: str, session_id: str, role: str = "user") -> str:
     if len(text) <= 200:
         return text
-    if backend is None:
+    active = _pick_backend(role)
+    if active is None:
         return text
     t0 = time.perf_counter()
     try:
-        compressed, orig, comp = compress_backend(text)
+        compressed, orig, comp = _compress_with(active, text)
     except Exception as e:
         print(f"[compressor] compression failed, forwarding original: {e}")
         return text
     latency_ms = (time.perf_counter() - t0) * 1000
-    model_tag = backend.get("type", "compressor") if backend else "compressor"
-    print(f"[{model_tag}] {orig} → {comp} tokens [{session_id[:8]}]")
-    record_compression(session_id, orig, comp, latency_ms, text, compressed)
+    model_tag = active.get("type", "compressor")
+    print(f"[{model_tag}] {orig} → {comp} tokens [{session_id[:8]}] role={role}")
+    record_compression(session_id, orig, comp, latency_ms, text, compressed, role=role, active_backend=active)
     return compressed
 
 
+def _compress_with(active: dict, text: str):
+    """Dispatch to the right compressor using the given backend dict.
+
+    Returns (compressed_text, orig_tokens, comp_tokens).
+    """
+    if active.get("type") == "kompress":
+        return _compress_kompress(active, text)
+    return _compress_llmlingua2(active, text)
+
+
+# Keep old name as alias so /play/compress endpoint still works without changes.
 def compress_backend(text: str):
-    """Dispatch to the configured compressor. Returns (compressed_text, orig_tokens, comp_tokens)."""
-    if backend.get("type") == "kompress":
-        return _compress_kompress(text)
-    return _compress_llmlingua2(text)
+    """Legacy wrapper — dispatches via the global backend. Use _compress_with() for new code."""
+    if backend is None:
+        raise RuntimeError("No backend loaded")
+    return _compress_with(backend, text)
 
 
-def _compress_llmlingua2(text: str):
+def _compress_llmlingua2(active: dict, text: str):
     chunks = chunk_text(text)
     if len(chunks) == 1:
-        result = backend["compressor"].compress_prompt(
+        result = active["compressor"].compress_prompt(
             chunks[0],
-            rate=backend.get("rate", 0.5),
+            rate=active.get("rate", 0.5),
             force_tokens=["\n", "?", ".", "!"],
         )
         return result["compressed_prompt"], result["origin_tokens"], result["compressed_tokens"]
@@ -581,9 +631,9 @@ def _compress_llmlingua2(text: str):
     total_orig = 0
     total_comp = 0
     for chunk in chunks:
-        result = backend["compressor"].compress_prompt(
+        result = active["compressor"].compress_prompt(
             chunk,
-            rate=backend.get("rate", 0.5),
+            rate=active.get("rate", 0.5),
             force_tokens=["\n", "?", ".", "!"],
         )
         parts.append(result["compressed_prompt"])
@@ -592,9 +642,23 @@ def _compress_llmlingua2(text: str):
     return "\n\n".join(parts), total_orig, total_comp
 
 
-def _compress_kompress(text: str):
-    result = backend["compressor"].compress(text)
+def _compress_kompress(active: dict, text: str):
+    result = active["compressor"].compress(text)
     return result.compressed, result.original_tokens, result.compressed_tokens
+
+
+def compress_system_field(system_val, session_id: str):
+    """Compress the top-level Anthropic API `system` field (string or content-block list)."""
+    if isinstance(system_val, str):
+        return compress_text(system_val, session_id, role="system")
+    if isinstance(system_val, list):
+        return [
+            {**b, "text": compress_text(b["text"], session_id, role="system")}
+            if isinstance(b, dict) and b.get("type") == "text" else b
+            for b in system_val
+        ]
+    return system_val
+
 
 def compress_messages(messages: list, session_id: str) -> list:
     out = []
@@ -604,12 +668,12 @@ def compress_messages(messages: list, session_id: str) -> list:
             continue
         content = msg.get("content", "")
         if isinstance(content, str):
-            out.append({**msg, "content": compress_text(content, session_id)})
+            out.append({**msg, "content": compress_text(content, session_id, role="user")})
         elif isinstance(content, list):
             new_blocks = []
             for block in content:
                 if isinstance(block, dict) and block.get("type") == "text":
-                    new_blocks.append({**block, "text": compress_text(block["text"], session_id)})
+                    new_blocks.append({**block, "text": compress_text(block["text"], session_id, role="user")})
                 else:
                     new_blocks.append(block)
             out.append({**msg, "content": new_blocks})
@@ -649,6 +713,9 @@ async def get_stats(session_id: str | None = None):
         sessions_out[sid] = {**s, "saved_tokens": sv}
 
     recent = list(stats["recent_compressions"])
+    if session_id:
+        sessions_out = {sid: v for sid, v in sessions_out.items() if sid == session_id}
+        recent = [c for c in recent if c.get("session_id", "") == session_id[:8]]
     avg_latency = (
         sum(c["latency_ms"] for c in recent) / len(recent) if recent else 0.0
     )
@@ -1173,6 +1240,33 @@ async def get_all_trackers():
     return JSONResponse([dict(r) for r in rows])
 
 
+@app.get("/session/{slug}/compressions")
+async def get_session_compressions(slug: str, limit: int = 50):
+    if _db_conn is None:
+        return JSONResponse({"error": "db not ready"}, status_code=503)
+    row = _db_conn.execute("SELECT session_id FROM trackers WHERE slug=?", (slug,)).fetchone()
+    if row is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    session_id = row[0]
+    if not session_id:
+        return JSONResponse([])
+    rows = _db_conn.execute(
+        """
+        SELECT c.id, c.ts, c.model, c.original_tokens, c.compressed_tokens,
+               ROUND((c.original_tokens - c.compressed_tokens) * 100.0 / c.original_tokens, 1) AS savings_pct,
+               c.latency_ms,
+               ct.original_text, ct.compressed_text
+        FROM compressions c
+        LEFT JOIN compression_texts ct ON ct.compression_id = c.id
+        WHERE c.session_id = ?
+        ORDER BY c.id DESC
+        LIMIT ?
+        """,
+        (session_id, limit),
+    ).fetchall()
+    return JSONResponse([dict(r) for r in rows])
+
+
 @app.get("/v1/models")
 async def list_models(request: Request):
     headers = build_headers(request)
@@ -1198,6 +1292,8 @@ async def proxy_messages(request: Request):
     record_request(session_id, session_name)
 
     body = await request.json()
+    if body.get("system"):
+        body["system"] = compress_system_field(body["system"], session_id)
     body["messages"] = compress_messages(body["messages"], session_id)
     headers = build_headers(request)
     is_streaming = body.get("stream", False)
@@ -1400,6 +1496,24 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   .track-chip a { color: #58a6ff; text-decoration: none; }
   .track-chip a:hover { text-decoration: underline; }
   .track-cancel { background: none; color: #8b949e; border: none; cursor: pointer; font-size: 14px; padding: 0 2px; line-height: 1; }
+
+  /* ── Prompt history (session dashboards only) ── */
+  .prompt-row { background: #161b22; border: 1px solid #30363d; border-radius: 6px; margin-bottom: 8px; overflow: hidden; }
+  .prompt-row-header { display: flex; align-items: center; gap: 12px; padding: 10px 14px; cursor: pointer; user-select: none; }
+  .prompt-row-header:hover { background: #1c2128; }
+  .prompt-toggle { color: #484f58; font-size: 10px; flex-shrink: 0; width: 10px; }
+  .prompt-ts { color: #484f58; font-size: 10px; flex-shrink: 0; width: 52px; }
+  .prompt-tokens { font-size: 11px; }
+  .prompt-savings { font-size: 11px; color: #3fb950; font-weight: 600; min-width: 44px; }
+  .prompt-latency { font-size: 10px; color: #484f58; margin-left: auto; }
+  .prompt-no-text { font-size: 10px; color: #484f58; font-style: italic; margin-left: auto; }
+  .prompt-body { display: none; padding: 0 14px 14px; }
+  .prompt-body.open { display: block; }
+  .prompt-panels { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .prompt-panel-label { font-size: 9px; text-transform: uppercase; letter-spacing: .1em; color: #8b949e; margin-bottom: 6px; display: flex; justify-content: space-between; }
+  .prompt-text { font-size: 11px; line-height: 1.5; background: #0d1117; border: 1px solid #21262d; border-radius: 4px; padding: 10px 12px; max-height: 320px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; color: #c9d1d9; font-family: inherit; margin: 0; }
+  .prompt-text.compressed { border-color: #1e3a2a; background: #0f1e14; color: #aed6ae; }
+  @media (max-width: 700px) { .prompt-panels { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
@@ -1426,7 +1540,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     <div id="track_chips"></div>
     <button class="track-btn" id="track_btn" onclick="openTrackForm()">Track new session</button>
     <div class="track-form" id="track_form">
-      <input class="track-input" id="track_name" type="text" placeholder="session name" />
+      <input class="track-input" id="track_name" type="text" placeholder="session name" onkeydown="if(event.key==='Enter')submitTracker()" />
       <button class="track-start" onclick="submitTracker()">Start</button>
       <button class="track-cancel" onclick="closeTrackForm()">✕</button>
     </div>
@@ -1583,6 +1697,15 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     <thead><tr><th>Session</th><th>Name</th><th>Requests</th><th>Saved</th><th>Ratio</th><th>Last seen</th></tr></thead>
     <tbody id="sessions_body"></tbody>
   </table>
+</div>
+
+<!-- Prompt compression history (session dashboards only) -->
+<div class="section" id="prompt_section" style="display:none">
+  <div class="section-title" style="display:flex;align-items:center;gap:10px">
+    Prompt compression history
+    <span id="prompt_count" style="color:#484f58;font-size:9px"></span>
+  </div>
+  <div id="prompt_list"><span class="spark-empty">No compressions yet</span></div>
 </div>
 
 <div class="footer">All data from metrics.db &nbsp;·&nbsp; updated every 2s</div>
@@ -1990,11 +2113,78 @@ async function refreshTimeseries() {
   } catch(e) { console.error(e); }
 }
 
+function togglePrompt(id) {
+  const body = document.getElementById(id + '_body');
+  const arrow = document.getElementById(id + '_arrow');
+  if (!body) return;
+  const isOpen = body.classList.contains('open');
+  body.classList.toggle('open', !isOpen);
+  if (arrow) arrow.textContent = isOpen ? '▶' : '▼';
+}
+
+async function refreshCompressions() {
+  if (!TRACKER || !TRACKER.session_id) return;
+  const section = document.getElementById('prompt_section');
+  if (!section) return;
+  section.style.display = 'block';
+  try {
+    const rows = await fetch('/session/' + encodeURIComponent(TRACKER.slug) + '/compressions').then(r => r.json());
+    const listEl = document.getElementById('prompt_list');
+    const countEl = document.getElementById('prompt_count');
+    if (!Array.isArray(rows) || rows.length === 0) {
+      listEl.innerHTML = '<span class="spark-empty">No compressions yet</span>';
+      countEl.textContent = '';
+      return;
+    }
+    countEl.textContent = rows.length + (rows.length === 50 ? '+ ' : ' ') + 'requests';
+    const openIds = new Set([...listEl.querySelectorAll('.prompt-body.open')].map(el => el.id));
+    listEl.innerHTML = rows.map(r => {
+      const pct = r.savings_pct != null ? r.savings_pct : 0;
+      const hasText = r.original_text != null;
+      const ts = r.ts ? r.ts.slice(11, 16) : '';
+      const id = 'pr_' + r.id;
+      const origLen = (r.original_text || '').length;
+      const compLen = (r.compressed_text || '').length;
+      return '<div class="prompt-row">'
+        + '<div class="prompt-row-header" data-toggle-id="' + id + '">'
+        + '<span class="prompt-toggle" id="' + id + '_arrow">▶</span>'
+        + '<span class="prompt-ts">' + ts + '</span>'
+        + '<span class="prompt-tokens">' + fmt(r.original_tokens) + ' → ' + fmt(r.compressed_tokens) + ' tok</span>'
+        + '<span class="prompt-savings">-' + pct + '%</span>'
+        + '<span class="model-badge" style="font-size:9px;padding:1px 5px">' + (r.model || '—') + '</span>'
+        + (r.latency_ms ? '<span class="prompt-latency">' + Math.round(r.latency_ms) + 'ms</span>' : '')
+        + (hasText ? '' : '<span class="prompt-no-text">text not stored</span>')
+        + '</div>'
+        + (hasText
+          ? '<div class="prompt-body" id="' + id + '_body">'
+            + '<div class="prompt-panels">'
+            + '<div><div class="prompt-panel-label"><span>Original</span><span style="color:#484f58">' + fmt(origLen) + ' chars</span></div>'
+            + '<pre class="prompt-text">' + escapeHtml(r.original_text) + '</pre></div>'
+            + '<div><div class="prompt-panel-label"><span>Compressed</span><span style="color:#3fb950">' + fmt(compLen) + ' chars</span></div>'
+            + '<pre class="prompt-text compressed">' + escapeHtml(r.compressed_text || '') + '</pre></div>'
+            + '</div></div>'
+          : '')
+        + '</div>';
+    }).join('');
+    openIds.forEach(bodyId => {
+      const body = document.getElementById(bodyId);
+      const arrow = document.getElementById(bodyId.replace('_body', '_arrow'));
+      if (body) { body.classList.add('open'); if (arrow) arrow.textContent = '▼'; }
+    });
+    listEl.onclick = function(e) {
+      const hdr = e.target.closest('[data-toggle-id]');
+      if (hdr) togglePrompt(hdr.dataset.toggleId);
+    };
+  } catch(e) { console.error(e); }
+}
+
 updateBanner();
 refresh();
 refreshTimeseries();
+if (TRACKER) refreshCompressions();
 setInterval(refresh, 2000);
 setInterval(refreshTimeseries, 10000);
+if (TRACKER) setInterval(refreshCompressions, 5000);
 </script>
 </body>
 </html>"""
