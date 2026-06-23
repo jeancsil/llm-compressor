@@ -869,7 +869,7 @@ async def get_stats(session_id: str | None = None):
                 """
                 SELECT ts, session_id, model, original_tokens, compressed_tokens,
                        ROUND((original_tokens - compressed_tokens) * 100.0 / original_tokens, 1) AS savings_pct,
-                       latency_ms
+                       latency_ms, role
                 FROM compressions
                 WHERE session_id = ?
                 ORDER BY id DESC
@@ -882,7 +882,7 @@ async def get_stats(session_id: str | None = None):
                 """
                 SELECT ts, session_id, model, original_tokens, compressed_tokens,
                        ROUND((original_tokens - compressed_tokens) * 100.0 / original_tokens, 1) AS savings_pct,
-                       latency_ms
+                       latency_ms, role
                 FROM compressions
                 WHERE model = ?
                 ORDER BY id DESC
@@ -899,6 +899,7 @@ async def get_stats(session_id: str | None = None):
                 "compressed_tokens": r[4],
                 "savings_pct": r[5] or 0.0,
                 "latency_ms": round(r[6], 1) if r[6] is not None else 0.0,
+                "role": r[7] or "user",
             }
             for r in recent_db_rows
         ]
@@ -1580,6 +1581,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       <option value="llmlingua2">llmlingua2</option>
       <option value="llmlingua2-large">llmlingua2-large</option>
       <option value="kompress">kompress</option>
+      <option value="dual">dual (system→large · user→kompress)</option>
     </select>
     <span class="model-loading" id="model_loading">loading…</span>
     <!-- Track new session controls -->
@@ -1714,7 +1716,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <div class="section">
   <div class="section-title">Recent activity</div>
   <table>
-    <thead><tr><th>Time</th><th>Model</th><th>Tokens</th><th>Savings %</th><th>Latency ms</th></tr></thead>
+    <thead><tr><th>Time</th><th>Model</th><th>Role</th><th>Tokens</th><th>Savings %</th><th>Latency ms</th></tr></thead>
     <tbody id="recent_body"></tbody>
   </table>
 </div>
@@ -1974,14 +1976,18 @@ async function refresh() {
       if (c.loading) {
         sel.disabled = true;
         lbl.style.display = 'inline';
-        document.getElementById('model_badge').textContent = c.model + ' · loading…';
+        document.getElementById('model_badge').textContent = (c.model === 'dual' ? 'dual' : c.model) + ' · loading…';
         _prevLoading = true;
       } else {
         sel.value = c.model;
         sel.disabled = false;
         lbl.style.display = 'none';
-        document.getElementById('model_badge').textContent =
-          c.model + (c.param_name ? ' · ' + c.param_name + '=' + c.param_value : '');
+        if (c.dual_mode) {
+          document.getElementById('model_badge').textContent = 'dual · system→large / user→kompress';
+        } else {
+          document.getElementById('model_badge').textContent =
+            c.model + (c.param_name ? ' · ' + c.param_name + '=' + c.param_value : '');
+        }
         if (_prevLoading) { _prevLoading = false; refreshTimeseries(); }
       }
     }
@@ -2045,9 +2051,13 @@ async function refresh() {
     // ── Row 4: Recent activity table ──
     if (d.recent && d.recent.length > 0) {
       document.getElementById('recent_body').innerHTML = d.recent.slice(0, 10).map(function(row) {
+        var roleBadge = row.role === 'system'
+          ? '<span style="font-size:10px;border-radius:3px;padding:1px 5px;background:#0d1a35;color:#58a6ff;border:1px solid #1e2f50">system</span>'
+          : '<span style="font-size:10px;border-radius:3px;padding:1px 5px;background:#0f1e14;color:#aed6ae;border:1px solid #1e3a2a">user</span>';
         return '<tr>'
           + '<td class="muted">' + row.ts.slice(11, 16) + '</td>'
           + '<td><span class="model-badge">' + row.model + '</span></td>'
+          + '<td>' + roleBadge + '</td>'
           + '<td>' + fmt(row.original_tokens) + ' &#x2192; ' + fmt(row.compressed_tokens) + '</td>'
           + '<td class="green">' + row.savings_pct + '%</td>'
           + '<td class="muted">' + row.latency_ms + ' ms</td>'
@@ -2055,7 +2065,7 @@ async function refresh() {
       }).join('');
     } else {
       document.getElementById('recent_body').innerHTML =
-        '<tr><td colspan="5" class="muted" style="text-align:center;padding:12px">No data yet</td></tr>';
+        '<tr><td colspan="6" class="muted" style="text-align:center;padding:12px">No data yet</td></tr>';
     }
 
     // ── Sparkline ──
@@ -2311,6 +2321,7 @@ PLAY_HTML = """<!DOCTYPE html>
       <option value="llmlingua2">llmlingua2</option>
       <option value="llmlingua2-large">llmlingua2-large</option>
       <option value="kompress">kompress</option>
+      <option value="dual">dual (system→large · user→kompress)</option>
     </select>
     <span class="model-loading" id="model_loading"><span class="dot"></span>loading model…</span>
 
