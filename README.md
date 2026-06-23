@@ -149,7 +149,7 @@ Compression is logged to `metrics.db` with the `role` column (`system` or `user`
 
 ```bash
 sqlite3 metrics.db \
-  "SELECT role, model, COUNT(*), ROUND(AVG((1.0 - compressed_tokens*1.0/original_tokens)*100),1) as compressions FROM role, model"
+  "SELECT role, model, COUNT(*), ROUND(AVG((1.0 - compressed_tokens*1.0/original_tokens)*100),1) AS avg_savings_pct FROM compressions GROUP BY role, model"
 ```
 
 The dashboard recent-activity table shows each row's role with a color-coded badge (blue = system, green = user).

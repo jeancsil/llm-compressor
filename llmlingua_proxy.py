@@ -745,6 +745,13 @@ async def get_stats(session_id: str | None = None):
             "param_value": "",
             "loading": True,
         }
+    elif backend and backend.get("type") == "dual":
+        compressor_info = {
+            "model": "dual",
+            "loading": False,
+            "param_name": None,
+            "param_value": None,
+        }
     elif backend and backend.get("type") == "kompress":
         compressor_info = {
             "model": "kompress",
@@ -1104,9 +1111,12 @@ async def play_compress(request: Request):
             global backend, backend_loading
             try:
                 if _target == "kompress":
-                    backend = _load_kompress_backend()
+                    new_backend = _load_kompress_backend()
+                elif _target == "dual":
+                    new_backend = _load_dual_backend()
                 else:
-                    backend = _load_llmlingua2_backend(backend_key=_target)
+                    new_backend = _load_llmlingua2_backend(backend_key=_target)
+                backend = new_backend
             except Exception as e:
                 print(f"[play] load {_target}: {e}")
             finally:
