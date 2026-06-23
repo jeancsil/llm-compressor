@@ -30,7 +30,7 @@ backend_user     = None   # kompress instance in dual mode
 backend_system   = None   # llmlingua2-large instance in dual mode
 dual_mode        = False
 
-KNOWN_MODELS = ("llmlingua2", "llmlingua2-large", "kompress")
+KNOWN_MODELS = ("llmlingua2", "llmlingua2-large", "kompress", "dual")
 
 
 # ---------------------------------------------------------------------------
@@ -297,6 +297,21 @@ def _load_kompress_backend() -> dict:
     return {"type": "kompress", "compressor": compressor, "threshold": threshold}
 
 
+def _load_dual_backend() -> dict:
+    """Load both backends and set dual-mode globals.
+
+    Load order: system backend first (llmlingua2-large), then user backend (kompress).
+    Sets dual_mode = True only after both backends are ready.
+    """
+    global backend_user, backend_system, dual_mode
+    print("Loading dual mode: kompress (user) + llmlingua2-large (system)...")
+    backend_system = _load_llmlingua2_backend("llmlingua2-large")
+    backend_user   = _load_kompress_backend()
+    dual_mode      = True
+    print("Dual mode ready.")
+    return {"type": "dual", "model_user": "kompress", "model_system": "llmlingua2-large"}
+
+
 def load_backend() -> dict:
     """Dispatch to the configured backend loader.
 
@@ -315,6 +330,8 @@ def load_backend() -> dict:
                 model_name = row[0]
     except Exception:
         pass  # DB not available; fall back to env var
+    if model_name == "dual":
+        return _load_dual_backend()
     if model_name == "kompress":
         return _load_kompress_backend()
     return _load_llmlingua2_backend(backend_key=model_name)
@@ -947,6 +964,9 @@ async def get_stats(session_id: str | None = None):
         "alltime": alltime_stats,
         "recent": recent_rows,
         "tracked": tracked_stats,
+        "dual_mode": dual_mode,
+        "model_user": backend_user.get("type") if backend_user else None,
+        "model_system": backend_system.get("type") if backend_system else None,
     }
 
 
@@ -1123,7 +1143,7 @@ async def play_compress(request: Request):
 
 @app.post("/admin/set-model")
 async def set_model(request: Request):
-    global backend, backend_loading
+    global backend, backend_loading, backend_user, backend_system, dual_mode
     body = await request.json()
     model = body.get("model")
     if model not in KNOWN_MODELS:
@@ -1134,24 +1154,49 @@ async def set_model(request: Request):
             (model,),
         )
         _db_conn.commit()
+
+    # When switching away from dual mode, clear dual globals first
+    if dual_mode and model != "dual":
+        dual_mode = False
+        backend_user = None
+        backend_system = None
+
     backend = None
     backend_loading = model
 
-    def load():
-        global backend, backend_loading
-        try:
-            # Use model from closure directly — avoids reading _db_conn cross-thread
-            if model == "kompress":
-                new_backend = _load_kompress_backend()
-            else:
-                new_backend = _load_llmlingua2_backend(backend_key=model)
-            backend = new_backend
-        except Exception as e:
-            print(f"[set-model] failed to load {model}: {e}")
-        finally:
-            backend_loading = None
+    if model == "dual":
+        # Clear any previously loaded single backend globals
+        backend_user = None
+        backend_system = None
 
-    threading.Thread(target=load, daemon=True).start()
+        def load_dual():
+            global backend, backend_loading
+            try:
+                new_backend = _load_dual_backend()
+                backend = new_backend
+            except Exception as e:
+                print(f"[set-model] failed to load dual: {e}")
+            finally:
+                backend_loading = None
+
+        threading.Thread(target=load_dual, daemon=True).start()
+    else:
+        def load():
+            global backend, backend_loading
+            try:
+                # Use model from closure directly — avoids reading _db_conn cross-thread
+                if model == "kompress":
+                    new_backend = _load_kompress_backend()
+                else:
+                    new_backend = _load_llmlingua2_backend(backend_key=model)
+                backend = new_backend
+            except Exception as e:
+                print(f"[set-model] failed to load {model}: {e}")
+            finally:
+                backend_loading = None
+
+        threading.Thread(target=load, daemon=True).start()
+
     return JSONResponse({"status": "loading", "model": model})
 
 
