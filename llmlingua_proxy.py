@@ -519,8 +519,9 @@ _CHUNK_MAX_CHARS = 1400  # ~400 BERT tokens for mixed code/prose
 
 def _count_tokens(text: str) -> int:
     """Count tokens using the backend tokenizer (falls back to whitespace split)."""
+    active = backend or backend_user or backend_system
     try:
-        return len(backend["compressor"].tokenizer.tokenize(text))
+        return len(active["compressor"].tokenizer.tokenize(text))
     except Exception:
         return len(text.split())
 
@@ -653,7 +654,7 @@ def compress_system_field(system_val, session_id: str):
         return compress_text(system_val, session_id, role="system")
     if isinstance(system_val, list):
         return [
-            {**b, "text": compress_text(b["text"], session_id, role="system")}
+            {**b, "text": compress_text(b.get("text", ""), session_id, role="system")}
             if isinstance(b, dict) and b.get("type") == "text" else b
             for b in system_val
         ]
