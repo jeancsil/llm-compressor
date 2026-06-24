@@ -35,7 +35,7 @@ while ! mkdir "$LOCK_DIR" 2>/dev/null; do sleep 0.02; done
 # Match by recency only — command-name matching is unreliable because RTK truncates
 # some commands and tool_input.command never has the "rtk " prefix.
 ROW=$(sqlite3 "$RTK_DB" \
-    "SELECT id, rtk_cmd, input_tokens, output_tokens, saved_tokens, savings_pct, timestamp
+    "SELECT id, rtk_cmd, input_tokens, output_tokens, saved_tokens, savings_pct, timestamp, COALESCE(project_path,'')
      FROM commands
      WHERE timestamp >= strftime('%Y-%m-%dT%H:%M:%S', datetime('now', '-10 seconds'))
      ORDER BY id DESC
@@ -43,11 +43,14 @@ ROW=$(sqlite3 "$RTK_DB" \
 
 [[ -z "${ROW:-}" ]] && exit 0
 
-IFS='|' read -r ROW_ID ROW_CMD INP OUT SAVED PCT TS <<< "$ROW"
+IFS='|' read -r ROW_ID ROW_CMD INP OUT SAVED PCT TS PROJECT_PATH <<< "$ROW"
+
+# Escape project_path for JSON (replace backslashes and double-quotes)
+PROJECT_PATH_JSON=$(printf '%s' "${PROJECT_PATH}" | sed 's/\\/\\\\/g; s/"/\\"/g')
 
 curl -sf --max-time 2 -X POST "$PROXY_URL" \
     -H "Content-Type: application/json" \
-    -d "{\"rtk_id\":${ROW_ID},\"ts\":\"${TS}\",\"session_id\":\"${SESSION_ID}\",\"rtk_cmd\":\"${ROW_CMD}\",\"input_tokens\":${INP},\"output_tokens\":${OUT},\"saved_tokens\":${SAVED},\"savings_pct\":${PCT}}" \
+    -d "{\"rtk_id\":${ROW_ID},\"ts\":\"${TS}\",\"session_id\":\"${SESSION_ID}\",\"rtk_cmd\":\"${ROW_CMD}\",\"input_tokens\":${INP},\"output_tokens\":${OUT},\"saved_tokens\":${SAVED},\"savings_pct\":${PCT},\"project_path\":\"${PROJECT_PATH_JSON}\"}" \
     > /dev/null 2>&1 || true
 
 exit 0

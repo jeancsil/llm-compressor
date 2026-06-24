@@ -24,7 +24,7 @@ start:
 	@if [ -z "$$ANTHROPIC_API_KEY" ]; then \
 		echo "Error: ANTHROPIC_API_KEY is not set"; exit 1; \
 	fi
-	uv run python llmlingua_proxy.py
+	uv run python proxy.py
 
 stop:
 	@if [ -f $(PID_FILE) ]; then \
@@ -40,7 +40,7 @@ restart: stop
 	@if [ -z "$$ANTHROPIC_API_KEY" ]; then \
 		echo "Error: ANTHROPIC_API_KEY is not set"; exit 1; \
 	fi
-	@nohup uv run python llmlingua_proxy.py >> proxy.log 2>&1 & echo $$! > $(PID_FILE) && echo "Started PID $$(cat $(PID_FILE))"
+	@nohup uv run python proxy.py >> proxy.log 2>&1 & echo $$! > $(PID_FILE) && echo "Started PID $$(cat $(PID_FILE))"
 
 dashboard:
 	open $(URL)/dashboard

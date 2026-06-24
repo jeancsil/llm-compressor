@@ -19,8 +19,26 @@ from llmlingua import PromptCompressor
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 ANTHROPIC_BASE    = "https://api.anthropic.com"
-DB_PATH           = "metrics.db"
 COST_PER_MTOK     = float(os.environ.get("COST_PER_MTOK", "3.0"))
+
+
+def _rtk_data_dir() -> Path:
+    """Platform-specific directory where both history.db and metrics.db live."""
+    system = platform.system()
+    if system == "Darwin":
+        return Path.home() / "Library" / "Application Support" / "rtk"
+    if system == "Windows":
+        return Path(os.environ.get("APPDATA", Path.home())) / "rtk"
+    return Path.home() / ".local" / "share" / "rtk"
+
+
+def _default_db_path() -> Path:
+    d = _rtk_data_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    return d / "metrics.db"
+
+
+DB_PATH = Path(os.environ.get("LLM_COMPRESSOR_DB") or _default_db_path())
 
 # Module-level globals populated by lifespan
 backend          = None
@@ -34,7 +52,7 @@ KNOWN_MODELS = ("llmlingua2", "llmlingua2-large", "kompress", "dual")
 
 
 # ---------------------------------------------------------------------------
-# Stub helpers (replaced in later tasks)
+# DB helpers
 # ---------------------------------------------------------------------------
 
 def init_db(path: str):
@@ -102,6 +120,11 @@ def init_db(path: str):
         pass  # column already exists
     try:
         conn.execute("ALTER TABLE compressions ADD COLUMN role TEXT DEFAULT 'user'")
+    except Exception:
+        pass  # column already exists
+    try:
+        conn.execute("ALTER TABLE rtk_events ADD COLUMN project_path TEXT DEFAULT ''")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_rtk_events_project ON rtk_events(project_path)")
     except Exception:
         pass  # column already exists
     conn.commit()
@@ -280,7 +303,7 @@ def _load_kompress_backend() -> dict:
         from headroom.transforms.kompress_compressor import KompressCompressor, KompressConfig
     except ImportError:
         raise RuntimeError(
-            "headroom-ai[ml] is not installed. Run: pip install 'headroom-ai[ml]'"
+            "headroom-ai[ml] is not installed. Run: uv add 'headroom-ai[ml]'"
         )
     import torch
     device = "mps" if torch.backends.mps.is_available() else "cpu"
@@ -348,13 +371,40 @@ def _pick_backend(role: str) -> dict | None:
 
 
 # ---------------------------------------------------------------------------
+# DB location migration (legacy ./metrics.db → RTK data dir)
+# ---------------------------------------------------------------------------
+
+def _migrate_db_location() -> None:
+    """Copy metrics.db from the old CWD location to the RTK data directory once.
+
+    Skipped when: old doesn't exist, paths are the same, or new already has data
+    (size > 64 KiB means it was populated, not just an empty shell created by a
+    previous aborted startup).
+    """
+    old = Path("metrics.db").resolve()
+    new = DB_PATH.resolve()
+    if old == new or not old.exists():
+        return
+    if new.exists() and new.stat().st_size > 65536:
+        return  # new DB already has real data
+    import shutil
+    try:
+        shutil.copy2(str(old), str(new))
+        print(f"[db] migrated {old} → {new}")
+        old.rename(old.with_suffix(".db.migrated"))
+    except Exception as e:
+        print(f"[db] migration failed, using {old}: {e}")
+
+
+# ---------------------------------------------------------------------------
 # Lifespan
 # ---------------------------------------------------------------------------
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global backend, _db_conn
-    _db_conn = init_db(DB_PATH)
+    _migrate_db_location()
+    _db_conn = init_db(str(DB_PATH))
     migrate_from_json(_db_conn)
     recover_stats_from_backup(_db_conn)
     load_stats_from_db(_db_conn)
@@ -382,7 +432,7 @@ app = FastAPI(lifespan=lifespan)
 # ---------------------------------------------------------------------------
 
 stats = {
-    "started_at": datetime.now().isoformat(),
+    "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     "total_requests": 0,
     "total_original_tokens": 0,
     "total_compressed_tokens": 0,
@@ -458,14 +508,14 @@ def _try_link_pending_tracker(session_id: str) -> None:
 def record_request(session_id: str, session_name: str | None = None):
     stats["total_requests"] += 1
     sess = stats["sessions"].setdefault(session_id, {
-        "first_seen": datetime.now().isoformat(),
+        "first_seen": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "requests": 0,
         "original_tokens": 0,
         "compressed_tokens": 0,
         "name": None,
     })
     sess["requests"] += 1
-    sess["last_seen"] = datetime.now().isoformat()
+    sess["last_seen"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     if session_name:
         sess["name"] = session_name
 
@@ -476,12 +526,7 @@ def record_request(session_id: str, session_name: str | None = None):
 # ---------------------------------------------------------------------------
 
 def _rtk_db_path() -> Path:
-    system = platform.system()
-    if system == "Darwin":
-        return Path.home() / "Library" / "Application Support" / "rtk" / "history.db"
-    if system == "Windows":
-        return Path(os.environ.get("APPDATA", "")) / "rtk" / "history.db"
-    return Path.home() / ".local" / "share" / "rtk" / "history.db"
+    return _rtk_data_dir() / "history.db"
 
 def read_rtk_stats(since: str | None = None) -> dict | None:
     db = _rtk_db_path()
@@ -954,6 +999,21 @@ async def get_stats(session_id: str | None = None):
         if trow:
             tracked_stats = {"sessions": trow[0] or 0, "tokens_saved": trow[1] or 0}
 
+    # Merge per-session RTK stats into sessions_out
+    if _db_conn is not None:
+        rtk_sess_rows = _db_conn.execute(
+            """SELECT session_id,
+                      COUNT(*) AS rtk_commands,
+                      COALESCE(SUM(saved_tokens), 0) AS rtk_saved
+               FROM rtk_events
+               GROUP BY session_id"""
+        ).fetchall()
+        for rrow in rtk_sess_rows:
+            sid = rrow[0]
+            if sid in sessions_out:
+                sessions_out[sid]["rtk_commands"] = rrow[1]
+                sessions_out[sid]["rtk_saved"]    = rrow[2]
+
     return {
         "started_at": stats["started_at"],
         "total_requests": stats["total_requests"],
@@ -1026,8 +1086,8 @@ async def rtk_log(request: Request):
     try:
         _db_conn.execute(
             """INSERT OR IGNORE INTO rtk_events
-               (rtk_id, ts, session_id, rtk_cmd, input_tokens, output_tokens, saved_tokens, savings_pct)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+               (rtk_id, ts, session_id, rtk_cmd, input_tokens, output_tokens, saved_tokens, savings_pct, project_path)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 body.get("rtk_id"),
                 body.get("ts", datetime.now(timezone.utc).isoformat()),
@@ -1037,6 +1097,7 @@ async def rtk_log(request: Request):
                 int(body.get("output_tokens", 0)),
                 int(body.get("saved_tokens", 0)),
                 float(body.get("savings_pct", 0.0)),
+                body.get("project_path", ""),
             ),
         )
         _db_conn.commit()
@@ -1287,9 +1348,12 @@ async def get_all_trackers():
         SELECT t.slug, t.name, t.status, t.session_id,
                t.created_at, t.linked_at, t.closed_at,
                COALESCE(SUM(c.original_tokens - c.compressed_tokens), 0) AS tokens_saved,
-               COUNT(c.id) AS requests
+               COUNT(c.id) AS requests,
+               COALESCE(SUM(r.saved_tokens), 0) AS rtk_saved,
+               COUNT(r.id) AS rtk_commands
         FROM trackers t
         LEFT JOIN compressions c ON c.session_id = t.session_id
+        LEFT JOIN rtk_events   r ON r.session_id = t.session_id
         GROUP BY t.slug
         ORDER BY t.created_at DESC
         """
@@ -1317,6 +1381,30 @@ async def get_session_compressions(slug: str, limit: int = 50):
         LEFT JOIN compression_texts ct ON ct.compression_id = c.id
         WHERE c.session_id = ?
         ORDER BY c.id DESC
+        LIMIT ?
+        """,
+        (session_id, limit),
+    ).fetchall()
+    return JSONResponse([dict(r) for r in rows])
+
+
+@app.get("/session/{slug}/rtk-commands")
+async def get_session_rtk_commands(slug: str, limit: int = 100):
+    if _db_conn is None:
+        return JSONResponse({"error": "db not ready"}, status_code=503)
+    row = _db_conn.execute("SELECT session_id FROM trackers WHERE slug=?", (slug,)).fetchone()
+    if row is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    session_id = row[0]
+    if not session_id:
+        return JSONResponse([])
+    rows = _db_conn.execute(
+        """
+        SELECT id, ts, rtk_cmd, input_tokens, output_tokens, saved_tokens,
+               ROUND(savings_pct, 1) AS savings_pct, project_path
+        FROM rtk_events
+        WHERE session_id = ?
+        ORDER BY id DESC
         LIMIT ?
         """,
         (session_id, limit),
@@ -1744,15 +1832,15 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
 <!-- Session efficiency bars -->
 <div class="section">
-  <div class="section-title">LLMLingua-2 — sessions by tokens saved</div>
+  <div class="section-title">Sessions by tokens saved &nbsp;·&nbsp; <span style="color:#3fb950">■</span> API (LLMLingua-2) &nbsp;<span style="color:#58a6ff">■</span> Shell (rtk)</div>
   <div id="sess_bars" class="sess-bars"><span class="spark-empty">No sessions yet</span></div>
 </div>
 
 <!-- Session detail table -->
 <div class="section">
-  <div class="section-title">LLMLingua-2 — session detail</div>
+  <div class="section-title">Session detail — LLMLingua-2 + rtk</div>
   <table>
-    <thead><tr><th>Session</th><th>Name</th><th>Requests</th><th>Saved</th><th>Ratio</th><th>Last seen</th></tr></thead>
+    <thead><tr><th>Session</th><th>Name</th><th>API Req</th><th>API Saved</th><th>Ratio</th><th>RTK Cmds</th><th>RTK Saved</th><th>Last seen</th></tr></thead>
     <tbody id="sessions_body"></tbody>
   </table>
 </div>
@@ -1766,7 +1854,19 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   <div id="prompt_list"><span class="spark-empty">No compressions yet</span></div>
 </div>
 
-<div class="footer">All data from metrics.db &nbsp;·&nbsp; updated every 2s</div>
+<!-- RTK command history (session dashboards only) -->
+<div class="section" id="rtk_cmd_section" style="display:none">
+  <div class="section-title" style="display:flex;align-items:center;gap:10px">
+    RTK shell command history
+    <span id="rtk_cmd_count" style="color:#484f58;font-size:9px"></span>
+  </div>
+  <table>
+    <thead><tr><th>Time</th><th>Command</th><th>Tokens in</th><th>Saved</th><th>%</th></tr></thead>
+    <tbody id="rtk_cmd_list"></tbody>
+  </table>
+</div>
+
+<div class="footer">All data from metrics.db &amp; history.db in <code>~/Library/Application Support/rtk/</code> &nbsp;·&nbsp; updated every 2s</div>
 
 <script>
 const TRACKER = (typeof window !== 'undefined' && window.TRACKER) ? window.TRACKER : null;
@@ -2094,11 +2194,11 @@ async function refresh() {
       }).join('');
     }
 
-    // ── Session bars ──
+    // ── Session bars (LLMLingua + RTK stacked) ──
     const sessions = Object.entries(d.sessions).sort((a, b) =>
-      (b[1].saved_tokens || 0) - (a[1].saved_tokens || 0)
+      ((b[1].saved_tokens || 0) + (b[1].rtk_saved || 0)) - ((a[1].saved_tokens || 0) + (a[1].rtk_saved || 0))
     );
-    const maxSess = Math.max(...sessions.map(([, s]) => s.saved_tokens || 0), 1);
+    const maxSess = Math.max(...sessions.map(([, s]) => (s.saved_tokens || 0) + (s.rtk_saved || 0)), 1);
     const sessBarEl = document.getElementById('sess_bars');
     if (sessions.length === 0) {
       sessBarEl.innerHTML = '<span class="spark-empty">No sessions yet</span>';
@@ -2106,13 +2206,21 @@ async function refresh() {
       sessBarEl.innerHTML = sessions.slice(0, 8).map(([id, s]) => {
         const sPct = s.original_tokens > 0
           ? Math.round((1 - s.compressed_tokens / s.original_tokens) * 100) : 0;
-        const w = Math.round(((s.saved_tokens || 0) / maxSess) * 100);
+        const apiSaved = s.saved_tokens || 0;
+        const rtkSaved = s.rtk_saved || 0;
+        const total    = apiSaved + rtkSaved;
+        const wApi = Math.round((apiSaved / maxSess) * 100);
+        const wRtk = Math.round((rtkSaved / maxSess) * 100);
         const label = s.name ? s.name : id.slice(0, 8);
-        return '<div class="sess-bar-row">'
+        const tip = 'API: ' + fmt(apiSaved) + (rtkSaved ? ' · rtk: ' + fmt(rtkSaved) : '');
+        return '<div class="sess-bar-row" title="' + tip + '">'
           + '<div class="sess-bar-label" title="' + id + '">' + label + '</div>'
-          + '<div class="sess-bar-wrap"><div class="sess-bar-fill" style="width:' + w + '%;background:' + barColor(sPct) + '"></div></div>'
+          + '<div class="sess-bar-wrap">'
+          +   '<div class="sess-bar-fill" style="width:' + wApi + '%;background:' + barColor(sPct) + '"></div>'
+          +   (rtkSaved ? '<div class="sess-bar-fill" style="width:' + wRtk + '%;background:#58a6ff;opacity:0.7"></div>' : '')
+          + '</div>'
           + '<div class="sess-bar-pct">' + sPct + '%</div>'
-          + '<div class="sess-bar-saved">' + fmt(s.saved_tokens) + '</div>'
+          + '<div class="sess-bar-saved">' + fmt(total) + (rtkSaved ? ' <span style="color:#58a6ff;font-size:9px">+rtk</span>' : '') + '</div>'
           + '</div>';
       }).join('');
     }
@@ -2129,12 +2237,16 @@ async function refresh() {
       const ratioCell = ratio
         ? '<span class="ratio-badge" style="' + ratioBadgeStyle(parseFloat(ratio)) + '">' + ratio + '×</span>'
         : '<span class="muted">—</span>';
+      const rtkCmds  = s.rtk_commands != null ? s.rtk_commands : '—';
+      const rtkSaved = s.rtk_saved    != null ? '<span class="green">' + fmt(s.rtk_saved) + '</span>' : '<span class="muted">—</span>';
       return '<tr>'
         + '<td><span class="badge">' + id.slice(0, 8) + '</span></td>'
         + '<td>' + nameCell + '</td>'
         + '<td>' + s.requests + '</td>'
         + '<td class="green">' + fmt(s.saved_tokens) + ' <span class="muted">(' + sPct + '%)</span></td>'
         + '<td>' + ratioCell + '</td>'
+        + '<td class="muted">' + rtkCmds + '</td>'
+        + '<td>' + rtkSaved + '</td>'
         + '<td class="muted">' + (s.last_seen ? new Date(s.last_seen).toLocaleTimeString() : '—') + '</td>'
         + '</tr>';
     }).join('');
@@ -2244,13 +2356,45 @@ async function refreshCompressions() {
   } catch(e) { console.error(e); }
 }
 
+async function refreshRtkCommands() {
+  if (!TRACKER || !TRACKER.session_id) return;
+  const section = document.getElementById('rtk_cmd_section');
+  if (!section) return;
+  section.style.display = 'block';
+  try {
+    const rows = await fetch('/session/' + encodeURIComponent(TRACKER.slug) + '/rtk-commands').then(r => r.json());
+    const tbody  = document.getElementById('rtk_cmd_list');
+    const countEl = document.getElementById('rtk_cmd_count');
+    if (!Array.isArray(rows) || rows.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" class="spark-empty">No RTK commands this session</td></tr>';
+      countEl.textContent = '';
+      return;
+    }
+    countEl.textContent = rows.length + ' commands';
+    tbody.innerHTML = rows.map(r => {
+      const pct = r.savings_pct != null ? r.savings_pct : 0;
+      const ts  = r.ts ? r.ts.slice(11, 16) : '';
+      const color = pct >= 40 ? '#3fb950' : pct >= 20 ? '#d29922' : '#8b949e';
+      return '<tr>'
+        + '<td class="muted">' + ts + '</td>'
+        + '<td style="font-family:monospace;font-size:11px;color:#c9d1d9;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + escapeHtml(r.rtk_cmd) + '">' + escapeHtml(r.rtk_cmd) + '</td>'
+        + '<td class="muted">' + fmt(r.input_tokens) + '</td>'
+        + '<td style="color:#3fb950">' + fmt(r.saved_tokens) + '</td>'
+        + '<td style="color:' + color + '">' + pct + '%</td>'
+        + '</tr>';
+    }).join('');
+  } catch(e) { console.error(e); }
+}
+
 updateBanner();
 refresh();
 refreshTimeseries();
 if (TRACKER) refreshCompressions();
+if (TRACKER) refreshRtkCommands();
 setInterval(refresh, 2000);
 setInterval(refreshTimeseries, 10000);
 if (TRACKER) setInterval(refreshCompressions, 5000);
+if (TRACKER) setInterval(refreshRtkCommands, 5000);
 </script>
 </body>
 </html>"""
@@ -2559,8 +2703,11 @@ LIST_HTML = """<!DOCTYPE html>
     <tr>
       <th>Name</th>
       <th>Status</th>
-      <th>Tokens saved</th>
-      <th>Requests</th>
+      <th>API Saved</th>
+      <th>API Req</th>
+      <th>RTK Saved</th>
+      <th>RTK Cmds</th>
+      <th>Total Saved</th>
       <th>Created</th>
       <th>Linked</th>
       <th>Closed</th>
@@ -2584,26 +2731,33 @@ function escapeHtml(s) {
 }
 async function load() {
   const data = await fetch('/admin/tracker/all').then(r => r.json());
-  const totalSaved = data.reduce((a, t) => a + (t.tokens_saved || 0), 0);
+  const totalApiSaved = data.reduce((a, t) => a + (t.tokens_saved || 0), 0);
+  const totalRtkSaved = data.reduce((a, t) => a + (t.rtk_saved   || 0), 0);
   const linked = data.filter(t => t.session_id);
   document.getElementById('summary').innerHTML =
     '<span><b>' + data.length + '</b> sessions total</span>' +
-    '<span><b>' + linked.length + '</b> linked to a Claude session</span>' +
-    '<span><b>' + fmt(totalSaved) + '</b> tokens saved across all tracked</span>';
+    '<span><b>' + linked.length + '</b> linked to Claude</span>' +
+    '<span><b>' + fmt(totalApiSaved) + '</b> API tokens saved</span>' +
+    '<span><b>' + fmt(totalRtkSaved) + '</b> RTK tokens saved</span>' +
+    '<span><b>' + fmt(totalApiSaved + totalRtkSaved) + '</b> total saved</span>';
   const tbody = document.getElementById('rows');
   if (!data.length) {
-    tbody.innerHTML = '<tr><td colspan="7" class="empty">No tracked sessions yet.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" class="empty">No tracked sessions yet.</td></tr>';
     return;
   }
   tbody.innerHTML = data.map(t => {
-    const slug = encodeURIComponent(t.slug);
+    const slug  = encodeURIComponent(t.slug);
     const badge = '<span class="badge badge-' + escapeHtml(t.status) + '">' + escapeHtml(t.status) + '</span>';
+    const total = (t.tokens_saved || 0) + (t.rtk_saved || 0);
     return '<tr>'
       + '<td><a href="/dashboard/' + slug + '">' + escapeHtml(t.name) + '</a>'
       + '<div class="slug-hint">' + escapeHtml(t.slug) + '</div></td>'
       + '<td>' + badge + '</td>'
       + '<td style="color:#3fb950;font-weight:600">' + fmt(t.tokens_saved) + '</td>'
-      + '<td>' + (t.requests || '—') + '</td>'
+      + '<td style="color:#8b949e">' + (t.requests || '—') + '</td>'
+      + '<td style="color:#58a6ff;font-weight:600">' + fmt(t.rtk_saved) + '</td>'
+      + '<td style="color:#8b949e">' + (t.rtk_commands || '—') + '</td>'
+      + '<td style="color:#3fb950;font-weight:700">' + fmt(total) + '</td>'
       + '<td style="color:#484f58">' + fmtDate(t.created_at) + '</td>'
       + '<td style="color:#484f58">' + fmtDate(t.linked_at) + '</td>'
       + '<td style="color:#484f58">' + fmtDate(t.closed_at) + '</td>'
@@ -2616,5 +2770,5 @@ load();
 </html>"""
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     uvicorn.run(app, host="127.0.0.1", port=9099)
