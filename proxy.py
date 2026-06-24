@@ -1395,7 +1395,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LLMLingua Proxy</title>
+<title>LLM Compressor</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'SF Mono', 'Fira Code', monospace; background: #0d1117; color: #c9d1d9; padding: 20px; max-width: 1140px; margin: 0 auto; }
@@ -1585,7 +1585,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
 <div class="header">
   <div style="display:flex;align-items:center;gap:8px">
-    <div class="title">LLMLingua Proxy</div>
+    <div class="title">LLM Compressor</div>
     <span class="model-badge" id="model_badge">—</span>
     <select class="model-select" id="model_select" onchange="switchModel(this.value)" disabled>
       <option value="llmlingua2">llmlingua2</option>
@@ -1643,7 +1643,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     <div class="hero-sublabel" id="api_layer_sub_solo">LLMLingua-2 tokenizer units</div>
   </div>
   <div class="hero-right">
-    <div class="term-prompt">$ llmlingua-proxy --status</div>
+    <div class="term-prompt">$ llm-compressor --status</div>
     <div class="term-line"><span class="term-key">requests processed</span><span class="term-val blue" id="t_requests">—</span></div>
     <div class="term-line"><span class="term-key">original tokens</span><span class="term-val" id="t_original">—</span></div>
     <div class="term-line"><span class="term-key">compressed tokens</span><span class="term-val" id="t_compressed">—</span></div>
@@ -1936,7 +1936,7 @@ async function refresh() {
     document.getElementById('rtk_section').style.display = hasRtk ? 'block' : 'none';
 
     // ── Update API layer model badge (both hero variants) ──
-    const activeModel = d.compressor ? d.compressor.model : 'LLMLingua';
+    const activeModel = d.compressor ? d.compressor.model : 'llm-compressor';
     const apiBadgeEl = document.getElementById('api_layer_badge');
     if (apiBadgeEl) apiBadgeEl.textContent = activeModel;
     const apiSubEl = document.getElementById('api_layer_sub');
