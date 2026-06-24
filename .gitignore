@@ -13,8 +13,10 @@ wheels/
 stats.json
 stats.json.bak
 metrics.db
+metrics.db.migrated
 proxy.log
 .proxy.pid
+.coverage
 
 # OS / tooling
 .DS_Store
