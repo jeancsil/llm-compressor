@@ -8,7 +8,7 @@
   <text x="400" y="21" text-anchor="middle" dominant-baseline="middle"
         font-family="system-ui, -apple-system, sans-serif"
         font-size="11" fill="#8b949e" letter-spacing="0.02em">
-    llm-compressor · real usage data · May–June 2026
+    LLM-Compressor · real usage data · May–June 2026
   </text>
 
   <!-- Stat block 1: TOKENS SAVED -->

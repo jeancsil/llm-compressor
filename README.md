@@ -1,4 +1,6 @@
-# llm-compressor
+# LLM-Compressor
+
+<img src="assets/logo.svg" width="64" alt="LLM-Compressor logo">
 
 > A local proxy that compresses every Claude Code prompt before it's billed — **no workflow changes, one env var.**
 
@@ -6,9 +8,9 @@
 
 ---
 
-If you use Claude Code daily, every request resends the full conversation history plus your entire `CLAUDE.md`. Those tokens add up fast. llm-compressor sits transparently between Claude Code and the Anthropic API and shrinks each payload with a local compression model before forwarding it. Claude never notices. Your invoice does.
+If you use Claude Code daily, every request resends the full conversation history plus your entire `CLAUDE.md`. Those tokens add up fast. LLM-Compressor sits transparently between Claude Code and the Anthropic API and shrinks each payload with a local compression model before forwarding it. Claude never notices. Your invoice does.
 
-[![GitHub Stars](https://img.shields.io/github/stars/jeancsil/llm-compressor?style=social)](https://github.com/jeancsil/llm-compressor) &nbsp; **[Install in 3 steps](#install)**
+<a href="https://github.com/jeancsil/llm-compressor">⭐ Star on GitHub</a> &nbsp;·&nbsp; <a href="#install"><strong>Install in 3 steps ↓</strong></a>
 
 ---
 
@@ -26,7 +28,7 @@ The chart below is generated from real usage data — `metrics.db` logged by thi
 
 ## How it works
 
-llm-compressor stacks with [rtk](https://github.com/rtk-ai/rtk) to save tokens at two independent layers:
+LLM-Compressor stacks with [rtk](https://github.com/rtk-ai/rtk) to save tokens at two independent layers:
 
 ![two-layer architecture](assets/two-layer.svg)
 
@@ -35,7 +37,7 @@ llm-compressor stacks with [rtk](https://github.com/rtk-ai/rtk) to save tokens a
 | Tool | Layer | What it compresses |
 |---|---|---|
 | **rtk** | Shell | CLI command output before it enters the context window |
-| **llm-compressor** (this) | API | Conversation messages before they're billed |
+| **LLM-Compressor** (this) | API | Conversation messages before they're billed |
 
 Running both compounds the savings. The dashboard automatically detects rtk and switches to a two-layer view when it is present.
 
