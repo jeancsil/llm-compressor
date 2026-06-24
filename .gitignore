@@ -22,3 +22,4 @@ proxy.log
 
 # Local docs (superpowers plans/specs — kept untracked)
 docs/superpowers/
+.superpowers/
