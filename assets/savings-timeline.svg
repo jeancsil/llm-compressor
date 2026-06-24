@@ -1,0 +1,160 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 260" width="100%">
+  <defs>
+    <linearGradient id="barGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#3fb950"/>
+      <stop offset="100%" stop-color="#238636"/>
+    </linearGradient>
+    <linearGradient id="barGradHigh" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#58a6ff"/>
+      <stop offset="100%" stop-color="#1f6feb"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="800" height="260" fill="#0d1117" rx="0"/>
+
+  <!-- Card -->
+  <rect x="12" y="12" width="776" height="236" fill="#161b22" rx="6" stroke="#30363d" stroke-width="1"/>
+
+  <!-- Title -->
+  <text x="24" y="34" font-family="system-ui,-apple-system,sans-serif" font-size="13" font-weight="600" fill="#e6edf3">API-layer token savings per day</text>
+
+  <!-- Y-axis label -->
+  <text x="24" y="52" font-family="system-ui,-apple-system,sans-serif" font-size="10" fill="#8b949e">tokens saved (M)</text>
+
+  <!-- Grid lines and Y labels -->
+  <!-- Max value ~4.17M, scale to 4.5M -->
+  <!-- Chart area: x=56 to x=788, y=60 to y=210 -->
+  <!-- Y gridlines at 0, 1M, 2M, 3M, 4M -->
+
+  <line x1="56" y1="210" x2="788" y2="210" stroke="#30363d" stroke-width="1"/>
+  <text x="50" y="213" font-family="system-ui,-apple-system,sans-serif" font-size="9" fill="#8b949e" text-anchor="end">0</text>
+
+  <line x1="56" y1="177" x2="788" y2="177" stroke="#30363d" stroke-width="0.5" stroke-dasharray="3,3"/>
+  <text x="50" y="180" font-family="system-ui,-apple-system,sans-serif" font-size="9" fill="#8b949e" text-anchor="end">1M</text>
+
+  <line x1="56" y1="143" x2="788" y2="143" stroke="#30363d" stroke-width="0.5" stroke-dasharray="3,3"/>
+  <text x="50" y="146" font-family="system-ui,-apple-system,sans-serif" font-size="9" fill="#8b949e" text-anchor="end">2M</text>
+
+  <line x1="56" y1="110" x2="788" y2="110" stroke="#30363d" stroke-width="0.5" stroke-dasharray="3,3"/>
+  <text x="50" y="113" font-family="system-ui,-apple-system,sans-serif" font-size="9" fill="#8b949e" text-anchor="end">3M</text>
+
+  <line x1="56" y1="77" x2="788" y2="77" stroke="#30363d" stroke-width="0.5" stroke-dasharray="3,3"/>
+  <text x="50" y="80" font-family="system-ui,-apple-system,sans-serif" font-size="9" fill="#8b949e" text-anchor="end">4M</text>
+
+  <!--
+    Chart area width: 788-56 = 732px
+    24 bars, bar width + gap
+    bar width = 18, gap = 732/24 - 18 = 30.5 - 18 = 12.5 → slot = 30.5, bar=18, pad=6.25 each side
+    slot = 732/24 = 30.5
+    bar center at 56 + (i+0.5)*30.5
+    bar left at center - 9
+
+    Scale: 4.5M = 133px (from y=77 to y=210)
+    px per token = 133/4500000
+
+    Data: tokens → bar height
+    1294662 → 38.3
+    1485045 → 43.9
+    2891772 → 85.4
+    718815  → 21.2
+    4173266 → 123.3
+    2197659 → 64.9
+    1868551 → 55.2
+    176945  → 5.2
+    570490  → 16.9
+    954096  → 28.2
+    3320737 → 98.1
+    1844279 → 54.5
+    2543390 → 75.1
+    2291090 → 67.7
+    1323903 → 39.1
+    2746339 → 81.1
+    1418031 → 41.9
+    2534095 → 74.9
+    126512  → 3.7
+    550635  → 16.3
+    1739836 → 51.4
+    340860  → 10.1
+    834424  → 24.7
+    1884672 → 55.7
+  -->
+
+  <!-- Bars -->
+  <!-- i=0: 2026-05-20, 1294662 tokens, 48.1% -->
+  <rect x="57" y="172" width="18" height="38" fill="url(#barGrad)" rx="2" opacity="0.9"/>
+  <!-- i=1: 2026-05-23, 1485045, 46.3% -->
+  <rect x="87" y="166" width="18" height="44" fill="url(#barGrad)" rx="2" opacity="0.9"/>
+  <!-- i=2: 2026-05-24, 2891772, 47.4% -->
+  <rect x="118" y="125" width="18" height="85" fill="url(#barGrad)" rx="2" opacity="0.9"/>
+  <!-- i=3: 2026-05-29, 718815, 48.7% -->
+  <rect x="148" y="189" width="18" height="21" fill="url(#barGrad)" rx="2" opacity="0.9"/>
+  <!-- i=4: 2026-05-30, 4173266, 49.2% — peak, use blue -->
+  <rect x="179" y="87" width="18" height="123" fill="url(#barGradHigh)" rx="2" opacity="0.9"/>
+  <!-- i=5: 2026-05-31, 2197659, 49.4% -->
+  <rect x="209" y="145" width="18" height="65" fill="url(#barGrad)" rx="2" opacity="0.9"/>
+  <!-- i=6: 2026-06-01, 1868551, 49.5% -->
+  <rect x="240" y="155" width="18" height="55" fill="url(#barGrad)" rx="2" opacity="0.9"/>
+  <!-- i=7: 2026-06-03, 176945, 48.4% -->
+  <rect x="270" y="205" width="18" height="5" fill="url(#barGrad)" rx="2" opacity="0.9"/>
+  <!-- i=8: 2026-06-04, 570490, 50.6% -->
+  <rect x="301" y="193" width="18" height="17" fill="url(#barGrad)" rx="2" opacity="0.9"/>
+  <!-- i=9: 2026-06-05, 954096, 49.6% -->
+  <rect x="331" y="182" width="18" height="28" fill="url(#barGrad)" rx="2" opacity="0.9"/>
+  <!-- i=10: 2026-06-06, 3320737, 50.0% — second peak -->
+  <rect x="362" y="112" width="18" height="98" fill="url(#barGradHigh)" rx="2" opacity="0.9"/>
+  <!-- i=11: 2026-06-10, 1844279, 50.1% -->
+  <rect x="392" y="155" width="18" height="55" fill="url(#barGrad)" rx="2" opacity="0.9"/>
+  <!-- i=12: 2026-06-11, 2543390, 49.0% -->
+  <rect x="423" y="135" width="18" height="75" fill="url(#barGrad)" rx="2" opacity="0.9"/>
+  <!-- i=13: 2026-06-12, 2291090, 45.0% -->
+  <rect x="453" y="142" width="18" height="68" fill="url(#barGrad)" rx="2" opacity="0.9"/>
+  <!-- i=14: 2026-06-13, 1323903, 50.1% -->
+  <rect x="484" y="171" width="18" height="39" fill="url(#barGrad)" rx="2" opacity="0.9"/>
+  <!-- i=15: 2026-06-14, 2746339, 45.4% -->
+  <rect x="514" y="129" width="18" height="81" fill="url(#barGrad)" rx="2" opacity="0.9"/>
+  <!-- i=16: 2026-06-17, 1418031, 35.9% -->
+  <rect x="545" y="168" width="18" height="42" fill="url(#barGrad)" rx="2" opacity="0.9"/>
+  <!-- i=17: 2026-06-18, 2534095, 42.4% -->
+  <rect x="575" y="135" width="18" height="75" fill="url(#barGrad)" rx="2" opacity="0.9"/>
+  <!-- i=18: 2026-06-19, 126512, 30.3% -->
+  <rect x="606" y="206" width="18" height="4" fill="url(#barGrad)" rx="2" opacity="0.9"/>
+  <!-- i=19: 2026-06-20, 550635, 44.8% -->
+  <rect x="636" y="194" width="18" height="16" fill="url(#barGrad)" rx="2" opacity="0.9"/>
+  <!-- i=20: 2026-06-21, 1739836, 49.9% -->
+  <rect x="667" y="159" width="18" height="51" fill="url(#barGrad)" rx="2" opacity="0.9"/>
+  <!-- i=21: 2026-06-22, 340860, 51.7% -->
+  <rect x="697" y="200" width="18" height="10" fill="url(#barGrad)" rx="2" opacity="0.9"/>
+  <!-- i=22: 2026-06-23, 834424, 28.1% -->
+  <rect x="728" y="185" width="18" height="25" fill="url(#barGrad)" rx="2" opacity="0.9"/>
+  <!-- i=23: 2026-06-24, 1884672, 27.5% -->
+  <rect x="758" y="154" width="18" height="56" fill="url(#barGrad)" rx="2" opacity="0.9"/>
+
+  <!-- X-axis date labels — show every 4th to avoid crowding -->
+  <!-- May labels -->
+  <text x="66" y="225" font-family="system-ui,-apple-system,sans-serif" font-size="8" fill="#8b949e" text-anchor="middle">May 20</text>
+  <text x="157" y="225" font-family="system-ui,-apple-system,sans-serif" font-size="8" fill="#8b949e" text-anchor="middle">May 29</text>
+  <text x="218" y="225" font-family="system-ui,-apple-system,sans-serif" font-size="8" fill="#8b949e" text-anchor="middle">May 31</text>
+  <!-- Jun labels -->
+  <text x="279" y="225" font-family="system-ui,-apple-system,sans-serif" font-size="8" fill="#8b949e" text-anchor="middle">Jun 3</text>
+  <text x="371" y="225" font-family="system-ui,-apple-system,sans-serif" font-size="8" fill="#8b949e" text-anchor="middle">Jun 6</text>
+  <text x="432" y="225" font-family="system-ui,-apple-system,sans-serif" font-size="8" fill="#8b949e" text-anchor="middle">Jun 11</text>
+  <text x="493" y="225" font-family="system-ui,-apple-system,sans-serif" font-size="8" fill="#8b949e" text-anchor="middle">Jun 13</text>
+  <text x="523" y="225" font-family="system-ui,-apple-system,sans-serif" font-size="8" fill="#8b949e" text-anchor="middle">Jun 14</text>
+  <text x="584" y="225" font-family="system-ui,-apple-system,sans-serif" font-size="8" fill="#8b949e" text-anchor="middle">Jun 18</text>
+  <text x="676" y="225" font-family="system-ui,-apple-system,sans-serif" font-size="8" fill="#8b949e" text-anchor="middle">Jun 21</text>
+  <text x="767" y="225" font-family="system-ui,-apple-system,sans-serif" font-size="8" fill="#8b949e" text-anchor="middle">Jun 24</text>
+
+  <!-- Legend -->
+  <rect x="24" y="238" width="10" height="10" fill="url(#barGrad)" rx="2"/>
+  <text x="38" y="247" font-family="system-ui,-apple-system,sans-serif" font-size="9" fill="#8b949e">daily savings</text>
+  <rect x="110" y="238" width="10" height="10" fill="url(#barGradHigh)" rx="2"/>
+  <text x="124" y="247" font-family="system-ui,-apple-system,sans-serif" font-size="9" fill="#8b949e">peak day</text>
+
+  <!-- Annotation for peak -->
+  <text x="188" y="83" font-family="system-ui,-apple-system,sans-serif" font-size="9" fill="#58a6ff" text-anchor="middle">4.17M</text>
+
+  <!-- Total saved callout -->
+  <text x="760" y="34" font-family="system-ui,-apple-system,sans-serif" font-size="11" fill="#3fb950" font-weight="600" text-anchor="end">43.9M tokens saved</text>
+  <text x="760" y="48" font-family="system-ui,-apple-system,sans-serif" font-size="9" fill="#8b949e" text-anchor="end">avg 46.1% compression · 24 sessions</text>
+</svg>

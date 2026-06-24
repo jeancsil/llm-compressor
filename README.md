@@ -1,31 +1,57 @@
 # llm-compressor
 
-FastAPI proxy that sits between Claude Code and the Anthropic API. Every outbound prompt is compressed before being forwarded, reducing token usage without changing how you work.
+> A local proxy that compresses every Claude Code prompt before it's billed — **no workflow changes, one env var.**
 
-**Does not conflict with [rtk](https://github.com/rtk-ai/rtk).** The two tools operate at different layers and complement each other:
+![savings summary](assets/savings-hero.svg)
+
+---
+
+If you use Claude Code daily, every request resends the full conversation history plus your entire `CLAUDE.md`. Those tokens add up fast. llm-compressor sits transparently between Claude Code and the Anthropic API and shrinks each payload with a local compression model before forwarding it. Claude never notices. Your invoice does.
+
+**[⭐ Star this repo](#) · [Install in 3 steps](#install)**
+
+---
+
+## By the numbers
+
+The chart below is generated from real usage data — `metrics.db` logged by this proxy across ~5 weeks of daily Claude Code sessions.
+
+![daily savings timeline](assets/savings-timeline.svg)
+
+**For API key users** this is direct invoice reduction at Sonnet 4.6 input rates ($3/MTok). **For Pro subscribers** (flat €18–$20/month) it translates to roughly 35% more Claude Code turns per 5-hour usage window before hitting limits — and directly reduces cost if you buy extra usage credits.
+
+> Token counts use the compression model's tokenizer, not Claude's billing tokenizer — a good proxy for relative savings, not a 1:1 invoice mapping. System-field tokens (CLAUDE.md etc.) are prompt-cached by Anthropic after turn 1 and billed at $0.30/MTok, not $3.00/MTok — so their monetary value is lower than raw token counts suggest. User-message tokens dominate (97% of savings) and are not cached.
+
+---
+
+## How it works
+
+llm-compressor stacks with [rtk](https://github.com/rtk-ai/rtk) to save tokens at two independent layers:
+
+![two-layer architecture](assets/two-layer.svg)
+
+**Does not conflict with rtk.** The two tools operate at different layers:
 
 | Tool | Layer | What it compresses |
 |---|---|---|
-| **llm-compressor** (this) | API | Conversation messages before they're billed |
 | **rtk** | Shell | CLI command output before it enters the context window |
+| **llm-compressor** (this) | API | Conversation messages before they're billed |
 
-Running both gives you savings at both layers. The dashboard automatically detects rtk and switches to a two-layer view when it is present.
+Running both compounds the savings. The dashboard automatically detects rtk and switches to a two-layer view when it is present.
 
-## Requirements
-
-- Python 3.12
-- [uv](https://github.com/astral-sh/uv) — `brew install uv`
-- An Anthropic API key
+---
 
 ## Install
 
+**Requirements:** Python 3.12 · [uv](https://github.com/astral-sh/uv) (`brew install uv`) · Anthropic API key
+
 ```bash
-git clone <this repo>
+git clone https://github.com/jeancsil/llm-compressor
 cd llm-compressor
 uv sync
 ```
 
-`uv sync` reads `pyproject.toml` and installs all dependencies into an isolated virtualenv. No `pip install` needed.
+`uv sync` installs all dependencies into an isolated virtualenv. No `pip install` needed.
 
 ## Start the proxy
 
@@ -34,7 +60,7 @@ export ANTHROPIC_API_KEY=sk-ant-...
 uv run python proxy.py
 ```
 
-The first run downloads the compression model (see sizes below) and loads it. Cold start is 20–90 seconds depending on the model. Once you see:
+The first run downloads the compression model and loads it. Cold start is 20–90 seconds depending on the model. Once you see:
 
 ```
 Model ready.
@@ -60,6 +86,8 @@ To stop compressing:
 unset ANTHROPIC_BASE_URL
 ```
 
+---
+
 ## Dashboard
 
 While the proxy is running, open `http://127.0.0.1:9099/dashboard` in a browser. It auto-refreshes every 2 seconds and shows:
@@ -68,8 +96,6 @@ While the proxy is running, open `http://127.0.0.1:9099/dashboard` in a browser.
 - Per-session efficiency bars and ratio badges
 - Sparkline of recent requests colored by savings percentage
 - Full session table with request counts and last-seen times
-
-> **Note on token counts:** saved/compressed figures use the compression model's tokenizer, not Claude's billing tokenizer. They are a good proxy for relative savings but do not map 1:1 to your Anthropic invoice.
 
 ### rtk integration
 
@@ -92,6 +118,8 @@ Install rtk:
 brew install rtk   # macOS
 ```
 
+---
+
 ## Compression models
 
 | Model ID | Underlying model | Download | Notes |
@@ -110,22 +138,7 @@ curl -s -X POST http://127.0.0.1:9099/admin/set-model \
   -H 'Content-Type: application/json' -d '{"model": "kompress"}'
 ```
 
-## How it works
-
-```
-Claude Code → POST /v1/messages → proxy → Anthropic API
-                     ↓
-             compression model compresses
-             system field + user messages
-             (skips ≤ 200 chars; skips assistant)
-```
-
-1. The proxy receives the full request body from Claude Code.
-2. The proxy compresses the top-level `system` field and every `role=user` text block longer than 200 characters. Assistant turns are forwarded unchanged to preserve the model's reasoning history.
-3. The compressed body is forwarded to `api.anthropic.com`. Streaming responses are piped through unchanged.
-4. Stats are persisted to `metrics.db` (SQLite) between restarts.
-
-If compression fails on a particular input (e.g. very short or malformed text), the original message is forwarded and the error is logged — requests never fail due to compression.
+---
 
 ## Compression modes
 
@@ -173,6 +186,8 @@ sqlite3 metrics.db \
 ```
 
 The dashboard recent-activity table shows each row's role with a color-coded badge (blue = system, green = user).
+
+---
 
 ## Endpoints
 
