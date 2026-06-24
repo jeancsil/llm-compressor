@@ -2,11 +2,15 @@
 # PostToolUse hook: log RTK savings to llmlingua proxy with session attribution.
 #
 # Flow:
-#   1. Claude Code ran "rtk <cmd> ..." (rewritten by the PreToolUse rtk hook)
-#   2. RTK wrote exactly one row to history.db before this hook fires
-#   3. We lock, query the most recent matching row (within 5s), POST to /rtk/log
+#   1. Claude Code ran a Bash command (rewritten to "rtk <cmd>" by the PreToolUse hook)
+#   2. RTK wrote a row to history.db before this hook fires
+#   3. We grab the most recent row within the last 10s and POST it to /rtk/log
 #
-# Install: add to ~/.claude/settings.json under hooks.PostToolUse for Bash matcher.
+# Note: tool_input.command in PostToolUse is the ORIGINAL command (before PreToolUse
+# rewrote it), so we cannot match by command name — RTK stores "rtk <cmd>" while
+# we receive "<cmd>". Instead we match purely by timestamp recency, which is reliable
+# since this hook fires immediately after RTK exits. INSERT OR IGNORE on rtk_id
+# prevents double-logging if two commands land in the same window.
 
 set -euo pipefail
 
@@ -19,29 +23,21 @@ esac
 
 INPUT=$(cat)
 
-# Debug: log received payload to /tmp for inspection
-printf '%s' "$INPUT" > /tmp/rtk_post_debug.json
-
-# PostToolUse receives the REWRITTEN command (after rtk PreToolUse hook rewrote it)
-# e.g. "rtk git status" not "git status"
-CMD=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // ""')
 SESSION_ID=$(printf '%s' "$INPUT" | jq -r '.session_id // "unknown"')
 
-[[ -z "$CMD" || ! -f "$RTK_DB" ]] && exit 0
+[[ ! -f "$RTK_DB" ]] && exit 0
 
 # Serialize access via atomic mkdir lock (portable on macOS + Linux)
-# trap ensures the lock is released even if the script exits unexpectedly
 LOCK_DIR="/tmp/rtk_proxy_log.lock.d"
 trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT
 while ! mkdir "$LOCK_DIR" 2>/dev/null; do sleep 0.02; done
 
-# Match by rtk_cmd (the rewritten command Claude Code actually executed)
-ESCAPED="${CMD/\'/\'\'}"
+# Match by recency only — command-name matching is unreliable because RTK truncates
+# some commands and tool_input.command never has the "rtk " prefix.
 ROW=$(sqlite3 "$RTK_DB" \
     "SELECT id, rtk_cmd, input_tokens, output_tokens, saved_tokens, savings_pct, timestamp
      FROM commands
-     WHERE rtk_cmd = '${ESCAPED}'
-       AND timestamp >= strftime('%Y-%m-%dT%H:%M:%S', datetime('now', '-5 seconds'))
+     WHERE timestamp >= strftime('%Y-%m-%dT%H:%M:%S', datetime('now', '-10 seconds'))
      ORDER BY id DESC
      LIMIT 1")
 

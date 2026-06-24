@@ -105,7 +105,7 @@ Claude Code → POST /v1/messages → proxy → Anthropic API
 1. The proxy receives the full request body from Claude Code.
 2. The proxy compresses the top-level `system` field and every `role=user` text block longer than 200 characters. Assistant turns are forwarded unchanged to preserve the model's reasoning history.
 3. The compressed body is forwarded to `api.anthropic.com`. Streaming responses are piped through unchanged.
-4. Stats are persisted to `stats.json` between restarts.
+4. Stats are persisted to `metrics.db` (SQLite) between restarts.
 
 If LLMLingua-2 fails on a particular input (e.g. very short or malformed text), the original message is forwarded and the error is logged — requests never fail due to compression.
 
@@ -130,6 +130,8 @@ curl -s -X POST http://127.0.0.1:9099/admin/set-model \
   -H 'Content-Type: application/json' \
   -d '{"model": "llmlingua2-large"}'
 ```
+
+Available models: `llmlingua2`, `llmlingua2-large`, `kompress`, `dual`
 
 ### Dual mode
 
