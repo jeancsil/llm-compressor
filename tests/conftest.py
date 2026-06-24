@@ -1,5 +1,6 @@
 import sqlite3
 import sys
+from pathlib import Path
 import pytest
 from unittest.mock import MagicMock
 from starlette.testclient import TestClient
@@ -64,12 +65,13 @@ def client(tmp_path, monkeypatch):
     mock_backend = {"type": "llmlingua2", "compressor": mock_compressor, "rate": 0.5}
     monkeypatch.setattr(proxy, "_load_backend", lambda: mock_backend)
 
-    # Redirect DB_PATH to temp path
-    monkeypatch.setattr(proxy, "DB_PATH", str(tmp_path / "test_metrics.db"))
+    # Redirect DB_PATH to temp path (must be Path object; lifespan calls .resolve() on it)
+    monkeypatch.setattr(proxy, "DB_PATH", tmp_path / "test_metrics.db")
 
-    # Suppress JSON migration and backup recovery so the test DB stays empty
+    # Suppress JSON migration, backup recovery, and location migration so test DB is clean
     monkeypatch.setattr(proxy, "migrate_from_json", lambda conn, json_path="stats.json": None)
     monkeypatch.setattr(proxy, "recover_stats_from_backup", lambda conn, bak_path="stats.json.bak": None)
+    monkeypatch.setattr(proxy, "_migrate_db_location", lambda: None)
 
     with TestClient(proxy.app) as c:
         yield c

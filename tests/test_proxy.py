@@ -236,7 +236,7 @@ def test_timeseries_empty(client):
 def test_timeseries_structure(tmp_path, monkeypatch):
     """Task 10: /stats/timeseries returns hourly buckets with required keys."""
     from unittest.mock import MagicMock
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
 
     for dep in ("llmlingua", "torch", "transformers"):
         if dep not in sys.modules:
@@ -250,7 +250,7 @@ def test_timeseries_structure(tmp_path, monkeypatch):
 
     conn = init_db(str(tmp_path / "metrics.db"))
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     conn.executemany(
         "INSERT INTO compressions (ts, session_id, model, original_tokens, compressed_tokens, latency_ms) VALUES (?,?,?,?,?,?)",
         [
@@ -269,7 +269,10 @@ def test_timeseries_structure(tmp_path, monkeypatch):
     monkeypatch.setattr(proxy, "_db_conn", conn)
     monkeypatch.setattr(proxy, "backend", {"type": "llmlingua2", "rate": 0.5})
     monkeypatch.setattr(proxy, "_load_backend", lambda: {"type": "llmlingua2", "rate": 0.5})
-    monkeypatch.setattr(proxy, "DB_PATH", str(tmp_path / "metrics.db"))
+    monkeypatch.setattr(proxy, "DB_PATH", tmp_path / "metrics.db")
+    monkeypatch.setattr(proxy, "_migrate_db_location", lambda: None)
+    monkeypatch.setattr(proxy, "migrate_from_json", lambda conn, json_path="stats.json": None)
+    monkeypatch.setattr(proxy, "recover_stats_from_backup", lambda conn, bak_path="stats.json.bak": None)
 
     from starlette.testclient import TestClient
     with TestClient(proxy.app) as c:
@@ -313,9 +316,10 @@ def test_stats_by_model(tmp_path, monkeypatch):
     import proxy as proxy
     from proxy import init_db
 
-    db_path = str(tmp_path / "metrics.db")
+    from pathlib import Path as _Path
+    db_path = tmp_path / "metrics.db"
     monkeypatch.setattr(proxy, "DB_PATH", db_path)
-    conn = init_db(db_path)
+    conn = init_db(str(db_path))
     conn.executemany(
         "INSERT INTO compressions (ts, session_id, model, original_tokens, compressed_tokens, latency_ms) VALUES (?,?,?,?,?,?)",
         [
@@ -331,6 +335,7 @@ def test_stats_by_model(tmp_path, monkeypatch):
     monkeypatch.setattr(proxy, "_load_backend", lambda: mock_backend)
     monkeypatch.setattr(proxy, "migrate_from_json", lambda conn, json_path="stats.json": None)
     monkeypatch.setattr(proxy, "recover_stats_from_backup", lambda conn, bak_path="stats.json.bak": None)
+    monkeypatch.setattr(proxy, "_migrate_db_location", lambda: None)
 
     with TestClient(proxy.app) as c:
         r = c.get("/stats")
@@ -424,7 +429,7 @@ def test_compress_llmlingua2_multi_chunk(monkeypatch):
     para = "word " * 250
     text = para.strip() + "\n\n" + para.strip()  # 2 chunks
 
-    compressed, orig_tokens, comp_tokens = proxy._compress_llmlingua2(text)
+    compressed, orig_tokens, comp_tokens = proxy._compress_llmlingua2(mock_backend, text)
 
     # compress_prompt should have been called once per chunk (2 total)
     assert mock_compressor.compress_prompt.call_count == 2
@@ -451,5 +456,5 @@ def test_load_backend_llmlingua2_large(monkeypatch):
     monkeypatch.setattr("llmlingua.PromptCompressor", mock_cls)
     from proxy import load_backend
     b = load_backend()
-    assert b["type"] == "llmlingua2"
+    assert b["type"] == "llmlingua2-large"
     assert b["rate"] == 0.45
