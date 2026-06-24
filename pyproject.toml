@@ -1,7 +1,7 @@
 [project]
 name = "llm-compressor"
 version = "0.1.0"
-description = "Add your description here"
+description = "FastAPI proxy that compresses prompts before forwarding to the Anthropic API"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

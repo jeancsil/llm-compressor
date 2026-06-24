@@ -4,12 +4,12 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 ## What this is
 
-FastAPI proxy that intercepts Anthropic API calls and compresses prompts via LLMLingua-2 (or kompress) before forwarding. Single-file app: `llmlingua_proxy.py`.
+FastAPI proxy that intercepts Anthropic API calls and compresses prompts via LLMLingua-2 (or kompress) before forwarding. Single-file app: `proxy.py`.
 
 ## Run
 
 ```bash
-uv run python llmlingua_proxy.py
+uv run python proxy.py
 # Starts on http://127.0.0.1:9099
 ```
 
