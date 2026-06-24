@@ -8,7 +8,7 @@
 
 If you use Claude Code daily, every request resends the full conversation history plus your entire `CLAUDE.md`. Those tokens add up fast. llm-compressor sits transparently between Claude Code and the Anthropic API and shrinks each payload with a local compression model before forwarding it. Claude never notices. Your invoice does.
 
-**[⭐ Star this repo](#) · [Install in 3 steps](#install)**
+**[⭐ Star this repo](https://github.com/jeancsil/llm-compressor) · [Install in 3 steps](#install)**
 
 ---
 
