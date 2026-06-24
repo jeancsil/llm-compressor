@@ -820,6 +820,8 @@ async def get_stats(session_id: str | None = None):
 
     if _db_conn is not None:
         active_model = compressor_info["model"]
+        # "dual" mode stores rows under sub-model names; map to the actual stored values
+        DUAL_SUBMODELS = ("kompress", "llmlingua2-large")
         sess_args   = (session_id,) if session_id else ()
 
         by_model_rows = _db_conn.execute(
@@ -854,19 +856,33 @@ async def get_stats(session_id: str | None = None):
                 (session_id,),
             ).fetchone()
         else:
-            today_row = _db_conn.execute(
-                """
-                SELECT
-                    COUNT(*) AS requests,
-                    COALESCE(SUM(original_tokens - compressed_tokens), 0) AS tokens_saved,
-                    ROUND(AVG((original_tokens - compressed_tokens) * 100.0 / original_tokens), 1) AS avg_savings_pct,
-                    ROUND(AVG(latency_ms), 1) AS avg_latency_ms,
-                    COUNT(DISTINCT session_id) AS sessions
-                FROM compressions
-                WHERE date(ts) = date('now') AND model = ?
-                """,
-                (active_model,),
-            ).fetchone()
+            if active_model == "dual":
+                today_row = _db_conn.execute(
+                    """
+                    SELECT
+                        COUNT(*) AS requests,
+                        COALESCE(SUM(original_tokens - compressed_tokens), 0) AS tokens_saved,
+                        ROUND(AVG((original_tokens - compressed_tokens) * 100.0 / original_tokens), 1) AS avg_savings_pct,
+                        ROUND(AVG(latency_ms), 1) AS avg_latency_ms,
+                        COUNT(DISTINCT session_id) AS sessions
+                    FROM compressions
+                    WHERE date(ts) = date('now') AND model IN ('kompress', 'llmlingua2-large')
+                    """,
+                ).fetchone()
+            else:
+                today_row = _db_conn.execute(
+                    """
+                    SELECT
+                        COUNT(*) AS requests,
+                        COALESCE(SUM(original_tokens - compressed_tokens), 0) AS tokens_saved,
+                        ROUND(AVG((original_tokens - compressed_tokens) * 100.0 / original_tokens), 1) AS avg_savings_pct,
+                        ROUND(AVG(latency_ms), 1) AS avg_latency_ms,
+                        COUNT(DISTINCT session_id) AS sessions
+                    FROM compressions
+                    WHERE date(ts) = date('now') AND model = ?
+                    """,
+                    (active_model,),
+                ).fetchone()
         if today_row:
             today_stats = {
                 "requests": today_row[0] or 0,
@@ -892,20 +908,35 @@ async def get_stats(session_id: str | None = None):
                 (session_id,),
             ).fetchone()
         else:
-            alltime_row = _db_conn.execute(
-                """
-                SELECT
-                    COUNT(*) AS requests,
-                    COALESCE(SUM(original_tokens - compressed_tokens), 0) AS tokens_saved,
-                    ROUND(AVG((original_tokens - compressed_tokens) * 100.0 / original_tokens), 1) AS avg_savings_pct,
-                    ROUND(AVG(latency_ms), 1) AS avg_latency_ms,
-                    COUNT(DISTINCT session_id) AS sessions,
-                    ROUND(AVG(CAST(original_tokens AS REAL) / NULLIF(compressed_tokens, 0)), 2) AS avg_ratio
-                FROM compressions
-                WHERE model = ?
-                """,
-                (active_model,),
-            ).fetchone()
+            if active_model == "dual":
+                alltime_row = _db_conn.execute(
+                    """
+                    SELECT
+                        COUNT(*) AS requests,
+                        COALESCE(SUM(original_tokens - compressed_tokens), 0) AS tokens_saved,
+                        ROUND(AVG((original_tokens - compressed_tokens) * 100.0 / original_tokens), 1) AS avg_savings_pct,
+                        ROUND(AVG(latency_ms), 1) AS avg_latency_ms,
+                        COUNT(DISTINCT session_id) AS sessions,
+                        ROUND(AVG(CAST(original_tokens AS REAL) / NULLIF(compressed_tokens, 0)), 2) AS avg_ratio
+                    FROM compressions
+                    WHERE model IN ('kompress', 'llmlingua2-large')
+                    """,
+                ).fetchone()
+            else:
+                alltime_row = _db_conn.execute(
+                    """
+                    SELECT
+                        COUNT(*) AS requests,
+                        COALESCE(SUM(original_tokens - compressed_tokens), 0) AS tokens_saved,
+                        ROUND(AVG((original_tokens - compressed_tokens) * 100.0 / original_tokens), 1) AS avg_savings_pct,
+                        ROUND(AVG(latency_ms), 1) AS avg_latency_ms,
+                        COUNT(DISTINCT session_id) AS sessions,
+                        ROUND(AVG(CAST(original_tokens AS REAL) / NULLIF(compressed_tokens, 0)), 2) AS avg_ratio
+                    FROM compressions
+                    WHERE model = ?
+                    """,
+                    (active_model,),
+                ).fetchone()
         if alltime_row:
             alltime_stats = {
                 "requests": alltime_row[0] or 0,
