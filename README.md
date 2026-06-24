@@ -12,7 +12,7 @@ If you use Claude Code daily, every request resends the full conversation histor
 
 If this saves you tokens, ⭐ star the repo — it helps others find it.
 
-**[Install in 3 steps ↓](#install)**
+**[Install in 3 steps ↓](#install)** &nbsp;·&nbsp; [![Buy Me A Coffee](https://img.shields.io/badge/☕_Buy_me_a_coffee-FFDD00?style=flat&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/jeancsil)
 
 ---
 
