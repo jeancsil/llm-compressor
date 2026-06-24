@@ -3,7 +3,7 @@ from starlette.testclient import TestClient
 
 
 def test_init_db_creates_trackers_table(tmp_path):
-    from llmlingua_proxy import init_db
+    from proxy import init_db
     conn = init_db(str(tmp_path / "metrics.db"))
     cur = conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='trackers'"
@@ -16,7 +16,7 @@ def test_init_db_creates_trackers_table(tmp_path):
 
 
 def test_make_slug_basic(tmp_path):
-    from llmlingua_proxy import init_db, make_slug
+    from proxy import init_db, make_slug
     conn = init_db(str(tmp_path / "metrics.db"))
     s1 = make_slug("Kompress Test 1", conn)
     assert s1.startswith("kompress-test-1-")
@@ -27,7 +27,7 @@ def test_make_slug_basic(tmp_path):
 
 
 def test_make_slug_no_collision(tmp_path):
-    from llmlingua_proxy import init_db, make_slug
+    from proxy import init_db, make_slug
     conn = init_db(str(tmp_path / "metrics.db"))
     s1 = make_slug("my test", conn)
     s2 = make_slug("my test", conn)
@@ -36,7 +36,7 @@ def test_make_slug_no_collision(tmp_path):
 
 
 def test_make_slug_hex_suffix(tmp_path):
-    from llmlingua_proxy import init_db, make_slug
+    from proxy import init_db, make_slug
     conn = init_db(str(tmp_path / "metrics.db"))
     slug = make_slug("My Task", conn)
     suffix = slug.split("-")[-1]
@@ -90,7 +90,7 @@ def test_soft_close_keeps_row(client: TestClient):
     resp = client.delete(f"/admin/tracker/{slug}")
     assert resp.status_code == 200
     assert resp.json() == {"closed": slug}
-    conn = sys.modules["llmlingua_proxy"]._db_conn
+    conn = sys.modules["proxy"]._db_conn
     row = conn.execute(
         "SELECT status, closed_at FROM trackers WHERE slug=?", (slug,)
     ).fetchone()
@@ -115,7 +115,7 @@ def test_delete_tracker_404(client: TestClient):
 
 def test_auto_link_pending_tracker(client: TestClient):
     import sys
-    proxy = sys.modules["llmlingua_proxy"]
+    proxy = sys.modules["proxy"]
 
     client.post("/admin/tracker", json={"name": "Auto Link Test"})
     trackers = client.get("/admin/tracker").json()
@@ -133,7 +133,7 @@ def test_auto_link_pending_tracker(client: TestClient):
 
 def test_no_tracker_record_request_is_safe(client: TestClient):
     import sys
-    proxy = sys.modules["llmlingua_proxy"]
+    proxy = sys.modules["proxy"]
     proxy.record_request("session-xyz")
     assert client.get("/admin/tracker").json() == []
 
@@ -170,7 +170,7 @@ def test_stats_has_tracked_key(client: TestClient):
 
 def test_stats_session_filter(client: TestClient):
     import sys
-    proxy = sys.modules["llmlingua_proxy"]
+    proxy = sys.modules["proxy"]
 
     proxy.record_compression("session-A", 500, 300, 50.0)
     proxy.record_compression("session-B", 400, 200, 40.0)
@@ -184,7 +184,7 @@ def test_stats_session_filter(client: TestClient):
 
 def test_stats_no_filter_returns_all(client: TestClient):
     import sys
-    proxy = sys.modules["llmlingua_proxy"]
+    proxy = sys.modules["proxy"]
 
     proxy.record_compression("session-A", 500, 300, 50.0)
     proxy.record_compression("session-B", 400, 200, 40.0)
@@ -196,7 +196,7 @@ def test_stats_no_filter_returns_all(client: TestClient):
 
 def test_timeseries_session_filter(client: TestClient):
     import sys
-    proxy = sys.modules["llmlingua_proxy"]
+    proxy = sys.modules["proxy"]
 
     proxy.record_compression("session-A", 500, 300, 50.0)
     proxy.record_compression("session-B", 400, 200, 40.0)

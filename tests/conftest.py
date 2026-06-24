@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 from starlette.testclient import TestClient
 
 # ---------------------------------------------------------------------------
-# Compression result shape expected by llmlingua_proxy.compress_text
+# Compression result shape expected by proxy.compress_text
 # ---------------------------------------------------------------------------
 
 MOCK_COMPRESS_RESULT = {
@@ -55,9 +55,9 @@ def client(tmp_path, monkeypatch):
             monkeypatch.setitem(sys.modules, dep, MagicMock())
 
     # Remove a cached module so reload picks up the patched deps.
-    monkeypatch.delitem(sys.modules, "llmlingua_proxy", raising=False)
+    monkeypatch.delitem(sys.modules, "proxy", raising=False)
 
-    import llmlingua_proxy as proxy  # noqa: PLC0415
+    import proxy  # noqa: PLC0415
 
     # Patch _load_backend to return a mock backend dict
     mock_compressor = make_mock_llmlingua()

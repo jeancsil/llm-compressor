@@ -12,7 +12,7 @@ def test_health(client: TestClient):
 
 
 def test_init_db_creates_table(tmp_path):
-    from llmlingua_proxy import init_db
+    from proxy import init_db
     conn = init_db(str(tmp_path / "metrics.db"))
     cur = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='compressions'")
     assert cur.fetchone() is not None
@@ -23,7 +23,7 @@ def test_init_db_creates_table(tmp_path):
 
 
 def test_migrate_imports_rows(tmp_path):
-    from llmlingua_proxy import init_db, migrate_from_json
+    from proxy import init_db, migrate_from_json
     stats_json = tmp_path / "stats.json"
     stats_json.write_text(json.dumps({
         "total_requests": 5,
@@ -45,7 +45,7 @@ def test_migrate_imports_rows(tmp_path):
 
 
 def test_migrate_is_idempotent(tmp_path):
-    from llmlingua_proxy import init_db, migrate_from_json
+    from proxy import init_db, migrate_from_json
     stats_json = tmp_path / "stats.json"
     stats_json.write_text(json.dumps({
         "recent_compressions": [
@@ -61,14 +61,14 @@ def test_migrate_is_idempotent(tmp_path):
 
 
 def test_migrate_no_json(tmp_path):
-    from llmlingua_proxy import init_db, migrate_from_json
+    from proxy import init_db, migrate_from_json
     conn = init_db(str(tmp_path / "metrics.db"))
     migrate_from_json(conn, json_path=str(tmp_path / "nonexistent.json"))
     conn.close()
 
 
 def test_load_stats_from_db(tmp_path):
-    from llmlingua_proxy import init_db, load_stats_from_db, stats
+    from proxy import init_db, load_stats_from_db, stats
     conn = init_db(str(tmp_path / "metrics.db"))
     conn.executemany(
         "INSERT INTO compressions (ts, session_id, model, original_tokens, compressed_tokens, latency_ms) VALUES (?,?,?,?,?,?)",
@@ -94,7 +94,7 @@ def test_load_stats_from_db(tmp_path):
 
 def test_recover_stats_from_backup(tmp_path):
     from collections import deque
-    from llmlingua_proxy import init_db, migrate_from_json, recover_stats_from_backup, load_stats_from_db, stats
+    from proxy import init_db, migrate_from_json, recover_stats_from_backup, load_stats_from_db, stats
 
     stats_json = tmp_path / "stats.json"
     stats_json.write_text(json.dumps({
@@ -138,8 +138,8 @@ def test_record_compression_writes_to_db(tmp_path):
             import unittest.mock as _mock
             sys.modules[dep] = _mock.MagicMock()
 
-    import llmlingua_proxy as proxy
-    from llmlingua_proxy import init_db
+    import proxy as proxy
+    from proxy import init_db
 
     conn = init_db(str(tmp_path / "metrics.db"))
     proxy._db_conn = conn
@@ -166,10 +166,10 @@ def test_compress_text_records_latency(tmp_path, monkeypatch):
         if dep not in sys.modules:
             monkeypatch.setitem(sys.modules, dep, MagicMock())
 
-    monkeypatch.delitem(sys.modules, "llmlingua_proxy", raising=False)
+    monkeypatch.delitem(sys.modules, "proxy", raising=False)
 
-    import llmlingua_proxy as proxy
-    from llmlingua_proxy import init_db
+    import proxy as proxy
+    from proxy import init_db
     from tests.conftest import make_mock_llmlingua
 
     conn = init_db(str(tmp_path / "metrics.db"))
@@ -204,7 +204,7 @@ def test_load_backend_llmlingua2(monkeypatch):
     }
 
     monkeypatch.setattr("llmlingua.PromptCompressor", mock_cls)
-    from llmlingua_proxy import load_backend
+    from proxy import load_backend
     b = load_backend()
     assert b["type"] == "llmlingua2"
     assert b["rate"] == 0.4
@@ -216,11 +216,11 @@ def test_load_backend_kompress_raises_without_package(monkeypatch):
     import unittest.mock as mock
 
     monkeypatch.setenv("COMPRESSOR_MODEL", "kompress")
-    monkeypatch.delitem(sys.modules, "llmlingua_proxy", raising=False)
+    monkeypatch.delitem(sys.modules, "proxy", raising=False)
 
     with mock.patch.dict(sys.modules, {"headroom": None, "headroom.transforms": None,
                                         "headroom.transforms.kompress_compressor": None}):
-        import llmlingua_proxy as proxy
+        import proxy as proxy
         monkeypatch.setattr(proxy, "_load_backend", proxy.load_backend)
         with pytest.raises((RuntimeError, ImportError)):
             proxy._load_kompress_backend()
@@ -242,10 +242,10 @@ def test_timeseries_structure(tmp_path, monkeypatch):
         if dep not in sys.modules:
             monkeypatch.setitem(sys.modules, dep, MagicMock())
 
-    monkeypatch.delitem(sys.modules, "llmlingua_proxy", raising=False)
+    monkeypatch.delitem(sys.modules, "proxy", raising=False)
 
-    import llmlingua_proxy as proxy
-    from llmlingua_proxy import init_db
+    import proxy as proxy
+    from proxy import init_db
     from tests.conftest import make_mock_llmlingua
 
     conn = init_db(str(tmp_path / "metrics.db"))
@@ -308,10 +308,10 @@ def test_stats_by_model(tmp_path, monkeypatch):
         if dep not in sys.modules:
             monkeypatch.setitem(sys.modules, dep, MagicMock())
 
-    monkeypatch.delitem(sys.modules, "llmlingua_proxy", raising=False)
+    monkeypatch.delitem(sys.modules, "proxy", raising=False)
 
-    import llmlingua_proxy as proxy
-    from llmlingua_proxy import init_db
+    import proxy as proxy
+    from proxy import init_db
 
     db_path = str(tmp_path / "metrics.db")
     monkeypatch.setattr(proxy, "DB_PATH", db_path)
@@ -347,11 +347,11 @@ def test_stats_by_model(tmp_path, monkeypatch):
 
 
 def test_no_utcnow_in_source():
-    """Task 1: Verify that datetime.utcnow is not used in llmlingua_proxy.py."""
+    """Task 1: Verify that datetime.utcnow is not used in proxy.py."""
     from pathlib import Path
-    src = Path(__file__).parent.parent / "llmlingua_proxy.py"
+    src = Path(__file__).parent.parent / "proxy.py"
     source = src.read_text()
-    assert "utcnow" not in source, "Found deprecated datetime.utcnow in llmlingua_proxy.py"
+    assert "utcnow" not in source, "Found deprecated datetime.utcnow in proxy.py"
 
 
 # ---------------------------------------------------------------------------
@@ -366,9 +366,9 @@ def test_chunk_text_short_returns_single(monkeypatch):
         if dep not in sys.modules:
             monkeypatch.setitem(sys.modules, dep, MagicMock())
 
-    monkeypatch.delitem(sys.modules, "llmlingua_proxy", raising=False)
+    monkeypatch.delitem(sys.modules, "proxy", raising=False)
 
-    import llmlingua_proxy as proxy
+    import proxy as proxy
     from tests.conftest import make_mock_llmlingua
 
     mock_backend = {"type": "llmlingua2", "compressor": make_mock_llmlingua(), "rate": 0.5}
@@ -387,9 +387,9 @@ def test_chunk_text_splits_long_paragraphs(monkeypatch):
         if dep not in sys.modules:
             monkeypatch.setitem(sys.modules, dep, MagicMock())
 
-    monkeypatch.delitem(sys.modules, "llmlingua_proxy", raising=False)
+    monkeypatch.delitem(sys.modules, "proxy", raising=False)
 
-    import llmlingua_proxy as proxy
+    import proxy as proxy
     from tests.conftest import make_mock_llmlingua
 
     mock_backend = {"type": "llmlingua2", "compressor": make_mock_llmlingua(), "rate": 0.5}
@@ -412,9 +412,9 @@ def test_compress_llmlingua2_multi_chunk(monkeypatch):
         if dep not in sys.modules:
             monkeypatch.setitem(sys.modules, dep, MagicMock())
 
-    monkeypatch.delitem(sys.modules, "llmlingua_proxy", raising=False)
+    monkeypatch.delitem(sys.modules, "proxy", raising=False)
 
-    import llmlingua_proxy as proxy
+    import proxy as proxy
     from tests.conftest import make_mock_llmlingua, MOCK_COMPRESS_RESULT
 
     mock_compressor = make_mock_llmlingua()
@@ -449,7 +449,7 @@ def test_load_backend_llmlingua2_large(monkeypatch):
     }
 
     monkeypatch.setattr("llmlingua.PromptCompressor", mock_cls)
-    from llmlingua_proxy import load_backend
+    from proxy import load_backend
     b = load_backend()
     assert b["type"] == "llmlingua2"
     assert b["rate"] == 0.45
