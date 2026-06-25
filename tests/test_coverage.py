@@ -813,6 +813,9 @@ def test_stats_dual_aggregates_across_submodels(client: TestClient):
         assert d["alltime"]["requests"] == 4         # + the 2020 row
         models = {m["model"] for m in d["by_model"]}
         assert {"kompress", "llmlingua2", "llmlingua2-large"} <= models
+        # recent-activity must span sub-model rows in dual mode (not match model='dual')
+        assert len(d["recent"]) == 4
+        assert {r["model"] for r in d["recent"]} == {"kompress", "llmlingua2", "llmlingua2-large"}
     finally:
         proxy.backend = orig
         conn.execute("DELETE FROM compressions")

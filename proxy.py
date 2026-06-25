@@ -851,9 +851,12 @@ def _aggregate_stats(scope: str, args: tuple, *, today: bool, with_ratio: bool) 
 
 
 def _recent_compression_rows(active_model: str, session_id: str | None) -> list:
-    """Most recent 20 compression rows for the active model/session."""
-    scope = "session_id = ?" if session_id else "model = ?"
-    args = (session_id,) if session_id else (active_model,)
+    """Most recent 20 compression rows for the active scope.
+
+    Uses the same scoping as the today/alltime panels, so dual mode spans all
+    sub-model rows rather than matching the non-existent model='dual'.
+    """
+    scope, args = _stats_scope(active_model, session_id)
     rows = _db_conn.execute(
         f"""
         SELECT ts, session_id, model, original_tokens, compressed_tokens,
