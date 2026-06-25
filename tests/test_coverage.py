@@ -225,7 +225,7 @@ def test_load_dual_backend(monkeypatch):
 
     llm_backend = {"type": "llmlingua2-large", "compressor": MagicMock(), "rate": 0.5}
     kmp_backend = {"type": "kompress", "compressor": MagicMock(), "threshold": 0.5}
-    monkeypatch.setattr(proxy, "_load_llmlingua2_backend", lambda key=None: llm_backend)
+    monkeypatch.setattr(proxy, "_load_llmlingua2_backend", lambda backend_key=None: llm_backend)
     monkeypatch.setattr(proxy, "_load_kompress_backend", lambda: kmp_backend)
 
     b = proxy._load_dual_backend()
@@ -781,6 +781,47 @@ def test_stats_dual_backend(client: TestClient):
         proxy.backend = orig
 
 
+def test_stats_dual_aggregates_across_submodels(client: TestClient):
+    """In dual mode, today/alltime aggregate rows stored under all sub-model names.
+
+    Characterization test guarding the de-duplicated stats SQL: dual mode must
+    sum across kompress + llmlingua2 + llmlingua2-large rows, not match model='dual'.
+    """
+    proxy = sys.modules["proxy"]
+    orig = proxy.backend
+    conn = proxy._db_conn
+    conn.executemany(
+        "INSERT INTO compressions (ts, session_id, model, original_tokens, compressed_tokens, latency_ms, role) "
+        "VALUES (datetime('now'), ?, ?, ?, ?, ?, ?)",
+        [
+            ("d1", "kompress", 200, 120, 5.0, "user"),
+            ("d2", "llmlingua2-large", 400, 160, 9.0, "system"),
+            ("d3", "llmlingua2", 300, 150, 7.0, "user"),
+        ],
+    )
+    conn.execute(
+        "INSERT INTO compressions (ts, session_id, model, original_tokens, compressed_tokens, latency_ms, role) "
+        "VALUES ('2020-01-01T00:00:00', 'old', 'kompress', 100, 50, 4.0, 'user')",
+    )
+    conn.commit()
+    try:
+        proxy.backend = {"type": "dual"}
+        d = client.get("/stats").json()
+        assert d["compressor"]["model"] == "dual"
+        assert d["today"]["requests"] == 3          # 3 rows today, across all sub-models
+        assert d["today"]["tokens_saved"] == 80 + 240 + 150
+        assert d["alltime"]["requests"] == 4         # + the 2020 row
+        models = {m["model"] for m in d["by_model"]}
+        assert {"kompress", "llmlingua2", "llmlingua2-large"} <= models
+        # recent-activity must span sub-model rows in dual mode (not match model='dual')
+        assert len(d["recent"]) == 4
+        assert {r["model"] for r in d["recent"]} == {"kompress", "llmlingua2", "llmlingua2-large"}
+    finally:
+        proxy.backend = orig
+        conn.execute("DELETE FROM compressions")
+        conn.commit()
+
+
 def test_stats_kompress_backend(client: TestClient):
     """GET /stats shows kompress info when backend type is kompress."""
     proxy = sys.modules["proxy"]
@@ -1082,6 +1123,105 @@ def test_set_model_clears_dual_globals(client: TestClient, monkeypatch):
         monkeypatch.setattr(proxy, "backend_system", orig_bs)
         monkeypatch.setattr(proxy, "backend", orig_backend)
         monkeypatch.setattr(proxy, "backend_loading", orig_loading)
+
+
+# ===========================================================================
+# set_dual_models endpoint + _load_single_backend (dual sub-model routing)
+# ===========================================================================
+
+def test_set_dual_models_no_args_returns_400(client: TestClient):
+    """POST /admin/set-dual-models with neither key returns 400."""
+    r = client.post("/admin/set-dual-models", json={})
+    assert r.status_code == 400
+
+
+def test_set_dual_models_invalid_system_returns_400(client: TestClient):
+    """POST /admin/set-dual-models rejects an unknown system model."""
+    r = client.post("/admin/set-dual-models", json={"system": "gpt-4"})
+    assert r.status_code == 400
+
+
+def test_set_dual_models_invalid_user_returns_400(client: TestClient):
+    """POST /admin/set-dual-models rejects an unknown user model."""
+    r = client.post("/admin/set-dual-models", json={"user": "gpt-4"})
+    assert r.status_code == 400
+
+
+def test_set_dual_models_persists_when_not_dual(client: TestClient, monkeypatch):
+    """When dual mode is inactive, the endpoint updates globals + DB and returns ok."""
+    proxy = sys.modules["proxy"]
+    orig_sys, orig_usr, orig_dual = proxy.dual_model_system, proxy.dual_model_user, proxy.dual_mode
+    monkeypatch.setattr(proxy, "dual_mode", False)
+    try:
+        r = client.post(
+            "/admin/set-dual-models",
+            json={"system": "llmlingua2", "user": "llmlingua2-large"},
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["status"] == "ok"
+        assert body["system"] == "llmlingua2"
+        assert body["user"] == "llmlingua2-large"
+        assert proxy.dual_model_system == "llmlingua2"
+        assert proxy.dual_model_user == "llmlingua2-large"
+        # persisted to the meta table
+        row = proxy._db_conn.execute(
+            "SELECT value FROM meta WHERE key='dual_model_system'"
+        ).fetchone()
+        assert row[0] == "llmlingua2"
+    finally:
+        monkeypatch.setattr(proxy, "dual_model_system", orig_sys)
+        monkeypatch.setattr(proxy, "dual_model_user", orig_usr)
+        monkeypatch.setattr(proxy, "dual_mode", orig_dual)
+
+
+def test_set_dual_models_reloads_when_dual(client: TestClient, monkeypatch):
+    """When dual mode is active, the endpoint triggers a reload and returns loading."""
+    proxy = sys.modules["proxy"]
+    orig_sys, orig_usr, orig_dual = proxy.dual_model_system, proxy.dual_model_user, proxy.dual_mode
+    orig_backend, orig_loading = proxy.backend, proxy.backend_loading
+    monkeypatch.setattr(proxy, "dual_mode", True)
+    monkeypatch.setattr(proxy, "_load_dual_backend", lambda: {"type": "dual"})
+    try:
+        r = client.post("/admin/set-dual-models", json={"system": "kompress"})
+        assert r.status_code == 200
+        assert r.json()["status"] == "loading"
+        assert proxy.dual_model_system == "kompress"
+    finally:
+        monkeypatch.setattr(proxy, "dual_model_system", orig_sys)
+        monkeypatch.setattr(proxy, "dual_model_user", orig_usr)
+        monkeypatch.setattr(proxy, "dual_mode", orig_dual)
+        monkeypatch.setattr(proxy, "backend", orig_backend)
+        monkeypatch.setattr(proxy, "backend_loading", orig_loading)
+
+
+def test_load_single_backend_dispatches(monkeypatch):
+    """_load_single_backend routes kompress to its loader and others to llmlingua2."""
+    proxy = _fresh_proxy(monkeypatch)
+    monkeypatch.setattr(proxy, "_load_kompress_backend", lambda: {"type": "kompress"})
+    monkeypatch.setattr(
+        proxy, "_load_llmlingua2_backend",
+        lambda backend_key=None: {"type": backend_key},
+    )
+    assert proxy._load_single_backend("kompress")["type"] == "kompress"
+    assert proxy._load_single_backend("llmlingua2-large")["type"] == "llmlingua2-large"
+
+
+def test_load_backend_reads_dual_submodels_from_meta(tmp_path, monkeypatch):
+    """load_backend hydrates dual_model_system/user from the meta table."""
+    proxy = _fresh_proxy(monkeypatch)
+    conn = proxy.init_db(str(tmp_path / "metrics.db"))
+    conn.execute("INSERT OR REPLACE INTO meta VALUES ('current_model', 'dual')")
+    conn.execute("INSERT OR REPLACE INTO meta VALUES ('dual_model_system', 'kompress')")
+    conn.execute("INSERT OR REPLACE INTO meta VALUES ('dual_model_user', 'llmlingua2')")
+    conn.commit()
+    monkeypatch.setattr(proxy, "_db_conn", conn)
+    monkeypatch.setattr(proxy, "_load_dual_backend", lambda: {"type": "dual"})
+
+    proxy.load_backend()
+    assert proxy.dual_model_system == "kompress"
+    assert proxy.dual_model_user == "llmlingua2"
+    conn.close()
 
 
 # ===========================================================================

@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Playground — LLMLingua</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'SF Mono', 'Fira Code', monospace; background: #0d1117; color: #c9d1d9;
+         display: flex; flex-direction: column; height: 100vh; padding: 16px; gap: 12px; }
+
+  .header { display: flex; align-items: center; gap: 10px; padding-bottom: 12px;
+             border-bottom: 1px solid #21262d; flex-shrink: 0; }
+  .back-link { font-size: 11px; color: #58a6ff; text-decoration: none; }
+  .back-link:hover { text-decoration: underline; }
+  .title { color: #58a6ff; font-size: 14px; font-weight: 700; letter-spacing: .04em; }
+  .sep { color: #30363d; }
+
+  .controls { display: flex; align-items: center; gap: 10px; flex: 1; }
+  .model-select { font-size: 12px; background: #161b22; color: #58a6ff; padding: 4px 10px;
+                   border-radius: 6px; border: 1px solid #30363d; cursor: pointer;
+                   font-family: inherit; outline: none; }
+  .model-select:hover:not(:disabled) { border-color: #58a6ff; }
+  .model-select:disabled { opacity: 0.5; cursor: wait; }
+  .model-loading { font-size: 10px; color: #d29922; display: none; }
+
+  .compress-btn { font-size: 12px; background: #0d1a35; color: #58a6ff; border: 1px solid #1e2f50;
+                   border-radius: 6px; padding: 5px 14px; cursor: pointer; font-family: inherit; }
+  .compress-btn:hover:not(:disabled) { border-color: #58a6ff; }
+  .compress-btn:disabled { opacity: 0.5; cursor: wait; }
+
+  .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; flex: 1; min-height: 0; }
+  .panel { display: flex; flex-direction: column; gap: 6px; min-height: 0; }
+  .panel-label { font-size: 9px; color: #8b949e; text-transform: uppercase; letter-spacing: .1em;
+                  display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+  textarea { flex: 1; width: 100%; background: #161b22; color: #c9d1d9; border: 1px solid #30363d;
+              border-radius: 8px; padding: 14px; font-family: inherit; font-size: 12px;
+              resize: none; outline: none; line-height: 1.6; min-height: 0; }
+  textarea.compressed     { border-color: #1e3a2a; background: #0f1e14; color: #aed6ae; }
+  textarea.compressed.dim { border-color: #2a2a30; background: #13131a; color: #6a7a6a; }
+  textarea.unchanged      { color: #8b949e; }
+  .copy-btn { font-size: 10px; background: none; border: none; color: #8b949e;
+               cursor: pointer; font-family: inherit; padding: 0; }
+  .copy-btn:hover { color: #c9d1d9; }
+
+  .stats-bar { flex-shrink: 0; display: flex; align-items: center; gap: 20px; font-size: 11px;
+                background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+                padding: 10px 16px; }
+  .stats-bar.hidden { visibility: hidden; }
+  .stat-label { color: #8b949e; font-size: 10px; margin-right: 4px; }
+  .stat-nums  { color: #c9d1d9; }
+  .stat-pct   { font-weight: 700; margin-left: 6px; }
+  .green { color: #3fb950; }
+  .dim   { color: #484f58; }
+  .stat-latency { color: #484f58; font-size: 10px; margin-left: auto; }
+
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+  .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+          background: #d29922; animation: pulse 1s infinite; vertical-align: middle; margin-right: 4px; }
+
+  @media (max-width: 700px) { .panels { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <a class="back-link" href="/dashboard">← dashboard</a>
+  <span class="sep">|</span>
+  <div class="title">Playground</div>
+
+  <div class="controls">
+    <select class="model-select" id="model_select">
+      <option value="llmlingua2">llmlingua2</option>
+      <option value="llmlingua2-large">llmlingua2-large</option>
+      <option value="kompress">kompress</option>
+      <option value="dual">dual (configurable)</option>
+    </select>
+    <span class="model-loading" id="model_loading"><span class="dot"></span>loading model…</span>
+
+    <button class="compress-btn" id="compress_btn" onclick="compress()">▶ Compress</button>
+  </div>
+</div>
+
+<div class="panels">
+  <div class="panel">
+    <div class="panel-label">
+      <span>Input</span>
+      <span id="input_meta" style="color:#484f58;font-size:10px"></span>
+    </div>
+    <textarea id="input_text" placeholder="Paste text to compress…" oninput="onInput()"></textarea>
+  </div>
+
+  <div class="panel">
+    <div class="panel-label">
+      <span>Compressed</span>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span id="output_meta" style="color:#484f58;font-size:10px"></span>
+        <button class="copy-btn" id="copy_btn" onclick="copyOutput()" style="display:none">Copy</button>
+      </div>
+    </div>
+    <textarea id="output_text" readonly placeholder="Output appears here…"></textarea>
+  </div>
+</div>
+
+<div class="stats-bar hidden" id="stats_bar">
+  <div>
+    <span class="stat-label">Chars</span>
+    <span class="stat-nums" id="s_chars"></span>
+    <span class="stat-pct" id="s_chars_pct"></span>
+  </div>
+  <div>
+    <span class="stat-label">~Claude tokens</span>
+    <span class="stat-nums" id="s_toks"></span>
+    <span class="stat-pct" id="s_toks_pct"></span>
+  </div>
+  <span class="stat-latency" id="s_lat"></span>
+</div>
+
+<script>
+let debounceTimer = null;
+let pollTimer = null;
+let lastResult = null;
+let suppressModelChange = false;
+
+function onInput() {
+  const n = document.getElementById('input_text').value.length;
+  document.getElementById('input_meta').textContent = n ? fmt(n) + ' chars' : '';
+  clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(compress, 600);
+}
+
+function applyDisplay(d) {
+  const outEl = document.getElementById('output_text');
+  outEl.value = d.compressed;
+  outEl.className = d.char_pct > 0 ? 'compressed' : 'unchanged';
+  const outLen = d.compressed.length;
+  document.getElementById('output_meta').textContent = outLen ? fmt(outLen) + ' chars' : '';
+  document.getElementById('copy_btn').style.display = outLen ? 'inline' : 'none';
+  renderStats(d);
+}
+
+async function compress() {
+  clearTimeout(pollTimer);
+  const text = document.getElementById('input_text').value;
+
+  if (!text.trim()) {
+    lastResult = null; reset(); return;
+  }
+
+  const model = document.getElementById('model_select').value;
+  setBusy(true);
+
+  try {
+    const resp = await fetch('/play/compress', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, model }),
+    });
+    const data = await resp.json();
+
+    if (resp.status === 202 && data.loading) {
+      showLoading();
+      pollTimer = setTimeout(compress, 1500);
+      return;
+    }
+
+    hideLoading();
+
+    if (data.error) {
+      document.getElementById('output_text').value = '⚠ ' + data.error;
+      document.getElementById('output_text').className = 'unchanged';
+      setBusy(false); return;
+    }
+
+    lastResult = data;
+    applyDisplay(data);
+  } catch(e) {
+    document.getElementById('output_text').value = '⚠ ' + e.message;
+  } finally {
+    setBusy(false);
+  }
+}
+
+function renderStats(d) {
+  const bar = document.getElementById('stats_bar');
+  bar.className = 'stats-bar';
+
+  document.getElementById('s_chars').textContent = fmt(d.original_chars) + ' → ' + fmt(d.compressed_chars);
+  const cpEl = document.getElementById('s_chars_pct');
+  cpEl.textContent = d.char_pct > 0 ? '-' + d.char_pct + '%' : '0%';
+  cpEl.className = 'stat-pct ' + (d.char_pct > 0 ? 'green' : 'dim');
+
+  document.getElementById('s_toks').textContent = fmt(d.original_tokens_est) + ' → ' + fmt(d.compressed_tokens_est);
+  const tpEl = document.getElementById('s_toks_pct');
+  tpEl.textContent = d.token_pct > 0 ? '-' + d.token_pct + '%' : '0%';
+  tpEl.className = 'stat-pct ' + (d.token_pct > 0 ? 'green' : 'dim');
+
+  document.getElementById('s_lat').textContent = d.latency_ms > 0 ? d.latency_ms + 'ms' : '';
+}
+
+function reset() {
+  document.getElementById('output_text').value = '';
+  document.getElementById('output_text').className = '';
+  document.getElementById('output_meta').textContent = '';
+  document.getElementById('copy_btn').style.display = 'none';
+  document.getElementById('stats_bar').className = 'stats-bar hidden';
+  document.getElementById('input_meta').textContent = '';
+}
+
+function setBusy(on) {
+  const btn = document.getElementById('compress_btn');
+  btn.disabled = on;
+  btn.textContent = on ? '…' : '▶ Compress';
+}
+
+function showLoading() {
+  document.getElementById('model_loading').style.display = 'inline';
+  document.getElementById('model_select').disabled = true;
+}
+function hideLoading() {
+  document.getElementById('model_loading').style.display = 'none';
+  suppressModelChange = true;
+  document.getElementById('model_select').disabled = false;
+  suppressModelChange = false;
+}
+
+function fmt(n) {
+  return n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n);
+}
+
+async function copyOutput() {
+  const text = document.getElementById('output_text').value;
+  if (!text) return;
+  await navigator.clipboard.writeText(text);
+  const btn = document.getElementById('copy_btn');
+  btn.textContent = 'Copied!';
+  setTimeout(() => btn.textContent = 'Copy', 1500);
+}
+
+async function init() {
+  try {
+    const data = await fetch('/stats').then(r => r.json());
+    const info = data.compressor_info;
+    if (!info) return;
+    const sel = document.getElementById('model_select');
+    const m = info.model || '';
+    if (m && [...sel.options].some(o => o.value === m)) {
+      suppressModelChange = true;
+      sel.value = m;
+      suppressModelChange = false;
+    }
+    if (info.loading) { showLoading(); pollTimer = setTimeout(init, 2000); }
+  } catch(e) {}
+}
+
+document.getElementById('model_select').addEventListener('change', () => {
+  if (!suppressModelChange) compress();
+});
+
+init();
+</script>
+</body>
+</html>
