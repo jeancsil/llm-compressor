@@ -25,3 +25,6 @@ proxy.log
 # Local docs (superpowers plans/specs — kept untracked)
 docs/superpowers/
 .superpowers/
+
+# Local scratch screenshots (dashboard/blog captures — not part of the repo)
+docs/screenshots/

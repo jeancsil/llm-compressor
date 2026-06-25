@@ -1,0 +1,1027 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LLM Compressor</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'SF Mono', 'Fira Code', monospace; background: #0d1117; color: #c9d1d9; padding: 20px; max-width: 1140px; margin: 0 auto; }
+
+  /* ── Header ── */
+  .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid #21262d; }
+  .title { color: #58a6ff; font-size: 14px; font-weight: 700; letter-spacing: .04em; }
+  .header-right { display: flex; align-items: center; gap: 16px; font-size: 11px; color: #8b949e; }
+  .live-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #3fb950; margin-right: 4px; animation: pulse 2s infinite; vertical-align: middle; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+  /* ── Two-layer hero (shown when rtk present) ── */
+  .layers { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+  .layer { border: 1px solid #30363d; border-radius: 8px; padding: 18px 20px; }
+  .layer-shell { background: #111a12; border-color: #2a4a2e; }
+  .layer-api   { background: #111520; border-color: #1e2f50; }
+  .layer-label { font-size: 9px; text-transform: uppercase; letter-spacing: .1em; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+  .layer-shell .layer-label { color: #3fb950; }
+  .layer-api   .layer-label { color: #58a6ff; }
+  .layer-badge { font-size: 9px; padding: 1px 6px; border-radius: 3px; }
+  .layer-shell .layer-badge { background: #0d2b1a; color: #3fb950; }
+  .layer-api   .layer-badge { background: #0d1a35; color: #58a6ff; }
+  .layer-pct { font-size: 52px; font-weight: 800; line-height: 1; letter-spacing: -.02em; }
+  .layer-shell .layer-pct { color: #3fb950; }
+  .layer-api   .layer-pct { color: #58a6ff; }
+  .layer-sub { font-size: 10px; color: #8b949e; margin-top: 6px; }
+  .layer-stats { margin-top: 12px; display: flex; flex-direction: column; gap: 3px; }
+  .layer-stat { display: flex; justify-content: space-between; font-size: 11px; }
+  .layer-stat-k { color: #8b949e; }
+  .layer-stat-v { color: #c9d1d9; font-weight: 600; }
+
+  /* ── Single hero (rtk absent) ── */
+  .hero-solo { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+  .hero-left { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 28px 20px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+  .hero-pct { font-size: 68px; font-weight: 800; color: #3fb950; line-height: 1; letter-spacing: -.02em; }
+  .hero-label { font-size: 10px; color: #8b949e; margin-top: 8px; text-transform: uppercase; letter-spacing: .1em; }
+  .hero-sublabel { font-size: 9px; color: #484f58; margin-top: 3px; }
+  .hero-right { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 18px 20px; }
+  .term-prompt { color: #3fb950; margin-bottom: 10px; font-size: 12px; }
+  .term-line { display: flex; gap: 8px; padding: 2px 0; font-size: 12px; }
+  .term-key { color: #8b949e; flex: 1; white-space: nowrap; }
+  .term-val { color: #f0f6fc; font-weight: 600; text-align: right; }
+  .term-val.green { color: #3fb950; }
+  .term-val.blue { color: #58a6ff; }
+
+  /* ── rtk install hint ── */
+  .rtk-hint { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px 16px; margin-bottom: 12px; font-size: 11px; color: #8b949e; display: flex; align-items: center; gap: 10px; }
+  .rtk-hint code { background: #21262d; padding: 1px 6px; border-radius: 3px; color: #c9d1d9; }
+
+  /* ── Dual routing panel ── */
+  .dual-panel { background: #080f1c; border: 1px solid #1e3a5f; border-radius: 8px; padding: 16px 18px; margin-bottom: 12px; }
+  .dual-panel-hdr { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+  .dual-panel-title { font-size: 9px; color: #58a6ff; text-transform: uppercase; letter-spacing: .12em; font-weight: 700; display: flex; align-items: center; gap: 7px; }
+  .dual-panel-title::before { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #58a6ff; opacity: .7; }
+  .dual-panel-status { font-size: 9px; color: #484f58; }
+  .dual-panel-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .dual-role-card { background: #0d1829; border: 1px solid #1e2f50; border-radius: 6px; padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; }
+  .dual-role-hdr { display: flex; align-items: center; gap: 6px; }
+  .dual-role-dot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
+  .dual-role-name { font-size: 9px; color: #8b949e; text-transform: uppercase; letter-spacing: .1em; }
+  .dual-role-desc { font-size: 10px; color: #3a4a5e; line-height: 1.4; margin-top: -2px; }
+  .dual-role-select { width: 100%; background: #0d1117; color: #c9d1d9; border: 1px solid #21262d; border-radius: 5px; padding: 7px 10px; font-family: inherit; font-size: 12px; cursor: pointer; outline: none; transition: border-color .15s; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%238b949e' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; padding-right: 28px; }
+  .dual-role-select:hover:not(:disabled) { border-color: #58a6ff; }
+  .dual-role-select:focus { border-color: #58a6ff; }
+  .dual-role-select:disabled { opacity: .45; cursor: wait; }
+  .dual-role-meta { font-size: 9px; color: #3a4a5e; line-height: 1.5; min-height: 13px; }
+  .dual-role-meta .hi { color: #6e9fc7; }
+  @media (max-width: 700px) { .dual-panel-grid { grid-template-columns: 1fr; } }
+
+  /* ── Today tiles ── */
+  .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 12px; }
+  .tile { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px 18px; cursor: default; transition: transform .15s, box-shadow .15s; }
+  .tile:hover { transform: translateY(-2px); box-shadow: 0 4px 16px rgba(0,0,0,.4); }
+  .tile-num { font-size: 28px; font-weight: 800; color: #f0f6fc; line-height: 1; }
+  .tile-num.blue  { color: #58a6ff; }
+  .tile-num.green { color: #3fb950; }
+  .tile-label { font-size: 9px; color: #8b949e; text-transform: uppercase; letter-spacing: .08em; margin-top: 6px; }
+
+  /* ── Metric cards ── */
+  .cards { display: grid; grid-template-columns: repeat(7, 1fr); gap: 10px; margin-bottom: 12px; }
+  .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px 14px; }
+  .card-label { font-size: 9px; color: #8b949e; text-transform: uppercase; letter-spacing: .08em; margin-bottom: 5px; }
+  .card-value { font-size: 20px; font-weight: 700; color: #f0f6fc; }
+  .card-value.blue  { color: #58a6ff; }
+  .card-value.green { color: #3fb950; }
+
+  /* ── Shared section ── */
+  .section { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; }
+  .section-title { font-size: 9px; color: #8b949e; text-transform: uppercase; letter-spacing: .08em; margin-bottom: 12px; }
+
+  /* ── rtk command table ── */
+  .cmd-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  .cmd-table th { text-align: left; color: #8b949e; padding: 4px 8px; border-bottom: 1px solid #21262d; font-weight: normal; font-size: 9px; text-transform: uppercase; letter-spacing: .06em; }
+  .cmd-table td { padding: 6px 8px; border-bottom: 1px solid #21262d; vertical-align: middle; }
+  .cmd-table tr:last-child td { border-bottom: none; }
+  .cmd-table tr:hover td { background: #1c2128; }
+  .cmd-name { color: #c9d1d9; font-family: inherit; }
+  .cmd-bar-wrap { width: 120px; background: #21262d; border-radius: 2px; height: 8px; display: inline-block; vertical-align: middle; }
+  .cmd-bar-fill { height: 100%; border-radius: 2px; background: #3fb950; }
+
+  /* ── Sparkline ── */
+  .sparkline { display: flex; align-items: flex-end; gap: 2px; height: 44px; overflow: hidden; }
+  .bar { width: 9px; min-height: 4px; border-radius: 2px 2px 0 0; cursor: default; opacity: .85; transition: opacity .1s; flex-shrink: 0; }
+  .bar:hover { opacity: 1; }
+  .spark-empty { font-size: 11px; color: #484f58; }
+  .spark-legend { display: flex; gap: 16px; margin-top: 8px; font-size: 10px; color: #8b949e; }
+  .leg-dot { display: inline-block; width: 8px; height: 8px; border-radius: 1px; margin-right: 4px; vertical-align: middle; }
+
+  /* ── Model badge ── */
+  .model-badge { font-size: 10px; background: #0d1a35; color: #58a6ff; padding: 2px 8px; border-radius: 4px; }
+
+  /* ── Model select (switcher) ── */
+  .model-select { font-size: 12px; background: #161b22; color: #58a6ff; padding: 4px 10px; border-radius: 6px; border: 1px solid #30363d; cursor: pointer; font-family: inherit; outline: none; }
+  .model-select:hover:not(:disabled) { border-color: #58a6ff; }
+  .model-select:disabled { opacity: 0.5; cursor: wait; }
+  .model-loading { font-size: 10px; color: #d29922; margin-left: 6px; display: none; }
+
+  /* ── Time-series chart ── */
+  .ts-chart { display: flex; align-items: flex-end; gap: 4px; height: 60px; overflow: hidden; }
+  .ts-bar { flex: 1; min-height: 4px; border-radius: 2px 2px 0 0; opacity: .8; transition: opacity .1s; cursor: default; }
+  .ts-bar:hover { opacity: 1; }
+  .ts-labels { display: flex; justify-content: space-between; margin-top: 4px; font-size: 9px; color: #484f58; }
+
+  /* ── Model comparison table ── */
+  .model-bar-wrap { flex: 1; background: #21262d; border-radius: 2px; height: 8px; display: inline-block; vertical-align: middle; min-width: 60px; }
+  .model-bar-fill { height: 100%; border-radius: 2px; }
+
+  /* ── Session bars ── */
+  .sess-bars { display: flex; flex-direction: column; gap: 8px; }
+  .sess-bar-row { display: flex; align-items: center; gap: 10px; font-size: 11px; }
+  .sess-bar-label { width: 90px; color: #8b949e; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sess-bar-wrap { flex: 1; background: #21262d; border-radius: 3px; height: 12px; overflow: hidden; }
+  .sess-bar-fill { height: 100%; border-radius: 3px; transition: width .3s; }
+  .sess-bar-pct   { width: 36px; text-align: right; color: #3fb950; flex-shrink: 0; }
+  .sess-bar-saved { width: 54px; text-align: right; color: #484f58; flex-shrink: 0; font-size: 10px; }
+
+  /* ── Tables ── */
+  table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  th { text-align: left; color: #8b949e; padding: 5px 10px; border-bottom: 1px solid #21262d; font-weight: normal; font-size: 9px; text-transform: uppercase; letter-spacing: .06em; }
+  td { padding: 7px 10px; border-bottom: 1px solid #21262d; vertical-align: middle; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: #1c2128; }
+  .badge     { display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: 10px; background: #1a3a4a; color: #58a6ff; }
+  .name-tag  { display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: 10px; background: #2d1f3d; color: #bc8cff; }
+  .ratio-badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 10px; }
+  .muted { color: #8b949e; }
+  .green { color: #3fb950; }
+
+  /* ── Footer ── */
+  .footer { font-size: 9px; color: #484f58; text-align: center; padding-top: 8px; }
+
+  @media (max-width: 700px) {
+    .layers, .hero-solo { grid-template-columns: 1fr; }
+    .tiles { grid-template-columns: repeat(2, 1fr); }
+    .cards { grid-template-columns: repeat(2, 1fr); }
+    .layer-pct, .hero-pct { font-size: 48px; }
+  }
+
+  /* ── Tracker banner ── */
+  .tracker-banner { display: none; align-items: center; gap: 12px; background: #0d1a35; border: 1px solid #1e2f50; border-radius: 8px; padding: 10px 16px; margin-bottom: 12px; font-size: 12px; }
+  .tracker-banner a { color: #58a6ff; text-decoration: none; flex-shrink: 0; }
+  .tracker-banner a:hover { text-decoration: underline; }
+  .tracker-sep { color: #30363d; }
+  .tracker-name { color: #f0f6fc; font-weight: 700; }
+  .tracker-status-active { color: #3fb950; }
+  .tracker-status-pending { color: #d29922; }
+  /* ── Track button / chip ── */
+  .track-btn { font-size: 11px; background: #161b22; color: #58a6ff; border: 1px solid #30363d; border-radius: 6px; padding: 4px 10px; cursor: pointer; font-family: inherit; }
+  .track-btn:hover { border-color: #58a6ff; }
+  .track-form { display: none; align-items: center; gap: 6px; }
+  .track-input { font-size: 11px; background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; border-radius: 5px; padding: 3px 8px; font-family: inherit; outline: none; width: 160px; }
+  .track-input:focus { border-color: #58a6ff; }
+  .track-start { font-size: 11px; background: #0d1a35; color: #58a6ff; border: 1px solid #1e2f50; border-radius: 5px; padding: 3px 8px; cursor: pointer; font-family: inherit; }
+  .track-chip { display: none; align-items: center; gap: 6px; font-size: 11px; }
+  .track-chip a { color: #58a6ff; text-decoration: none; }
+  .track-chip a:hover { text-decoration: underline; }
+  .track-cancel { background: none; color: #8b949e; border: none; cursor: pointer; font-size: 14px; padding: 0 2px; line-height: 1; }
+
+  /* ── Prompt history (session dashboards only) ── */
+  .prompt-row { background: #161b22; border: 1px solid #30363d; border-radius: 6px; margin-bottom: 8px; overflow: hidden; }
+  .prompt-row-header { display: flex; align-items: center; gap: 12px; padding: 10px 14px; cursor: pointer; user-select: none; }
+  .prompt-row-header:hover { background: #1c2128; }
+  .prompt-toggle { color: #484f58; font-size: 10px; flex-shrink: 0; width: 10px; }
+  .prompt-ts { color: #484f58; font-size: 10px; flex-shrink: 0; width: 52px; }
+  .prompt-tokens { font-size: 11px; }
+  .prompt-savings { font-size: 11px; color: #3fb950; font-weight: 600; min-width: 44px; }
+  .prompt-latency { font-size: 10px; color: #484f58; margin-left: auto; }
+  .prompt-no-text { font-size: 10px; color: #484f58; font-style: italic; margin-left: auto; }
+  .prompt-body { display: none; padding: 0 14px 14px; }
+  .prompt-body.open { display: block; }
+  .prompt-panels { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .prompt-panel-label { font-size: 9px; text-transform: uppercase; letter-spacing: .1em; color: #8b949e; margin-bottom: 6px; display: flex; justify-content: space-between; }
+  .prompt-text { font-size: 11px; line-height: 1.5; background: #0d1117; border: 1px solid #21262d; border-radius: 4px; padding: 10px 12px; max-height: 320px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; color: #c9d1d9; font-family: inherit; margin: 0; }
+  .prompt-text.compressed { border-color: #1e3a2a; background: #0f1e14; color: #aed6ae; }
+  @media (max-width: 700px) { .prompt-panels { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<!-- Session tracker banner (populated by JS when TRACKER is defined) -->
+<div class="tracker-banner" id="tracker_banner">
+  <a href="/dashboard">← global</a>
+  <span class="tracker-sep">|</span>
+  <span class="tracker-name" id="tracker_banner_name"></span>
+  <span id="tracker_banner_status"></span>
+</div>
+
+<div class="header">
+  <div style="display:flex;align-items:center;gap:8px">
+    <div class="title">LLM Compressor</div>
+    <span class="model-badge" id="model_badge">—</span>
+    <select class="model-select" id="model_select" onchange="switchModel(this.value)" disabled>
+      <option value="llmlingua2">llmlingua2</option>
+      <option value="llmlingua2-large">llmlingua2-large</option>
+      <option value="kompress">kompress</option>
+      <option value="dual">dual (configurable)</option>
+    </select>
+    <span class="model-loading" id="model_loading">loading…</span>
+    <!-- Track new session controls -->
+    <div id="track_chips"></div>
+    <button class="track-btn" id="track_btn" onclick="openTrackForm()">Track new session</button>
+    <div class="track-form" id="track_form">
+      <input class="track-input" id="track_name" type="text" placeholder="session name" onkeydown="if(event.key==='Enter')submitTracker()" />
+      <button class="track-start" onclick="submitTracker()">Start</button>
+      <button class="track-cancel" onclick="closeTrackForm()">✕</button>
+    </div>
+  </div>
+  <div class="header-right">
+    <a href="/play" style="color:#8b949e;font-size:11px;text-decoration:none;letter-spacing:.02em">▶ play</a>
+    <a href="/play/list" style="color:#8b949e;font-size:11px;text-decoration:none;letter-spacing:.02em">▶ history</a>
+    <span id="uptime_display">—</span>
+    <span><span class="live-dot"></span>live</span>
+  </div>
+</div>
+
+<!-- Dual routing panel (shown only in dual mode) -->
+<div id="dual_routing_panel" style="display:none">
+  <div class="dual-panel">
+    <div class="dual-panel-hdr">
+      <span class="dual-panel-title">Dual mode routing</span>
+      <span class="dual-panel-status" id="dual_panel_status">changes apply immediately · persisted across restarts</span>
+    </div>
+    <div class="dual-panel-grid">
+      <div class="dual-role-card">
+        <div class="dual-role-hdr">
+          <span class="dual-role-dot" style="background:#58a6ff"></span>
+          <span class="dual-role-name">System prompts</span>
+        </div>
+        <div class="dual-role-desc">CLAUDE.md · tool definitions · large context blocks</div>
+        <select class="dual-role-select" id="dual_system_select" onchange="applyDualModels()">
+          <option value="llmlingua2">llmlingua2</option>
+          <option value="llmlingua2-large">llmlingua2-large</option>
+          <option value="kompress">kompress</option>
+        </select>
+        <div class="dual-role-meta" id="dual_system_meta"></div>
+      </div>
+      <div class="dual-role-card">
+        <div class="dual-role-hdr">
+          <span class="dual-role-dot" style="background:#3fb950"></span>
+          <span class="dual-role-name">User messages</span>
+        </div>
+        <div class="dual-role-desc">prompts · tool outputs · conversational turns</div>
+        <select class="dual-role-select" id="dual_user_select" onchange="applyDualModels()">
+          <option value="llmlingua2">llmlingua2</option>
+          <option value="llmlingua2-large">llmlingua2-large</option>
+          <option value="kompress">kompress</option>
+        </select>
+        <div class="dual-role-meta" id="dual_user_meta"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Two-layer hero (rtk present) -->
+<div class="layers" id="hero_layers" style="display:none">
+  <div class="layer layer-shell">
+    <div class="layer-label">Shell layer <span class="layer-badge">rtk</span></div>
+    <div class="layer-pct" id="rtk_pct">—%</div>
+    <div class="layer-sub">CLI output compression</div>
+    <div class="layer-stats">
+      <div class="layer-stat"><span class="layer-stat-k">commands</span><span class="layer-stat-v" id="rtk_cmds">—</span></div>
+      <div class="layer-stat"><span class="layer-stat-k">tokens saved</span><span class="layer-stat-v" id="rtk_saved">—</span></div>
+      <div class="layer-stat"><span class="layer-stat-k">avg savings</span><span class="layer-stat-v" id="rtk_avg">—</span></div>
+    </div>
+  </div>
+  <div class="layer layer-api">
+    <div class="layer-label">API layer <span class="layer-badge" id="api_layer_badge">LLMLingua-2</span></div>
+    <div class="layer-pct" id="api_pct_layers">—%</div>
+    <div class="layer-sub" id="api_layer_sub">Prompt compression · LLMLingua-2 tokenizer units</div>
+    <div class="layer-stats">
+      <div class="layer-stat"><span class="layer-stat-k">requests</span><span class="layer-stat-v" id="api_reqs_layers">—</span></div>
+      <div class="layer-stat"><span class="layer-stat-k">tokens saved</span><span class="layer-stat-v" id="api_saved_layers">—</span></div>
+      <div class="layer-stat"><span class="layer-stat-k">ratio</span><span class="layer-stat-v" id="api_ratio_layers">—</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- Single hero (rtk absent) -->
+<div class="hero-solo" id="hero_solo">
+  <div class="hero-left">
+    <div class="hero-pct" id="savings_pct">—%</div>
+    <div class="hero-label">tokens saved overall</div>
+    <div class="hero-sublabel" id="api_layer_sub_solo">LLMLingua-2 tokenizer units</div>
+  </div>
+  <div class="hero-right">
+    <div class="term-prompt">$ llm-compressor --status</div>
+    <div class="term-line"><span class="term-key">requests processed</span><span class="term-val blue" id="t_requests">—</span></div>
+    <div class="term-line"><span class="term-key">original tokens</span><span class="term-val" id="t_original">—</span></div>
+    <div class="term-line"><span class="term-key">compressed tokens</span><span class="term-val" id="t_compressed">—</span></div>
+    <div class="term-line"><span class="term-key">tokens saved</span><span class="term-val green" id="t_saved">—</span></div>
+    <div class="term-line"><span class="term-key">compression ratio</span><span class="term-val green" id="t_ratio">—</span></div>
+    <div class="term-line"><span class="term-key">active sessions</span><span class="term-val blue" id="t_sessions">—</span></div>
+  </div>
+</div>
+
+<!-- rtk hint (shown when no rtk_events recorded yet) -->
+<div class="rtk-hint" id="rtk_hint">
+  <span style="color:#484f58">&#x2B21;</span>
+  <span>Shell-layer compression not yet logging. Add the PostToolUse hook for Bash in Claude Code settings to capture rtk savings per session.</span>
+</div>
+
+<!-- Tracked sessions summary (hidden until data arrives) -->
+<div id="tracked_summary" style="display:none;font-size:11px;color:#8b949e;margin-bottom:10px;text-align:center"></div>
+
+<!-- Row 1: Today tiles -->
+<div class="tiles">
+  <div class="tile">
+    <div class="tile-num blue" id="tile_requests">—</div>
+    <div class="tile-label">Today · Requests</div>
+  </div>
+  <div class="tile">
+    <div class="tile-num green" id="tile_savings">—</div>
+    <div class="tile-label">Today · Avg Savings %</div>
+  </div>
+  <div class="tile">
+    <div class="tile-num" id="tile_latency">—</div>
+    <div class="tile-label">Today · Avg Latency ms</div>
+  </div>
+  <div class="tile">
+    <div class="tile-num green" id="tile_tokens_saved">—</div>
+    <div class="tile-label">Today · Tokens Saved</div>
+  </div>
+</div>
+
+<!-- Metric cards (API layer) -->
+<div class="cards">
+  <div class="card"><div class="card-label">API Requests</div><div class="card-value blue"  id="card_requests">—</div></div>
+  <div class="card"><div class="card-label">API Tokens Saved</div><div class="card-value green" id="card_saved">—</div></div>
+  <div class="card"><div class="card-label">Sessions</div><div class="card-value blue"  id="card_sessions">—</div></div>
+  <div class="card"><div class="card-label">Avg Ratio</div><div class="card-value green" id="card_ratio">—</div></div>
+  <div class="card"><div class="card-label">Uptime</div><div class="card-value"          id="card_uptime">—</div></div>
+  <div class="card"><div class="card-label">Latency</div><div class="card-value" id="card_latency">—</div></div>
+  <div class="card">
+    <div class="card-label">Est. $ Saved</div>
+    <div class="card-value green" id="card_cost">—</div>
+    <div style="font-size:9px;color:#484f58;margin-top:3px" id="card_cost_label">@ $3.00 / MTok</div>
+  </div>
+</div>
+
+<!-- rtk top commands (shown when rtk present) -->
+<div class="section" id="rtk_section" style="display:none">
+  <div class="section-title">rtk — top commands by tokens saved</div>
+  <table class="cmd-table">
+    <thead><tr><th>Command</th><th>Runs</th><th>Saved</th><th>Avg %</th><th style="width:140px"></th></tr></thead>
+    <tbody id="rtk_cmd_body"></tbody>
+  </table>
+</div>
+
+<!-- Row 2: Model comparison -->
+<div class="section" id="model_section" style="display:none">
+  <div class="section-title">Model comparison</div>
+  <table>
+    <thead><tr><th>Model</th><th style="width:200px">Requests</th><th>Savings %</th><th>Latency ms</th></tr></thead>
+    <tbody id="model_body"></tbody>
+  </table>
+</div>
+
+<!-- Row 3: 48h timeseries -->
+<div class="section">
+  <div class="section-title">compression rate — last 48h (hourly) &nbsp;·&nbsp; height = requests &nbsp;·&nbsp; color = avg savings %</div>
+  <div id="ts_chart" class="ts-chart"><span class="spark-empty">No data</span></div>
+  <div id="ts_labels" class="ts-labels"></div>
+</div>
+
+<!-- Row 4: Recent activity -->
+<div class="section">
+  <div class="section-title">Recent activity</div>
+  <table>
+    <thead><tr><th>Time</th><th>Model</th><th>Role</th><th>Tokens</th><th>Savings %</th><th>Latency ms</th></tr></thead>
+    <tbody id="recent_body"></tbody>
+  </table>
+</div>
+
+<!-- LLMLingua sparkline -->
+<div class="section">
+  <div class="section-title">LLMLingua-2 — recent compressions &nbsp;·&nbsp; height = original size &nbsp;·&nbsp; color = savings %</div>
+  <div id="sparkline" class="sparkline"><span class="spark-empty">No compressions yet</span></div>
+  <div class="spark-legend">
+    <span><span class="leg-dot" style="background:#3fb950"></span>&#x2265;40% saved</span>
+    <span><span class="leg-dot" style="background:#d29922"></span>20&#x2013;39% saved</span>
+    <span><span class="leg-dot" style="background:#484f58"></span>&lt;20% saved</span>
+  </div>
+</div>
+
+<!-- Session efficiency bars -->
+<div class="section">
+  <div class="section-title">Sessions by tokens saved &nbsp;·&nbsp; <span style="color:#3fb950">■</span> API (LLMLingua-2) &nbsp;<span style="color:#58a6ff">■</span> Shell (rtk)</div>
+  <div id="sess_bars" class="sess-bars"><span class="spark-empty">No sessions yet</span></div>
+</div>
+
+<!-- Session detail table -->
+<div class="section">
+  <div class="section-title">Session detail — LLMLingua-2 + rtk</div>
+  <table>
+    <thead><tr><th>Session</th><th>Name</th><th>API Req</th><th>API Saved</th><th>Ratio</th><th>RTK Cmds</th><th>RTK Saved</th><th>Last seen</th></tr></thead>
+    <tbody id="sessions_body"></tbody>
+  </table>
+</div>
+
+<!-- Prompt compression history (session dashboards only) -->
+<div class="section" id="prompt_section" style="display:none">
+  <div class="section-title" style="display:flex;align-items:center;gap:10px">
+    Prompt compression history
+    <span id="prompt_count" style="color:#484f58;font-size:9px"></span>
+  </div>
+  <div id="prompt_list"><span class="spark-empty">No compressions yet</span></div>
+</div>
+
+<!-- RTK command history (session dashboards only) -->
+<div class="section" id="rtk_cmd_section" style="display:none">
+  <div class="section-title" style="display:flex;align-items:center;gap:10px">
+    RTK shell command history
+    <span id="rtk_cmd_count" style="color:#484f58;font-size:9px"></span>
+  </div>
+  <table>
+    <thead><tr><th>Time</th><th>Command</th><th>Tokens in</th><th>Saved</th><th>%</th></tr></thead>
+    <tbody id="rtk_cmd_list"></tbody>
+  </table>
+</div>
+
+<div class="footer">All data from metrics.db &amp; history.db in <code>~/Library/Application Support/rtk/</code> &nbsp;·&nbsp; updated every 2s</div>
+
+<script>
+const TRACKER = (typeof window !== 'undefined' && window.TRACKER) ? window.TRACKER : null;
+let FILTER_SESSION = TRACKER ? TRACKER.session_id : null;
+
+function updateBanner() {
+  if (!TRACKER) return;
+  const bannerEl = document.getElementById('tracker_banner');
+  bannerEl.style.display = 'flex';
+  document.getElementById('tracker_banner_name').textContent = TRACKER.name;
+  const statusEl = document.getElementById('tracker_banner_status');
+  if (TRACKER.status === 'active') {
+    const sid = (TRACKER.session_id || '').slice(0, 8);
+    statusEl.className = 'tracker-status-active';
+    statusEl.textContent = 'active · ' + sid;
+  } else {
+    statusEl.className = 'tracker-status-pending';
+    statusEl.innerHTML = '<span class="live-dot" style="background:#d29922;margin-right:4px"></span>waiting for next session…';
+  }
+}
+
+function openTrackForm() {
+  document.getElementById('track_btn').style.display = 'none';
+  document.getElementById('track_form').style.display = 'flex';
+  document.getElementById('track_name').focus();
+}
+
+function closeTrackForm() {
+  document.getElementById('track_form').style.display = 'none';
+  document.getElementById('track_btn').style.display = '';
+  document.getElementById('track_name').value = '';
+}
+
+async function submitTracker() {
+  const name = (document.getElementById('track_name').value || '').trim();
+  if (!name) return;
+  try {
+    const r = await fetch('/admin/tracker', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    const data = await r.json();
+    if (r.ok) {
+      window.location.href = '/dashboard/' + data.slug;
+    } else {
+      alert(data.error || 'Error creating tracker');
+      closeTrackForm();
+    }
+  } catch(e) { console.error(e); }
+}
+
+async function cancelTracker(slug) {
+  try { await fetch('/admin/tracker/' + encodeURIComponent(slug), { method: 'DELETE' }); } catch(e) {}
+  try {
+    const trackers = await fetch('/admin/tracker').then(r => r.json());
+    renderTrackerChips(trackers);
+  } catch(e) {}
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function renderTrackerChips(trackers) {
+  const container = document.getElementById('track_chips');
+  if (!trackers || trackers.length === 0) {
+    container.innerHTML = '';
+    return;
+  }
+  container.innerHTML = trackers.map(t => {
+    const color = t.status === 'active' ? '#3fb950' : '#d29922';
+    const slug = encodeURIComponent(t.slug);
+    return '<div class="track-chip" style="display:flex" data-slug="' + escapeHtml(t.slug) + '">'
+      + '<a class="track-chip-link" href="/dashboard/' + slug + '">' + escapeHtml(t.name) + '</a>'
+      + '<span style="font-size:10px;color:' + color + '">· ' + escapeHtml(t.status) + '</span>'
+      + '<button class="track-cancel">✕</button>'
+      + '</div>';
+  }).join('');
+  container.onclick = function(e) {
+    const btn = e.target.closest('.track-cancel');
+    if (btn) cancelTracker(btn.closest('[data-slug]').dataset.slug);
+  };
+}
+
+function fmt(n) {
+  if (n == null) return '—';
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+  if (n >= 1000)    return (n / 1000).toFixed(1) + 'k';
+  return n.toLocaleString();
+}
+// alias used by tile population
+var fmtN = fmt;
+
+function fmtUptime(secs) {
+  if (secs < 60)   return secs + 's';
+  if (secs < 3600) return Math.floor(secs / 60) + 'm';
+  return Math.floor(secs / 3600) + 'h ' + Math.floor((secs % 3600) / 60) + 'm';
+}
+function barColor(pct) {
+  if (pct >= 40) return '#3fb950';
+  if (pct >= 20) return '#d29922';
+  return '#484f58';
+}
+function ratioBadgeStyle(ratio) {
+  if (ratio >= 2.0) return 'background:#0d2b1a;color:#3fb950';
+  if (ratio >= 1.5) return 'background:#2b2200;color:#d29922';
+  return 'background:#1c2128;color:#8b949e';
+}
+
+let _prevLoading = false;
+
+const MODEL_META = {
+  'llmlingua2':       { savings: '~47%', latency: '~370ms', note: 'fast · good default' },
+  'llmlingua2-large': { savings: '~52%', latency: '~1700ms', note: 'most aggressive · slower' },
+  'kompress':         { savings: '~27%', latency: '~280ms', note: 'low distortion · precise' },
+};
+
+function updateDualMeta(role) {
+  const sel  = document.getElementById('dual_' + role + '_select');
+  const meta = document.getElementById('dual_' + role + '_meta');
+  if (!sel || !meta) return;
+  const m = MODEL_META[sel.value];
+  if (m) meta.innerHTML = '<span class="hi">' + m.savings + ' savings</span> &nbsp;·&nbsp; ' + m.latency + ' &nbsp;·&nbsp; ' + m.note;
+}
+
+async function switchModel(model) {
+  const sel = document.getElementById('model_select');
+  const lbl = document.getElementById('model_loading');
+  sel.disabled = true;
+  lbl.style.display = 'inline';
+  _prevLoading = true;
+  try {
+    await fetch('/admin/set-model', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model }),
+    });
+  } catch(e) { console.error(e); }
+}
+
+async function applyDualModels() {
+  const ss     = document.getElementById('dual_system_select');
+  const us     = document.getElementById('dual_user_select');
+  const status = document.getElementById('dual_panel_status');
+  ss.disabled = true;
+  us.disabled = true;
+  if (status) status.textContent = 'loading…';
+  _prevLoading = true;
+  try {
+    await fetch('/admin/set-dual-models', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ system: ss.value, user: us.value }),
+    });
+  } catch(e) { console.error(e); }
+}
+
+async function refresh() {
+  try {
+  // Session tracker: poll for link while pending
+  if (TRACKER && TRACKER.status === 'pending') {
+    try {
+      const list = await fetch('/admin/tracker').then(r => r.json());
+      const t = Array.isArray(list) ? list.find(x => x.slug === TRACKER.slug) : null;
+      if (t && t.status === 'active') {
+        TRACKER.status = 'active';
+        TRACKER.session_id = t.session_id;
+        FILTER_SESSION = t.session_id;
+      }
+    } catch(e) {}
+    updateBanner();
+    if (!FILTER_SESSION) return; // still pending — no stats to show yet
+  }
+  if (TRACKER) updateBanner();
+
+  // Build stats URL (with session filter when on session dashboard)
+  const statsUrl = '/stats' + (FILTER_SESSION ? '?session_id=' + encodeURIComponent(FILTER_SESSION) : '');
+
+    const r = await fetch(statsUrl);
+    const d = await r.json();
+
+    // ── Uptime ──
+    const uptimeSecs = Math.floor((Date.now() - new Date(d.started_at)) / 1000);
+    const uptimeStr = fmtUptime(uptimeSecs);
+    document.getElementById('uptime_display').textContent = 'up ' + uptimeStr;
+    document.getElementById('card_uptime').textContent = uptimeStr;
+
+    // ── API layer numbers (DB-driven, filtered by active model) ──
+    const at = d.alltime || {};
+    const apiPctDisplay = at.avg_savings_pct != null ? Math.round(at.avg_savings_pct) : 0;
+
+    // ── Hero: two-layer vs solo ──
+    const hasRtk = d.rtk && d.rtk.total_commands > 0;
+    document.getElementById('hero_layers').style.display = hasRtk ? 'grid' : 'none';
+    document.getElementById('hero_solo').style.display   = hasRtk ? 'none' : 'grid';
+    document.getElementById('rtk_hint').style.display    = hasRtk ? 'none' : 'flex';
+    document.getElementById('rtk_section').style.display = hasRtk ? 'block' : 'none';
+
+    // ── Update API layer model badge (both hero variants) ──
+    const activeModel = d.compressor ? d.compressor.model : 'llm-compressor';
+    const apiBadgeEl = document.getElementById('api_layer_badge');
+    if (apiBadgeEl) apiBadgeEl.textContent = activeModel;
+    const apiSubEl = document.getElementById('api_layer_sub');
+    if (apiSubEl) apiSubEl.textContent = 'Prompt compression · ' + activeModel + ' tokenizer units';
+    const apiSubSoloEl = document.getElementById('api_layer_sub_solo');
+    if (apiSubSoloEl) apiSubSoloEl.textContent = activeModel + ' tokenizer units';
+
+    if (hasRtk) {
+      const rtk = d.rtk;
+      const rtkPct = rtk.total_input_tokens > 0
+        ? Math.round((rtk.total_saved_tokens / rtk.total_input_tokens) * 100) : 0;
+      document.getElementById('rtk_pct').textContent    = rtkPct + '%';
+      document.getElementById('rtk_cmds').textContent   = fmt(rtk.total_commands);
+      document.getElementById('rtk_saved').textContent  = fmt(rtk.total_saved_tokens);
+      document.getElementById('rtk_avg').textContent    = rtk.avg_savings_pct + '%';
+      document.getElementById('api_pct_layers').textContent   = apiPctDisplay + '%';
+      document.getElementById('api_reqs_layers').textContent  = fmt(at.requests);
+      document.getElementById('api_saved_layers').textContent = fmt(at.tokens_saved);
+      document.getElementById('api_ratio_layers').textContent = at.avg_ratio ? at.avg_ratio + '×' : '—';
+
+      // rtk command table
+      const maxSaved = Math.max(...rtk.top_commands.map(c => c.saved), 1);
+      document.getElementById('rtk_cmd_body').innerHTML = rtk.top_commands.map(c => {
+        const w = Math.round((c.saved / maxSaved) * 100);
+        return '<tr>'
+          + '<td class="cmd-name">' + c.cmd + '</td>'
+          + '<td class="muted">' + c.count + '</td>'
+          + '<td class="green">' + fmt(c.saved) + '</td>'
+          + '<td class="muted">' + c.avg_pct + '%</td>'
+          + '<td><div class="cmd-bar-wrap"><div class="cmd-bar-fill" style="width:' + w + '%"></div></div></td>'
+          + '</tr>';
+      }).join('');
+    } else {
+      // Solo hero (DB-driven, filtered by active model)
+      document.getElementById('savings_pct').textContent = apiPctDisplay + '%';
+      document.getElementById('t_requests').textContent  = fmt(at.requests);
+      document.getElementById('t_sessions').textContent  = at.sessions ?? Object.keys(d.sessions).length;
+      document.getElementById('t_saved').textContent     = fmt(at.tokens_saved) + ' (' + apiPctDisplay + '%)';
+      document.getElementById('t_ratio').textContent     = at.avg_ratio ? at.avg_ratio + '×' : '—';
+    }
+
+    // ── Model badge + select sync ──
+    if (d.compressor) {
+      const c = d.compressor;
+      const sel = document.getElementById('model_select');
+      const lbl = document.getElementById('model_loading');
+      if (c.loading) {
+        sel.disabled = true;
+        lbl.style.display = 'inline';
+        document.getElementById('model_badge').textContent = (c.model === 'dual' ? 'dual' : c.model) + ' · loading…';
+        _prevLoading = true;
+      } else {
+        sel.value = c.model;
+        sel.disabled = false;
+        lbl.style.display = 'none';
+        // Re-enable dual routing panel selects after loading finishes
+        const dss = document.getElementById('dual_system_select');
+        const dus = document.getElementById('dual_user_select');
+        if (dss) dss.disabled = false;
+        if (dus) dus.disabled = false;
+        if (c.model === 'dual') {
+          const sys = c.model_system || 'llmlingua2-large';
+          const usr = c.model_user   || 'kompress';
+          document.getElementById('model_badge').textContent = 'dual';
+          // Show routing panel and sync selects
+          const panel  = document.getElementById('dual_routing_panel');
+          const status = document.getElementById('dual_panel_status');
+          if (panel)  panel.style.display = '';
+          if (status) status.textContent = 'changes apply immediately · persisted across restarts';
+          const ss = document.getElementById('dual_system_select');
+          const us = document.getElementById('dual_user_select');
+          if (ss && !ss.disabled) { ss.value = sys; updateDualMeta('system'); }
+          if (us && !us.disabled) { us.value = usr; updateDualMeta('user'); }
+        } else {
+          const panel = document.getElementById('dual_routing_panel');
+          if (panel) panel.style.display = 'none';
+          document.getElementById('model_badge').textContent =
+            c.model + (c.param_name ? ' · ' + c.param_name + '=' + c.param_value : '');
+        }
+        if (_prevLoading) { _prevLoading = false; refreshTimeseries(); }
+      }
+    }
+
+    // ── Tracked sessions summary ──
+    const tracked = d.tracked || {};
+    const trackedEl = document.getElementById('tracked_summary');
+    if (trackedEl && !TRACKER && tracked.sessions > 0) {
+      trackedEl.textContent = fmt(tracked.tokens_saved) + ' tokens saved across ' + tracked.sessions + ' tracked session' + (tracked.sessions !== 1 ? 's' : '') + ' · ';
+      const link = document.createElement('a');
+      link.href = '/play/list';
+      link.textContent = 'view history';
+      link.style.cssText = 'color:#58a6ff;font-size:11px';
+      trackedEl.appendChild(link);
+      trackedEl.style.display = '';
+    } else if (trackedEl) {
+      trackedEl.style.display = 'none';
+    }
+
+    // ── Today tiles (DB-driven) ──
+    document.getElementById('tile_requests').textContent = d.today.requests ?? 0;
+    document.getElementById('tile_savings').textContent = (d.today.avg_savings_pct ?? 0) + '%';
+    document.getElementById('tile_latency').textContent = (d.today.avg_latency_ms ?? 0) + 'ms';
+    document.getElementById('tile_tokens_saved').textContent = fmtN(d.today.tokens_saved ?? 0);
+
+    // ── Row 2: Model comparison ──
+    if (d.by_model && d.by_model.length > 0) {
+      document.getElementById('model_section').style.display = 'block';
+      const maxReq = Math.max(...d.by_model.map(m => m.requests), 1);
+      document.getElementById('model_body').innerHTML = d.by_model.map(function(m) {
+        const isActive = d.compressor && m.model === d.compressor.model;
+        const bg = isActive ? 'background:#1c2128;' : '';
+        const w = Math.round((m.requests / maxReq) * 100);
+        return '<tr style="' + bg + '">'
+          + '<td><span class="model-badge">' + m.model + '</span></td>'
+          + '<td><div class="model-bar-wrap" style="width:160px"><div class="model-bar-fill" style="width:' + w + '%;background:' + barColor(m.avg_savings_pct || 0) + ';height:100%"></div></div>'
+          + ' <span class="muted" style="font-size:10px">' + m.requests + '</span></td>'
+          + '<td class="green">' + (m.avg_savings_pct ?? '—') + '%</td>'
+          + '<td class="muted">' + (m.avg_latency_ms != null ? m.avg_latency_ms + ' ms' : '—') + '</td>'
+          + '</tr>';
+      }).join('');
+    }
+
+    // ── Metric cards (DB-driven, filtered by active model) ──
+    document.getElementById('card_requests').textContent = fmt(at.requests);
+    document.getElementById('card_saved').textContent    = fmt(at.tokens_saved);
+    document.getElementById('card_sessions').textContent = at.sessions ?? Object.keys(d.sessions).length;
+    document.getElementById('card_ratio').textContent    = at.avg_ratio ? at.avg_ratio + '×' : '—';
+
+    // ── Latency card ──
+    document.getElementById('card_latency').textContent =
+      at.avg_latency_ms != null ? Math.round(at.avg_latency_ms) + ' ms' : '—';
+
+    // ── Cost card ──
+    if (d.cost_per_mtok != null && at.tokens_saved != null) {
+      const cost = (at.tokens_saved / 1000000) * d.cost_per_mtok;
+      document.getElementById('card_cost').textContent = '$' + cost.toFixed(2);
+      document.getElementById('card_cost_label').textContent = '@ $' + d.cost_per_mtok.toFixed(2) + ' / MTok';
+    }
+
+    // ── Row 4: Recent activity table ──
+    if (d.recent && d.recent.length > 0) {
+      document.getElementById('recent_body').innerHTML = d.recent.slice(0, 10).map(function(row) {
+        var roleBadge = row.role === 'system'
+          ? '<span style="font-size:10px;border-radius:3px;padding:1px 5px;background:#0d1a35;color:#58a6ff;border:1px solid #1e2f50">system</span>'
+          : '<span style="font-size:10px;border-radius:3px;padding:1px 5px;background:#0f1e14;color:#aed6ae;border:1px solid #1e3a2a">user</span>';
+        return '<tr>'
+          + '<td class="muted">' + row.ts.slice(11, 16) + '</td>'
+          + '<td><span class="model-badge">' + row.model + '</span></td>'
+          + '<td>' + roleBadge + '</td>'
+          + '<td>' + fmt(row.original_tokens) + ' &#x2192; ' + fmt(row.compressed_tokens) + '</td>'
+          + '<td class="green">' + row.savings_pct + '%</td>'
+          + '<td class="muted">' + row.latency_ms + ' ms</td>'
+          + '</tr>';
+      }).join('');
+    } else {
+      document.getElementById('recent_body').innerHTML =
+        '<tr><td colspan="6" class="muted" style="text-align:center;padding:12px">No data yet</td></tr>';
+    }
+
+    // ── Sparkline ──
+    const comps = [...d.recent_compressions].reverse();
+    const sparkEl = document.getElementById('sparkline');
+    if (comps.length === 0) {
+      sparkEl.innerHTML = '<span class="spark-empty">No compressions yet</span>';
+    } else {
+      const maxOrig = Math.max(...comps.map(c => c.original), 1);
+      sparkEl.innerHTML = comps.map(c => {
+        const pct = c.original > 0 ? Math.round((1 - c.compressed / c.original) * 100) : 0;
+        const h = Math.max(10, Math.round((c.original / maxOrig) * 100));
+        const tip = c.ts + ' · ' + c.session_id + ' · ' + pct + '% saved (' + fmt(c.original) + ' → ' + fmt(c.compressed) + ')' +
+          (c.latency_ms != null ? ' · ' + c.latency_ms + 'ms' : '');
+        return '<div class="bar" style="background:' + barColor(pct) + ';height:' + h + '%" title="' + tip + '"></div>';
+      }).join('');
+    }
+
+    // ── Session bars (LLMLingua + RTK stacked) ──
+    const sessions = Object.entries(d.sessions).sort((a, b) =>
+      ((b[1].saved_tokens || 0) + (b[1].rtk_saved || 0)) - ((a[1].saved_tokens || 0) + (a[1].rtk_saved || 0))
+    );
+    const maxSess = Math.max(...sessions.map(([, s]) => (s.saved_tokens || 0) + (s.rtk_saved || 0)), 1);
+    const sessBarEl = document.getElementById('sess_bars');
+    if (sessions.length === 0) {
+      sessBarEl.innerHTML = '<span class="spark-empty">No sessions yet</span>';
+    } else {
+      sessBarEl.innerHTML = sessions.slice(0, 8).map(([id, s]) => {
+        const sPct = s.original_tokens > 0
+          ? Math.round((1 - s.compressed_tokens / s.original_tokens) * 100) : 0;
+        const apiSaved = s.saved_tokens || 0;
+        const rtkSaved = s.rtk_saved || 0;
+        const total    = apiSaved + rtkSaved;
+        const wApi = Math.round((apiSaved / maxSess) * 100);
+        const wRtk = Math.round((rtkSaved / maxSess) * 100);
+        const label = s.name ? s.name : id.slice(0, 8);
+        const tip = 'API: ' + fmt(apiSaved) + (rtkSaved ? ' · rtk: ' + fmt(rtkSaved) : '');
+        return '<div class="sess-bar-row" title="' + tip + '">'
+          + '<div class="sess-bar-label" title="' + id + '">' + label + '</div>'
+          + '<div class="sess-bar-wrap">'
+          +   '<div class="sess-bar-fill" style="width:' + wApi + '%;background:' + barColor(sPct) + '"></div>'
+          +   (rtkSaved ? '<div class="sess-bar-fill" style="width:' + wRtk + '%;background:#58a6ff;opacity:0.7"></div>' : '')
+          + '</div>'
+          + '<div class="sess-bar-pct">' + sPct + '%</div>'
+          + '<div class="sess-bar-saved">' + fmt(total) + (rtkSaved ? ' <span style="color:#58a6ff;font-size:9px">+rtk</span>' : '') + '</div>'
+          + '</div>';
+      }).join('');
+    }
+
+    // ── Session table ──
+    document.getElementById('sessions_body').innerHTML = sessions.map(([id, s]) => {
+      const sPct = s.original_tokens > 0
+        ? Math.round((1 - s.compressed_tokens / s.original_tokens) * 100) : 0;
+      const ratio = s.compressed_tokens > 0
+        ? (s.original_tokens / s.compressed_tokens).toFixed(2) : null;
+      const nameCell = s.name
+        ? '<span class="name-tag">' + s.name + '</span>'
+        : '<span class="muted">—</span>';
+      const ratioCell = ratio
+        ? '<span class="ratio-badge" style="' + ratioBadgeStyle(parseFloat(ratio)) + '">' + ratio + '×</span>'
+        : '<span class="muted">—</span>';
+      const rtkCmds  = s.rtk_commands != null ? s.rtk_commands : '—';
+      const rtkSaved = s.rtk_saved    != null ? '<span class="green">' + fmt(s.rtk_saved) + '</span>' : '<span class="muted">—</span>';
+      return '<tr>'
+        + '<td><span class="badge">' + id.slice(0, 8) + '</span></td>'
+        + '<td>' + nameCell + '</td>'
+        + '<td>' + s.requests + '</td>'
+        + '<td class="green">' + fmt(s.saved_tokens) + ' <span class="muted">(' + sPct + '%)</span></td>'
+        + '<td>' + ratioCell + '</td>'
+        + '<td class="muted">' + rtkCmds + '</td>'
+        + '<td>' + rtkSaved + '</td>'
+        + '<td class="muted">' + (s.last_seen ? new Date(s.last_seen).toLocaleTimeString() : '—') + '</td>'
+        + '</tr>';
+    }).join('');
+
+    // Update main dashboard tracker chips (only on global dashboard, not session dashboard)
+    if (!TRACKER) {
+      try {
+        const trackers = await fetch('/admin/tracker').then(r => r.json());
+        renderTrackerChips(trackers);
+      } catch(e) {}
+    }
+
+  } catch(e) { console.error(e); }
+}
+
+async function refreshTimeseries() {
+  try {
+    const sel = document.getElementById('model_select');
+    const model = sel ? sel.value : '';
+    const params = [];
+    if (model) params.push('model=' + encodeURIComponent(model));
+    if (FILTER_SESSION) params.push('session_id=' + encodeURIComponent(FILTER_SESSION));
+    const r = await fetch('/stats/timeseries' + (params.length ? '?' + params.join('&') : ''));
+    const buckets = await r.json();
+    const chartEl = document.getElementById('ts_chart');
+    const labelsEl = document.getElementById('ts_labels');
+    if (!buckets || buckets.length === 0) {
+      chartEl.innerHTML = '<span class="spark-empty">No data</span>';
+      labelsEl.innerHTML = '';
+      return;
+    }
+    const maxReq = Math.max(...buckets.map(b => b.requests), 1);
+    chartEl.innerHTML = buckets.map(b => {
+      const h = Math.max(4, Math.round((b.requests / maxReq) * 100));
+      const tip = b.hour.slice(11, 16) + ' · ' + b.requests + ' req · ' +
+        b.avg_savings_pct + '% saved · ' + b.avg_latency_ms + 'ms avg';
+      return '<div class="ts-bar" style="height:' + h + '%;background:' + barColor(b.avg_savings_pct) + '" title="' + tip + '"></div>';
+    }).join('');
+    const first = buckets[0].hour.slice(11, 16);
+    const last  = buckets[buckets.length - 1].hour.slice(11, 16);
+    labelsEl.innerHTML = '<span>' + first + '</span><span>' + last + '</span>';
+  } catch(e) { console.error(e); }
+}
+
+function togglePrompt(id) {
+  const body = document.getElementById(id + '_body');
+  const arrow = document.getElementById(id + '_arrow');
+  if (!body) return;
+  const isOpen = body.classList.contains('open');
+  body.classList.toggle('open', !isOpen);
+  if (arrow) arrow.textContent = isOpen ? '▶' : '▼';
+}
+
+async function refreshCompressions() {
+  if (!TRACKER || !TRACKER.session_id) return;
+  const section = document.getElementById('prompt_section');
+  if (!section) return;
+  section.style.display = 'block';
+  try {
+    const rows = await fetch('/session/' + encodeURIComponent(TRACKER.slug) + '/compressions').then(r => r.json());
+    const listEl = document.getElementById('prompt_list');
+    const countEl = document.getElementById('prompt_count');
+    if (!Array.isArray(rows) || rows.length === 0) {
+      listEl.innerHTML = '<span class="spark-empty">No compressions yet</span>';
+      countEl.textContent = '';
+      return;
+    }
+    countEl.textContent = rows.length + (rows.length === 50 ? '+ ' : ' ') + 'requests';
+    const openIds = new Set([...listEl.querySelectorAll('.prompt-body.open')].map(el => el.id));
+    listEl.innerHTML = rows.map(r => {
+      const pct = r.savings_pct != null ? r.savings_pct : 0;
+      const hasText = r.original_text != null;
+      const ts = r.ts ? r.ts.slice(11, 16) : '';
+      const id = 'pr_' + r.id;
+      const origLen = (r.original_text || '').length;
+      const compLen = (r.compressed_text || '').length;
+      return '<div class="prompt-row">'
+        + '<div class="prompt-row-header" data-toggle-id="' + id + '">'
+        + '<span class="prompt-toggle" id="' + id + '_arrow">▶</span>'
+        + '<span class="prompt-ts">' + ts + '</span>'
+        + '<span class="prompt-tokens">' + fmt(r.original_tokens) + ' → ' + fmt(r.compressed_tokens) + ' tok</span>'
+        + '<span class="prompt-savings">-' + pct + '%</span>'
+        + '<span class="model-badge" style="font-size:9px;padding:1px 5px">' + (r.model || '—') + '</span>'
+        + (r.latency_ms ? '<span class="prompt-latency">' + Math.round(r.latency_ms) + 'ms</span>' : '')
+        + (hasText ? '' : '<span class="prompt-no-text">text not stored</span>')
+        + '</div>'
+        + (hasText
+          ? '<div class="prompt-body" id="' + id + '_body">'
+            + '<div class="prompt-panels">'
+            + '<div><div class="prompt-panel-label"><span>Original</span><span style="color:#484f58">' + fmt(origLen) + ' chars</span></div>'
+            + '<pre class="prompt-text">' + escapeHtml(r.original_text) + '</pre></div>'
+            + '<div><div class="prompt-panel-label"><span>Compressed</span><span style="color:#3fb950">' + fmt(compLen) + ' chars</span></div>'
+            + '<pre class="prompt-text compressed">' + escapeHtml(r.compressed_text || '') + '</pre></div>'
+            + '</div></div>'
+          : '')
+        + '</div>';
+    }).join('');
+    openIds.forEach(bodyId => {
+      const body = document.getElementById(bodyId);
+      const arrow = document.getElementById(bodyId.replace('_body', '_arrow'));
+      if (body) { body.classList.add('open'); if (arrow) arrow.textContent = '▼'; }
+    });
+    listEl.onclick = function(e) {
+      const hdr = e.target.closest('[data-toggle-id]');
+      if (hdr) togglePrompt(hdr.dataset.toggleId);
+    };
+  } catch(e) { console.error(e); }
+}
+
+async function refreshRtkCommands() {
+  if (!TRACKER || !TRACKER.session_id) return;
+  const section = document.getElementById('rtk_cmd_section');
+  if (!section) return;
+  section.style.display = 'block';
+  try {
+    const rows = await fetch('/session/' + encodeURIComponent(TRACKER.slug) + '/rtk-commands').then(r => r.json());
+    const tbody  = document.getElementById('rtk_cmd_list');
+    const countEl = document.getElementById('rtk_cmd_count');
+    if (!Array.isArray(rows) || rows.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" class="spark-empty">No RTK commands this session</td></tr>';
+      countEl.textContent = '';
+      return;
+    }
+    countEl.textContent = rows.length + ' commands';
+    tbody.innerHTML = rows.map(r => {
+      const pct = r.savings_pct != null ? r.savings_pct : 0;
+      const ts  = r.ts ? r.ts.slice(11, 16) : '';
+      const color = pct >= 40 ? '#3fb950' : pct >= 20 ? '#d29922' : '#8b949e';
+      return '<tr>'
+        + '<td class="muted">' + ts + '</td>'
+        + '<td style="font-family:monospace;font-size:11px;color:#c9d1d9;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + escapeHtml(r.rtk_cmd) + '">' + escapeHtml(r.rtk_cmd) + '</td>'
+        + '<td class="muted">' + fmt(r.input_tokens) + '</td>'
+        + '<td style="color:#3fb950">' + fmt(r.saved_tokens) + '</td>'
+        + '<td style="color:' + color + '">' + pct + '%</td>'
+        + '</tr>';
+    }).join('');
+  } catch(e) { console.error(e); }
+}
+
+updateBanner();
+refresh();
+refreshTimeseries();
+if (TRACKER) refreshCompressions();
+if (TRACKER) refreshRtkCommands();
+setInterval(refresh, 2000);
+setInterval(refreshTimeseries, 10000);
+if (TRACKER) setInterval(refreshCompressions, 5000);
+if (TRACKER) setInterval(refreshRtkCommands, 5000);
+</script>
+</body>
+</html>
