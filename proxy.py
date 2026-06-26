@@ -12,7 +12,7 @@ import httpx
 import uvicorn
 from collections import deque, OrderedDict
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse, JSONResponse, HTMLResponse
@@ -239,6 +239,12 @@ def init_db(path: str):
         conn.execute("CREATE INDEX IF NOT EXISTS idx_rtk_events_project ON rtk_events(project_path)")
     except Exception:
         pass  # column already exists
+    # Mark when caching went live so hit-ratio stats can exclude the pre-feature
+    # backlog of misses. Set once, never overwritten (INSERT OR IGNORE).
+    conn.execute(
+        "INSERT OR IGNORE INTO meta (key, value) VALUES ('cache_since', ?)",
+        (datetime.now(timezone.utc).isoformat(timespec="seconds"),),
+    )
     conn.commit()
     return conn
 
@@ -1034,16 +1040,40 @@ def _rtk_stats(session_id: str | None) -> dict | None:
     }
 
 
+def _empty_cache_stats() -> dict:
+    """Zeroed cache-stats payload, used when no DB is available."""
+    zero = {"hits": 0, "total": 0, "hit_ratio": 0.0}
+    return {"since_deploy": dict(zero), "last_24h": dict(zero)}
+
+
 def _cache_stats() -> dict:
-    """Cache-hit summary derived from the compressions.cache_hit column."""
+    """Cache-hit summary from compressions.cache_hit, windowed to avoid dilution.
+
+    `since_deploy` counts only rows recorded after caching went live (the
+    `cache_since` meta marker), so the pre-feature backlog of misses cannot
+    permanently depress the ratio. `last_24h` is a rolling window that reflects
+    current behaviour.
+    """
     if _db_conn is None:
-        return {"hits": 0, "total": 0, "hit_ratio": 0.0}
-    row = _db_conn.execute(
-        "SELECT COALESCE(SUM(cache_hit), 0), COUNT(*) FROM compressions"
+        return _empty_cache_stats()
+
+    def _window(cutoff) -> dict:
+        if cutoff is None:
+            return {"hits": 0, "total": 0, "hit_ratio": 0.0}
+        row = _db_conn.execute(
+            "SELECT COALESCE(SUM(cache_hit), 0), COUNT(*) FROM compressions WHERE ts >= ?",
+            (cutoff,),
+        ).fetchone()
+        hits, total = int(row[0]), int(row[1])
+        return {"hits": hits, "total": total,
+                "hit_ratio": round(hits / total, 4) if total else 0.0}
+
+    since_row = _db_conn.execute(
+        "SELECT value FROM meta WHERE key='cache_since'"
     ).fetchone()
-    hits, total = int(row[0]), int(row[1])
-    return {"hits": hits, "total": total,
-            "hit_ratio": round(hits / total, 4) if total else 0.0}
+    since = since_row[0] if since_row else None
+    day_ago = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat(timespec="seconds")
+    return {"since_deploy": _window(since), "last_24h": _window(day_ago)}
 
 
 def _tracked_stats() -> dict:
@@ -1137,7 +1167,7 @@ async def get_stats(session_id: str | None = None):
         tracked_stats = _tracked_stats()
         _merge_rtk_into_sessions(sessions_out)
 
-    cache_stats = _cache_stats() if _db_conn is not None else {"hits": 0, "total": 0, "hit_ratio": 0.0}
+    cache_stats = _cache_stats()
 
     return {
         "started_at": stats["started_at"],

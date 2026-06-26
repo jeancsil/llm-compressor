@@ -118,5 +118,45 @@ def test_stats_endpoint_reports_cache(client):
     r = client.get("/stats")
     assert r.status_code == 200
     cache = r.json()["cache"]
-    assert set(cache) == {"hits", "total", "hit_ratio"}
-    assert cache["hit_ratio"] == 0.0   # fresh DB, no compressions yet
+    assert set(cache) == {"since_deploy", "last_24h"}
+    for window in cache.values():
+        assert set(window) == {"hits", "total", "hit_ratio"}
+        assert window["hit_ratio"] == 0.0   # fresh DB, no compressions yet
+
+
+def test_cache_stats_windows_exclude_pre_deploy_and_old_rows(tmp_path, monkeypatch):
+    from datetime import datetime, timezone, timedelta
+
+    proxy = _import_proxy(monkeypatch)
+    conn = proxy.init_db(str(tmp_path / "m.db"))
+    monkeypatch.setattr(proxy, "_db_conn", conn)
+
+    now = datetime.now(timezone.utc)
+    # Pin the deploy marker 5 days back so we can place rows on either side.
+    conn.execute(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES ('cache_since', ?)",
+        ((now - timedelta(days=5)).isoformat(timespec="seconds"),),
+    )
+
+    def ins(ts, cache_hit):
+        conn.execute(
+            "INSERT INTO compressions (ts, session_id, model, original_tokens, "
+            "compressed_tokens, latency_ms, role, cache_hit) VALUES (?,?,?,?,?,?,?,?)",
+            (ts.isoformat(timespec="seconds"), "s", "kompress", 100, 50, 0, "user", cache_hit),
+        )
+
+    # Pre-deploy backlog (10 days ago): all misses — excluded from both windows.
+    for _ in range(8):
+        ins(now - timedelta(days=10), 0)
+    # After deploy, older than 24h (2 days ago): 1 hit — in since_deploy only.
+    ins(now - timedelta(days=2), 1)
+    # Within last 24h (1 hour ago): 2 hits + 1 miss — in both windows.
+    ins(now - timedelta(hours=1), 1)
+    ins(now - timedelta(hours=1), 1)
+    ins(now - timedelta(hours=1), 0)
+    conn.commit()
+
+    stats = proxy._cache_stats()
+    assert stats["since_deploy"] == {"hits": 3, "total": 4, "hit_ratio": round(3 / 4, 4)}
+    assert stats["last_24h"] == {"hits": 2, "total": 3, "hit_ratio": round(2 / 3, 4)}
+    conn.close()
