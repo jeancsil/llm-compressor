@@ -366,6 +366,25 @@
     <div class="card-value green" id="card_cache_ratio">—</div>
     <div style="font-size:9px;color:#484f58;margin-top:3px" id="card_cache_sub">since deploy</div>
   </div>
+  <div class="card">
+    <div class="card-label">Inferences Skipped</div>
+    <div class="card-value blue" id="card_cache_hits">—</div>
+    <div style="font-size:9px;color:#484f58;margin-top:3px" id="card_cache_entries">— entries cached</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Inference Time Saved</div>
+    <div class="card-value" id="card_cache_time">—</div>
+    <div style="font-size:9px;color:#484f58;margin-top:3px">model compute avoided</div>
+  </div>
+</div>
+
+<!-- Cache role breakdown (shown when cache data is available) -->
+<div class="section" id="cache_section" style="display:none">
+  <div class="section-title">cache — hit rate by role</div>
+  <table class="cmd-table">
+    <thead><tr><th>Role</th><th>Hits / Total</th><th>Hit Rate</th><th>Avg miss latency</th><th>Time saved</th></tr></thead>
+    <tbody id="cache_role_body"></tbody>
+  </table>
 </div>
 
 <!-- rtk top commands (shown when rtk present) -->
@@ -790,14 +809,47 @@ async function refresh() {
       document.getElementById('card_cost_label').textContent = '@ $' + d.cost_per_mtok.toFixed(2) + ' / MTok';
     }
 
-    // ── Cache hit rate card ──
+    // ── Cache cards ──
     if (d.cache) {
-      const sd = d.cache.since_deploy;
+      const sd  = d.cache.since_deploy;
       const h24 = d.cache.last_24h;
+
       const pct = Math.round((sd.hit_ratio || 0) * 100);
       document.getElementById('card_cache_ratio').textContent = pct + '%';
       document.getElementById('card_cache_sub').textContent =
         sd.hits + ' hits / ' + sd.total + ' · 24h: ' + Math.round((h24.hit_ratio || 0) * 100) + '%';
+
+      document.getElementById('card_cache_hits').textContent = fmt(sd.hits);
+      document.getElementById('card_cache_entries').textContent =
+        fmt(d.cache.entries || 0) + ' entr' + ((d.cache.entries === 1) ? 'y' : 'ies') + ' cached';
+
+      const ms = d.cache.time_saved_ms || 0;
+      const timeFmt = ms >= 60000
+        ? Math.floor(ms / 60000) + 'm ' + Math.floor((ms % 60000) / 1000) + 's'
+        : ms >= 1000 ? (ms / 1000).toFixed(1) + 's' : ms + 'ms';
+      document.getElementById('card_cache_time').textContent = timeFmt;
+
+      // Role breakdown table
+      const byRole = d.cache.by_role || {};
+      const roles = Object.entries(byRole);
+      if (roles.length > 0) {
+        document.getElementById('cache_section').style.display = 'block';
+        document.getElementById('cache_role_body').innerHTML = roles.map(([role, r]) => {
+          const badge = role === 'system'
+            ? '<span style="font-size:10px;border-radius:3px;padding:1px 5px;background:#0d1a35;color:#58a6ff;border:1px solid #1e2f50">system</span>'
+            : '<span style="font-size:10px;border-radius:3px;padding:1px 5px;background:#0f1e14;color:#aed6ae;border:1px solid #1e3a2a">user</span>';
+          const rPct = Math.round((r.hit_ratio || 0) * 100);
+          const rMs  = r.time_saved_ms || 0;
+          const rFmt = rMs >= 1000 ? (rMs / 1000).toFixed(1) + 's' : rMs + 'ms';
+          return '<tr>'
+            + '<td>' + badge + '</td>'
+            + '<td class="muted">' + fmt(r.hits) + ' / ' + fmt(r.total) + '</td>'
+            + '<td class="green">' + rPct + '%</td>'
+            + '<td class="muted">' + r.avg_miss_latency_ms + ' ms</td>'
+            + '<td class="green">' + rFmt + '</td>'
+            + '</tr>';
+        }).join('');
+      }
     }
 
     // ── Row 4: Recent activity table ──

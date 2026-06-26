@@ -1043,7 +1043,8 @@ def _rtk_stats(session_id: str | None) -> dict | None:
 def _empty_cache_stats() -> dict:
     """Zeroed cache-stats payload, used when no DB is available."""
     zero = {"hits": 0, "total": 0, "hit_ratio": 0.0}
-    return {"since_deploy": dict(zero), "last_24h": dict(zero)}
+    return {"since_deploy": dict(zero), "last_24h": dict(zero),
+            "entries": 0, "time_saved_ms": 0, "by_role": {}}
 
 
 def _cache_stats() -> dict:
@@ -1073,7 +1074,38 @@ def _cache_stats() -> dict:
     ).fetchone()
     since = since_row[0] if since_row else None
     day_ago = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat(timespec="seconds")
-    return {"since_deploy": _window(since), "last_24h": _window(day_ago)}
+
+    entries = _db_conn.execute("SELECT COUNT(*) FROM compression_cache").fetchone()[0]
+
+    by_role = {}
+    if since:
+        for role, hits, total, avg_miss_ms in _db_conn.execute(
+            """SELECT role,
+                      COALESCE(SUM(cache_hit), 0),
+                      COUNT(*),
+                      AVG(CASE WHEN cache_hit = 0 THEN latency_ms END)
+               FROM compressions WHERE ts >= ? GROUP BY role""",
+            (since,),
+        ).fetchall():
+            h, t = int(hits), int(total)
+            by_role[role] = {
+                "hits": h,
+                "total": t,
+                "hit_ratio": round(h / t, 4) if t else 0.0,
+                "avg_miss_latency_ms": round(avg_miss_ms, 1) if avg_miss_ms else 0.0,
+                "time_saved_ms": round(h * (avg_miss_ms or 0.0)),
+            }
+
+    sd = _window(since)
+    total_time_saved_ms = sum(v["time_saved_ms"] for v in by_role.values())
+
+    return {
+        "since_deploy": sd,
+        "last_24h": _window(day_ago),
+        "entries": int(entries),
+        "time_saved_ms": total_time_saved_ms,
+        "by_role": by_role,
+    }
 
 
 def _tracked_stats() -> dict:
