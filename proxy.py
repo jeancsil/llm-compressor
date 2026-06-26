@@ -1,5 +1,6 @@
 import os
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+import hashlib
 import json
 import platform
 import re
@@ -9,9 +10,9 @@ import threading
 import time
 import httpx
 import uvicorn
-from collections import deque
+from collections import deque, OrderedDict
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse, JSONResponse, HTMLResponse
@@ -44,6 +45,7 @@ DB_PATH = Path(os.environ.get("LLM_COMPRESSOR_DB") or _default_db_path())
 backend          = None
 backend_loading  = None   # set to model name while async load is in progress
 _db_conn         = None
+_cache           = None   # CompressionCache, set in lifespan
 backend_user     = None   # kompress instance in dual mode
 backend_system   = None   # llmlingua2-large instance in dual mode
 dual_mode        = False
@@ -52,6 +54,93 @@ dual_model_user   = "kompress"           # persisted in meta table
 
 KNOWN_MODELS    = ("llmlingua2", "llmlingua2-large", "kompress", "dual")
 DUAL_SUBMODELS  = ("llmlingua2", "llmlingua2-large", "kompress")
+
+
+# ---------------------------------------------------------------------------
+# Cache helpers
+# ---------------------------------------------------------------------------
+
+def _cache_key(text: str, model_tag: str, rate: float) -> str:
+    """Exact-match cache key. Model and rate are included because the same text
+    yields different output under a different backend/rate."""
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return f"{digest}|{model_tag}|{rate}"
+
+
+CACHE_MEM_SIZE = int(os.environ.get("LLM_COMPRESSOR_CACHE_SIZE", "2000"))
+CACHE_MAX_ROWS = int(os.environ.get("LLM_COMPRESSOR_CACHE_MAX_ROWS", "50000"))
+
+
+class CompressionCache:
+    """Hybrid exact-match cache: bounded in-memory LRU over a SQLite backing
+    table. Lookup order is memory -> SQLite -> miss. No seed-on-boot; disk hits
+    are promoted into memory lazily so RAM stays bounded regardless of table size."""
+
+    def __init__(self, conn, max_mem: int = 2000, max_rows: int = 50000):
+        self._conn = conn
+        self._max_mem = max_mem
+        self._max_rows = max_rows
+        self._mem: "OrderedDict[str, tuple[str, int, int]]" = OrderedDict()
+
+    def get(self, key: str):
+        if key in self._mem:
+            self._mem.move_to_end(key)
+            self._touch(key)
+            return self._mem[key]
+        if self._conn is not None:
+            row = self._conn.execute(
+                "SELECT compressed_text, original_tokens, compressed_tokens "
+                "FROM compression_cache WHERE key = ?",
+                (key,),
+            ).fetchone()
+            if row is not None:
+                entry = (row[0], row[1], row[2])
+                self._mem_put(key, entry)
+                self._touch(key)
+                return entry
+        return None
+
+    def put(self, key, compressed_text, original_tokens, compressed_tokens, model, rate):
+        self._mem_put(key, (compressed_text, original_tokens, compressed_tokens))
+        if self._conn is not None:
+            # microsecond precision so last_hit ordering (LRU disk eviction) is
+            # unambiguous even when many entries land in the same second.
+            ts = datetime.now(timezone.utc).isoformat()
+            self._conn.execute(
+                "INSERT OR REPLACE INTO compression_cache "
+                "(key, model, rate, compressed_text, original_tokens, compressed_tokens, "
+                " created_at, hit_count, last_hit) VALUES (?,?,?,?,?,?,?,0,?)",
+                (key, model, rate, compressed_text, original_tokens, compressed_tokens, ts, ts),
+            )
+            self._evict_disk()
+            self._conn.commit()
+
+    def _mem_put(self, key, entry):
+        self._mem[key] = entry
+        self._mem.move_to_end(key)
+        while len(self._mem) > self._max_mem:
+            self._mem.popitem(last=False)
+
+    def _touch(self, key):
+        if self._conn is None:
+            return
+        ts = datetime.now(timezone.utc).isoformat()  # microsecond precision (see put)
+        self._conn.execute(
+            "UPDATE compression_cache SET hit_count = hit_count + 1, last_hit = ? WHERE key = ?",
+            (ts, key),
+        )
+        self._conn.commit()
+
+    def _evict_disk(self):
+        if self._max_rows <= 0:
+            return
+        count = self._conn.execute("SELECT COUNT(*) FROM compression_cache").fetchone()[0]
+        if count > self._max_rows:
+            self._conn.execute(
+                "DELETE FROM compression_cache WHERE key IN "
+                "(SELECT key FROM compression_cache ORDER BY last_hit ASC LIMIT ?)",
+                (count - self._max_rows,),
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -117,6 +206,22 @@ def init_db(path: str):
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_rtk_events_session ON rtk_events(session_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_rtk_events_ts      ON rtk_events(ts)")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS compression_cache (
+            key               TEXT PRIMARY KEY,
+            model             TEXT NOT NULL,
+            rate              REAL NOT NULL,
+            compressed_text   TEXT NOT NULL,
+            original_tokens   INTEGER NOT NULL,
+            compressed_tokens INTEGER NOT NULL,
+            created_at        TEXT NOT NULL,
+            hit_count         INTEGER NOT NULL DEFAULT 0,
+            last_hit          TEXT
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_cache_last_hit ON compression_cache(last_hit)")
     try:
         conn.execute("ALTER TABLE trackers ADD COLUMN closed_at TEXT")
     except Exception:
@@ -126,10 +231,20 @@ def init_db(path: str):
     except Exception:
         pass  # column already exists
     try:
+        conn.execute("ALTER TABLE compressions ADD COLUMN cache_hit INTEGER DEFAULT 0")
+    except Exception:
+        pass  # column already exists
+    try:
         conn.execute("ALTER TABLE rtk_events ADD COLUMN project_path TEXT DEFAULT ''")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_rtk_events_project ON rtk_events(project_path)")
     except Exception:
         pass  # column already exists
+    # Mark when caching went live so hit-ratio stats can exclude the pre-feature
+    # backlog of misses. Set once, never overwritten (INSERT OR IGNORE).
+    conn.execute(
+        "INSERT OR IGNORE INTO meta (key, value) VALUES ('cache_since', ?)",
+        (datetime.now(timezone.utc).isoformat(timespec="seconds"),),
+    )
     conn.commit()
     return conn
 
@@ -424,9 +539,10 @@ def _migrate_db_location() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global backend, _db_conn
+    global backend, _db_conn, _cache
     _migrate_db_location()
     _db_conn = init_db(str(DB_PATH))
+    _cache = CompressionCache(_db_conn, max_mem=CACHE_MEM_SIZE, max_rows=CACHE_MAX_ROWS)
     migrate_from_json(_db_conn)
     recover_stats_from_backup(_db_conn)
     load_stats_from_db(_db_conn)
@@ -471,6 +587,7 @@ def record_compression(
     compressed_text: str | None = None,
     role: str = "user",
     active_backend: dict | None = None,
+    cache_hit: int = 0,
 ):
     stats["total_original_tokens"] += original
     stats["total_compressed_tokens"] += compressed
@@ -481,8 +598,8 @@ def record_compression(
 
     if _db_conn:
         cur = _db_conn.execute(
-            "INSERT INTO compressions (ts, session_id, model, original_tokens, compressed_tokens, latency_ms, role) VALUES (?,?,?,?,?,?,?)",
-            (ts, session_id, model_name, original, compressed, latency_ms, role),
+            "INSERT INTO compressions (ts, session_id, model, original_tokens, compressed_tokens, latency_ms, role, cache_hit) VALUES (?,?,?,?,?,?,?,?)",
+            (ts, session_id, model_name, original, compressed, latency_ms, role, cache_hit),
         )
         if original_text is not None and compressed_text is not None:
             _db_conn.execute(
@@ -671,6 +788,19 @@ def compress_text(text: str, session_id: str, role: str = "user") -> str:
     active = _pick_backend(role)
     if active is None:
         return text
+    model_tag = active.get("type", "compressor")
+    rate = active.get("rate", 0.5)
+    key = _cache_key(text, model_tag, rate)
+
+    if _cache is not None:
+        hit = _cache.get(key)
+        if hit is not None:
+            compressed, orig, comp = hit
+            print(f"[cache] hit {orig} → {comp} tokens [{session_id[:8]}] role={role}")
+            record_compression(session_id, orig, comp, latency_ms=0.0,
+                               role=role, active_backend=active, cache_hit=1)
+            return compressed
+
     t0 = time.perf_counter()
     try:
         compressed, orig, comp = _compress_with(active, text)
@@ -678,9 +808,11 @@ def compress_text(text: str, session_id: str, role: str = "user") -> str:
         print(f"[compressor] compression failed, forwarding original: {e}")
         return text
     latency_ms = (time.perf_counter() - t0) * 1000
-    model_tag = active.get("type", "compressor")
     print(f"[{model_tag}] {orig} → {comp} tokens [{session_id[:8]}] role={role}")
-    record_compression(session_id, orig, comp, latency_ms, text, compressed, role=role, active_backend=active)
+    record_compression(session_id, orig, comp, latency_ms, text, compressed,
+                       role=role, active_backend=active, cache_hit=0)
+    if _cache is not None:
+        _cache.put(key, compressed, orig, comp, model_tag, rate)
     return compressed
 
 
@@ -908,6 +1040,74 @@ def _rtk_stats(session_id: str | None) -> dict | None:
     }
 
 
+def _empty_cache_stats() -> dict:
+    """Zeroed cache-stats payload, used when no DB is available."""
+    zero = {"hits": 0, "total": 0, "hit_ratio": 0.0}
+    return {"since_deploy": dict(zero), "last_24h": dict(zero),
+            "entries": 0, "time_saved_ms": 0, "by_role": {}}
+
+
+def _cache_stats() -> dict:
+    """Cache-hit summary from compressions.cache_hit, windowed to avoid dilution.
+
+    `since_deploy` counts only rows recorded after caching went live (the
+    `cache_since` meta marker), so the pre-feature backlog of misses cannot
+    permanently depress the ratio. `last_24h` is a rolling window that reflects
+    current behaviour.
+    """
+    if _db_conn is None:
+        return _empty_cache_stats()
+
+    def _window(cutoff) -> dict:
+        if cutoff is None:
+            return {"hits": 0, "total": 0, "hit_ratio": 0.0}
+        row = _db_conn.execute(
+            "SELECT COALESCE(SUM(cache_hit), 0), COUNT(*) FROM compressions WHERE ts >= ?",
+            (cutoff,),
+        ).fetchone()
+        hits, total = int(row[0]), int(row[1])
+        return {"hits": hits, "total": total,
+                "hit_ratio": round(hits / total, 4) if total else 0.0}
+
+    since_row = _db_conn.execute(
+        "SELECT value FROM meta WHERE key='cache_since'"
+    ).fetchone()
+    since = since_row[0] if since_row else None
+    day_ago = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat(timespec="seconds")
+
+    entries = _db_conn.execute("SELECT COUNT(*) FROM compression_cache").fetchone()[0]
+
+    by_role = {}
+    if since:
+        for role, hits, total, avg_miss_ms in _db_conn.execute(
+            """SELECT role,
+                      COALESCE(SUM(cache_hit), 0),
+                      COUNT(*),
+                      AVG(CASE WHEN cache_hit = 0 THEN latency_ms END)
+               FROM compressions WHERE ts >= ? GROUP BY role""",
+            (since,),
+        ).fetchall():
+            h, t = int(hits), int(total)
+            by_role[role] = {
+                "hits": h,
+                "total": t,
+                "hit_ratio": round(h / t, 4) if t else 0.0,
+                "avg_miss_latency_ms": round(avg_miss_ms, 1) if avg_miss_ms else 0.0,
+                "time_saved_ms": round(h * (avg_miss_ms or 0.0)),
+            }
+
+    sd = _window(since)
+    total_time_saved_ms = sum(v["time_saved_ms"] for v in by_role.values())
+
+    return {
+        "since_deploy": sd,
+        "last_24h": _window(day_ago),
+        "entries": int(entries),
+        "time_saved_ms": total_time_saved_ms,
+        "by_role": by_role,
+    }
+
+
 def _tracked_stats() -> dict:
     """Totals across tracked sessions (active/closed trackers joined to compressions)."""
     row = _db_conn.execute(
@@ -999,6 +1199,8 @@ async def get_stats(session_id: str | None = None):
         tracked_stats = _tracked_stats()
         _merge_rtk_into_sessions(sessions_out)
 
+    cache_stats = _cache_stats()
+
     return {
         "started_at": stats["started_at"],
         "total_requests": stats["total_requests"],
@@ -1017,6 +1219,7 @@ async def get_stats(session_id: str | None = None):
         "alltime": alltime_stats,
         "recent": recent_rows,
         "tracked": tracked_stats,
+        "cache": cache_stats,
         "dual_mode": dual_mode,
         "model_user": backend_user.get("type") if backend_user else None,
         "model_system": backend_system.get("type") if backend_system else None,

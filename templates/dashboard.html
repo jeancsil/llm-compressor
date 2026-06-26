@@ -6,7 +6,7 @@
 <title>LLM Compressor</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: 'SF Mono', 'Fira Code', monospace; background: #0d1117; color: #c9d1d9; padding: 20px; max-width: 1140px; margin: 0 auto; }
+  body { font-family: 'SF Mono', 'Fira Code', monospace; background: #0d1117; color: #c9d1d9; padding: 20px 48px; max-width: 1440px; margin: 0 auto; }
 
   /* ── Header ── */
   .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid #21262d; }
@@ -31,7 +31,7 @@
   .layer-api   .layer-pct { color: #58a6ff; }
   .layer-sub { font-size: 10px; color: #8b949e; margin-top: 6px; }
   .layer-stats { margin-top: 12px; display: flex; flex-direction: column; gap: 3px; }
-  .layer-stat { display: flex; justify-content: space-between; font-size: 11px; }
+  .layer-stat { display: flex; justify-content: space-between; font-size: 12px; }
   .layer-stat-k { color: #8b949e; }
   .layer-stat-v { color: #c9d1d9; font-weight: 600; }
 
@@ -43,7 +43,7 @@
   .hero-sublabel { font-size: 9px; color: #484f58; margin-top: 3px; }
   .hero-right { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 18px 20px; }
   .term-prompt { color: #3fb950; margin-bottom: 10px; font-size: 12px; }
-  .term-line { display: flex; gap: 8px; padding: 2px 0; font-size: 12px; }
+  .term-line { display: flex; gap: 8px; padding: 3px 0; font-size: 12px; }
   .term-key { color: #8b949e; flex: 1; white-space: nowrap; }
   .term-val { color: #f0f6fc; font-weight: 600; text-align: right; }
   .term-val.green { color: #3fb950; }
@@ -74,30 +74,46 @@
   @media (max-width: 700px) { .dual-panel-grid { grid-template-columns: 1fr; } }
 
   /* ── Today tiles ── */
-  .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 12px; }
+  .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 16px; }
   .tile { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px 18px; cursor: default; transition: transform .15s, box-shadow .15s; }
   .tile:hover { transform: translateY(-2px); box-shadow: 0 4px 16px rgba(0,0,0,.4); }
   .tile-num { font-size: 28px; font-weight: 800; color: #f0f6fc; line-height: 1; }
   .tile-num.blue  { color: #58a6ff; }
   .tile-num.green { color: #3fb950; }
-  .tile-label { font-size: 9px; color: #8b949e; text-transform: uppercase; letter-spacing: .08em; margin-top: 6px; }
+  .tile-label { font-size: 10px; color: #8b949e; text-transform: uppercase; letter-spacing: .08em; margin-top: 6px; }
+
+  /* ── Card groups ── */
+  .card-group { margin-bottom: 16px; }
+  .card-group-label { font-size: 10px; color: #484f58; text-transform: uppercase; letter-spacing: .1em; padding-bottom: 7px; margin-bottom: 8px; border-bottom: 1px solid #21262d; display: flex; align-items: center; gap: 8px; }
+  .card-group-label::before { content: ''; width: 3px; height: 12px; border-radius: 2px; flex-shrink: 0; }
+  .card-group-label.s-compression::before { background: #58a6ff; }
+  .card-group-label.s-cache::before       { background: #26c5d2; }
 
   /* ── Metric cards ── */
-  .cards { display: grid; grid-template-columns: repeat(7, 1fr); gap: 10px; margin-bottom: 12px; }
-  .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px 14px; }
-  .card-label { font-size: 9px; color: #8b949e; text-transform: uppercase; letter-spacing: .08em; margin-bottom: 5px; }
-  .card-value { font-size: 20px; font-weight: 700; color: #f0f6fc; }
+  .cards { display: grid; gap: 10px; }
+  .cards.compression-cards { grid-template-columns: repeat(7, 1fr); }
+  .cards.cache-cards        { grid-template-columns: repeat(3, 1fr); max-width: calc((3/7) * 100% + (3/7 - 1) * 10px); }
+  .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 14px 16px; }
+  .card-label { font-size: 10px; color: #8b949e; text-transform: uppercase; letter-spacing: .08em; margin-bottom: 6px; }
+  .card-value { font-size: 22px; font-weight: 700; color: #f0f6fc; }
   .card-value.blue  { color: #58a6ff; }
   .card-value.green { color: #3fb950; }
 
   /* ── Shared section ── */
-  .section { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; }
-  .section-title { font-size: 9px; color: #8b949e; text-transform: uppercase; letter-spacing: .08em; margin-bottom: 12px; }
+  .section { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px 18px; margin-bottom: 14px; }
+  .section-title { font-size: 11px; color: #8b949e; text-transform: uppercase; letter-spacing: .08em; margin-bottom: 13px; display: flex; align-items: center; gap: 10px; }
+  .section-title::before { content: ''; width: 3px; height: 13px; border-radius: 2px; flex-shrink: 0; background: transparent; }
+  .section-title.s-cache::before       { background: #26c5d2; }
+  .section-title.s-rtk::before         { background: #3fb950; }
+  .section-title.s-model::before       { background: #a371f7; }
+  .section-title.s-compression::before { background: #58a6ff; }
+  .section-title.s-activity::before    { background: #484f58; }
+  .section-title.s-sessions::before    { background: #6e7681; }
 
   /* ── rtk command table ── */
-  .cmd-table { width: 100%; border-collapse: collapse; font-size: 11px; }
-  .cmd-table th { text-align: left; color: #8b949e; padding: 4px 8px; border-bottom: 1px solid #21262d; font-weight: normal; font-size: 9px; text-transform: uppercase; letter-spacing: .06em; }
-  .cmd-table td { padding: 6px 8px; border-bottom: 1px solid #21262d; vertical-align: middle; }
+  .cmd-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .cmd-table th { text-align: left; color: #8b949e; padding: 5px 8px; border-bottom: 1px solid #21262d; font-weight: normal; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
+  .cmd-table td { padding: 7px 8px; border-bottom: 1px solid #21262d; vertical-align: middle; }
   .cmd-table tr:last-child td { border-bottom: none; }
   .cmd-table tr:hover td { background: #1c2128; }
   .cmd-name { color: #c9d1d9; font-family: inherit; }
@@ -141,9 +157,9 @@
   .sess-bar-saved { width: 54px; text-align: right; color: #484f58; flex-shrink: 0; font-size: 10px; }
 
   /* ── Tables ── */
-  table { width: 100%; border-collapse: collapse; font-size: 11px; }
-  th { text-align: left; color: #8b949e; padding: 5px 10px; border-bottom: 1px solid #21262d; font-weight: normal; font-size: 9px; text-transform: uppercase; letter-spacing: .06em; }
-  td { padding: 7px 10px; border-bottom: 1px solid #21262d; vertical-align: middle; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { text-align: left; color: #8b949e; padding: 6px 10px; border-bottom: 1px solid #21262d; font-weight: normal; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
+  td { padding: 8px 10px; border-bottom: 1px solid #21262d; vertical-align: middle; }
   tr:last-child td { border-bottom: none; }
   tr:hover td { background: #1c2128; }
   .badge     { display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: 10px; background: #1a3a4a; color: #58a6ff; }
@@ -155,10 +171,12 @@
   /* ── Footer ── */
   .footer { font-size: 9px; color: #484f58; text-align: center; padding-top: 8px; }
 
-  @media (max-width: 700px) {
+  @media (max-width: 900px) {
+    body { padding: 16px 20px; }
     .layers, .hero-solo { grid-template-columns: 1fr; }
     .tiles { grid-template-columns: repeat(2, 1fr); }
-    .cards { grid-template-columns: repeat(2, 1fr); }
+    .cards.compression-cards { grid-template-columns: repeat(4, 1fr); }
+    .cards.cache-cards        { grid-template-columns: repeat(3, 1fr); max-width: 100%; }
     .layer-pct, .hero-pct { font-size: 48px; }
   }
 
@@ -348,58 +366,92 @@
   </div>
 </div>
 
-<!-- Metric cards (API layer) -->
-<div class="cards">
-  <div class="card"><div class="card-label">API Requests</div><div class="card-value blue"  id="card_requests">—</div></div>
-  <div class="card"><div class="card-label">API Tokens Saved</div><div class="card-value green" id="card_saved">—</div></div>
-  <div class="card"><div class="card-label">Sessions</div><div class="card-value blue"  id="card_sessions">—</div></div>
-  <div class="card"><div class="card-label">Avg Ratio</div><div class="card-value green" id="card_ratio">—</div></div>
-  <div class="card"><div class="card-label">Uptime</div><div class="card-value"          id="card_uptime">—</div></div>
-  <div class="card"><div class="card-label">Latency</div><div class="card-value" id="card_latency">—</div></div>
-  <div class="card">
-    <div class="card-label">Est. $ Saved</div>
-    <div class="card-value green" id="card_cost">—</div>
-    <div style="font-size:9px;color:#484f58;margin-top:3px" id="card_cost_label">@ $3.00 / MTok</div>
+<!-- Card group: Compression -->
+<div class="card-group">
+  <div class="card-group-label s-compression">Compression</div>
+  <div class="cards compression-cards">
+    <div class="card"><div class="card-label">Requests</div><div class="card-value blue" id="card_requests">—</div></div>
+    <div class="card"><div class="card-label">Tokens Saved</div><div class="card-value green" id="card_saved">—</div></div>
+    <div class="card"><div class="card-label">Sessions</div><div class="card-value blue" id="card_sessions">—</div></div>
+    <div class="card"><div class="card-label">Avg Ratio</div><div class="card-value green" id="card_ratio">—</div></div>
+    <div class="card"><div class="card-label">Uptime</div><div class="card-value" id="card_uptime">—</div></div>
+    <div class="card"><div class="card-label">Avg Latency</div><div class="card-value" id="card_latency">—</div></div>
+    <div class="card">
+      <div class="card-label">Est. $ Saved</div>
+      <div class="card-value green" id="card_cost">—</div>
+      <div style="font-size:9px;color:#484f58;margin-top:4px" id="card_cost_label">@ $3.00 / MTok</div>
+    </div>
   </div>
 </div>
 
-<!-- rtk top commands (shown when rtk present) -->
+<!-- Card group: Cache -->
+<div class="card-group">
+  <div class="card-group-label s-cache">Cache</div>
+  <div class="cards cache-cards">
+    <div class="card">
+      <div class="card-label">Hit Rate</div>
+      <div class="card-value green" id="card_cache_ratio">—</div>
+      <div style="font-size:9px;color:#484f58;margin-top:4px" id="card_cache_sub">since deploy</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Inferences Skipped</div>
+      <div class="card-value blue" id="card_cache_hits">—</div>
+      <div style="font-size:9px;color:#484f58;margin-top:4px" id="card_cache_entries">— entries cached</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Inference Time Saved</div>
+      <div class="card-value" id="card_cache_time">—</div>
+      <div style="font-size:9px;color:#484f58;margin-top:4px">model compute avoided</div>
+    </div>
+  </div>
+</div>
+
+<!-- Cache role breakdown -->
+<div class="section" id="cache_section" style="display:none">
+  <div class="section-title s-cache">Hit rate by role</div>
+  <table class="cmd-table">
+    <thead><tr><th>Role</th><th>Hits / Total</th><th>Hit Rate</th><th>Avg miss latency</th><th>Time saved</th></tr></thead>
+    <tbody id="cache_role_body"></tbody>
+  </table>
+</div>
+
+<!-- RTK top commands -->
 <div class="section" id="rtk_section" style="display:none">
-  <div class="section-title">rtk — top commands by tokens saved</div>
+  <div class="section-title s-rtk">Top commands by tokens saved</div>
   <table class="cmd-table">
     <thead><tr><th>Command</th><th>Runs</th><th>Saved</th><th>Avg %</th><th style="width:140px"></th></tr></thead>
     <tbody id="rtk_cmd_body"></tbody>
   </table>
 </div>
 
-<!-- Row 2: Model comparison -->
+<!-- Model comparison -->
 <div class="section" id="model_section" style="display:none">
-  <div class="section-title">Model comparison</div>
+  <div class="section-title s-model">Model comparison</div>
   <table>
     <thead><tr><th>Model</th><th style="width:200px">Requests</th><th>Savings %</th><th>Latency ms</th></tr></thead>
     <tbody id="model_body"></tbody>
   </table>
 </div>
 
-<!-- Row 3: 48h timeseries -->
+<!-- 48h timeseries -->
 <div class="section">
-  <div class="section-title">compression rate — last 48h (hourly) &nbsp;·&nbsp; height = requests &nbsp;·&nbsp; color = avg savings %</div>
+  <div class="section-title s-activity">Compression rate — last 48h &nbsp;·&nbsp; <span style="color:#484f58;font-weight:normal">height = requests &nbsp;·&nbsp; color = avg savings %</span></div>
   <div id="ts_chart" class="ts-chart"><span class="spark-empty">No data</span></div>
   <div id="ts_labels" class="ts-labels"></div>
 </div>
 
-<!-- Row 4: Recent activity -->
+<!-- Recent activity -->
 <div class="section">
-  <div class="section-title">Recent activity</div>
+  <div class="section-title s-activity">Recent activity</div>
   <table>
     <thead><tr><th>Time</th><th>Model</th><th>Role</th><th>Tokens</th><th>Savings %</th><th>Latency ms</th></tr></thead>
     <tbody id="recent_body"></tbody>
   </table>
 </div>
 
-<!-- LLMLingua sparkline -->
+<!-- Compressions sparkline -->
 <div class="section">
-  <div class="section-title">LLMLingua-2 — recent compressions &nbsp;·&nbsp; height = original size &nbsp;·&nbsp; color = savings %</div>
+  <div class="section-title s-activity">Recent compressions &nbsp;·&nbsp; <span style="color:#484f58;font-weight:normal">height = original size &nbsp;·&nbsp; color = savings %</span></div>
   <div id="sparkline" class="sparkline"><span class="spark-empty">No compressions yet</span></div>
   <div class="spark-legend">
     <span><span class="leg-dot" style="background:#3fb950"></span>&#x2265;40% saved</span>
@@ -410,13 +462,13 @@
 
 <!-- Session efficiency bars -->
 <div class="section">
-  <div class="section-title">Sessions by tokens saved &nbsp;·&nbsp; <span style="color:#3fb950">■</span> API (LLMLingua-2) &nbsp;<span style="color:#58a6ff">■</span> Shell (rtk)</div>
+  <div class="section-title s-sessions">Sessions by tokens saved &nbsp;·&nbsp; <span style="color:#3fb950">■</span> API &nbsp;<span style="color:#58a6ff">■</span> Shell (rtk)</div>
   <div id="sess_bars" class="sess-bars"><span class="spark-empty">No sessions yet</span></div>
 </div>
 
 <!-- Session detail table -->
 <div class="section">
-  <div class="section-title">Session detail — LLMLingua-2 + rtk</div>
+  <div class="section-title s-sessions">Session detail</div>
   <table>
     <thead><tr><th>Session</th><th>Name</th><th>API Req</th><th>API Saved</th><th>Ratio</th><th>RTK Cmds</th><th>RTK Saved</th><th>Last seen</th></tr></thead>
     <tbody id="sessions_body"></tbody>
@@ -425,18 +477,18 @@
 
 <!-- Prompt compression history (session dashboards only) -->
 <div class="section" id="prompt_section" style="display:none">
-  <div class="section-title" style="display:flex;align-items:center;gap:10px">
+  <div class="section-title s-compression">
     Prompt compression history
-    <span id="prompt_count" style="color:#484f58;font-size:9px"></span>
+    <span id="prompt_count" style="color:#484f58;font-size:10px;text-transform:none;letter-spacing:0"></span>
   </div>
   <div id="prompt_list"><span class="spark-empty">No compressions yet</span></div>
 </div>
 
 <!-- RTK command history (session dashboards only) -->
 <div class="section" id="rtk_cmd_section" style="display:none">
-  <div class="section-title" style="display:flex;align-items:center;gap:10px">
-    RTK shell command history
-    <span id="rtk_cmd_count" style="color:#484f58;font-size:9px"></span>
+  <div class="section-title s-rtk">
+    Shell command history
+    <span id="rtk_cmd_count" style="color:#484f58;font-size:10px;text-transform:none;letter-spacing:0"></span>
   </div>
   <table>
     <thead><tr><th>Time</th><th>Command</th><th>Tokens in</th><th>Saved</th><th>%</th></tr></thead>
@@ -783,6 +835,49 @@ async function refresh() {
       const cost = (at.tokens_saved / 1000000) * d.cost_per_mtok;
       document.getElementById('card_cost').textContent = '$' + cost.toFixed(2);
       document.getElementById('card_cost_label').textContent = '@ $' + d.cost_per_mtok.toFixed(2) + ' / MTok';
+    }
+
+    // ── Cache cards ──
+    if (d.cache) {
+      const sd  = d.cache.since_deploy;
+      const h24 = d.cache.last_24h;
+
+      const pct = Math.round((sd.hit_ratio || 0) * 100);
+      document.getElementById('card_cache_ratio').textContent = pct + '%';
+      document.getElementById('card_cache_sub').textContent =
+        sd.hits + ' hits / ' + sd.total + ' · 24h: ' + Math.round((h24.hit_ratio || 0) * 100) + '%';
+
+      document.getElementById('card_cache_hits').textContent = fmt(sd.hits);
+      document.getElementById('card_cache_entries').textContent =
+        fmt(d.cache.entries || 0) + ' entr' + ((d.cache.entries === 1) ? 'y' : 'ies') + ' cached';
+
+      const ms = d.cache.time_saved_ms || 0;
+      const timeFmt = ms >= 60000
+        ? Math.floor(ms / 60000) + 'm ' + Math.floor((ms % 60000) / 1000) + 's'
+        : ms >= 1000 ? (ms / 1000).toFixed(1) + 's' : ms + 'ms';
+      document.getElementById('card_cache_time').textContent = timeFmt;
+
+      // Role breakdown table
+      const byRole = d.cache.by_role || {};
+      const roles = Object.entries(byRole);
+      if (roles.length > 0) {
+        document.getElementById('cache_section').style.display = 'block';
+        document.getElementById('cache_role_body').innerHTML = roles.map(([role, r]) => {
+          const badge = role === 'system'
+            ? '<span style="font-size:10px;border-radius:3px;padding:1px 5px;background:#0d1a35;color:#58a6ff;border:1px solid #1e2f50">system</span>'
+            : '<span style="font-size:10px;border-radius:3px;padding:1px 5px;background:#0f1e14;color:#aed6ae;border:1px solid #1e3a2a">user</span>';
+          const rPct = Math.round((r.hit_ratio || 0) * 100);
+          const rMs  = r.time_saved_ms || 0;
+          const rFmt = rMs >= 1000 ? (rMs / 1000).toFixed(1) + 's' : rMs + 'ms';
+          return '<tr>'
+            + '<td>' + badge + '</td>'
+            + '<td class="muted">' + fmt(r.hits) + ' / ' + fmt(r.total) + '</td>'
+            + '<td class="green">' + rPct + '%</td>'
+            + '<td class="muted">' + r.avg_miss_latency_ms + ' ms</td>'
+            + '<td class="green">' + rFmt + '</td>'
+            + '</tr>';
+        }).join('');
+      }
     }
 
     // ── Row 4: Recent activity table ──
