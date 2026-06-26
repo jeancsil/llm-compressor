@@ -112,3 +112,11 @@ def test_compress_text_caches_second_call(tmp_path, monkeypatch):
     texts = conn.execute("SELECT COUNT(*) FROM compression_texts").fetchone()[0]
     assert texts == 1                                        # only the miss wrote text
     conn.close()
+
+
+def test_stats_endpoint_reports_cache(client):
+    r = client.get("/stats")
+    assert r.status_code == 200
+    cache = r.json()["cache"]
+    assert set(cache) == {"hits", "total", "hit_ratio"}
+    assert cache["hit_ratio"] == 0.0   # fresh DB, no compressions yet

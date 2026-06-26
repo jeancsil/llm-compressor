@@ -1034,6 +1034,18 @@ def _rtk_stats(session_id: str | None) -> dict | None:
     }
 
 
+def _cache_stats() -> dict:
+    """Cache-hit summary derived from the compressions.cache_hit column."""
+    if _db_conn is None:
+        return {"hits": 0, "total": 0, "hit_ratio": 0.0}
+    row = _db_conn.execute(
+        "SELECT COALESCE(SUM(cache_hit), 0), COUNT(*) FROM compressions"
+    ).fetchone()
+    hits, total = int(row[0]), int(row[1])
+    return {"hits": hits, "total": total,
+            "hit_ratio": round(hits / total, 4) if total else 0.0}
+
+
 def _tracked_stats() -> dict:
     """Totals across tracked sessions (active/closed trackers joined to compressions)."""
     row = _db_conn.execute(
@@ -1125,6 +1137,8 @@ async def get_stats(session_id: str | None = None):
         tracked_stats = _tracked_stats()
         _merge_rtk_into_sessions(sessions_out)
 
+    cache_stats = _cache_stats() if _db_conn is not None else {"hits": 0, "total": 0, "hit_ratio": 0.0}
+
     return {
         "started_at": stats["started_at"],
         "total_requests": stats["total_requests"],
@@ -1143,6 +1157,7 @@ async def get_stats(session_id: str | None = None):
         "alltime": alltime_stats,
         "recent": recent_rows,
         "tracked": tracked_stats,
+        "cache": cache_stats,
         "dual_mode": dual_mode,
         "model_user": backend_user.get("type") if backend_user else None,
         "model_system": backend_system.get("type") if backend_system else None,
