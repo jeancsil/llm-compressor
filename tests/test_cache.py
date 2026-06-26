@@ -87,3 +87,28 @@ def test_record_compression_writes_cache_hit_flag(tmp_path, monkeypatch):
     texts = conn.execute("SELECT COUNT(*) FROM compression_texts").fetchone()[0]
     assert texts == 0
     conn.close()
+
+
+def test_compress_text_caches_second_call(tmp_path, monkeypatch):
+    proxy = _import_proxy(monkeypatch)
+    conn = proxy.init_db(str(tmp_path / "m.db"))
+    monkeypatch.setattr(proxy, "_db_conn", conn)
+    monkeypatch.setattr(proxy, "_cache", proxy.CompressionCache(conn, max_mem=10, max_rows=100))
+
+    calls = {"n": 0}
+    def fake_compress(active, text):
+        calls["n"] += 1
+        return "COMPRESSED", 100, 60
+    monkeypatch.setattr(proxy, "_compress_with", fake_compress)
+    monkeypatch.setattr(proxy, "backend", {"type": "kompress", "rate": 0.5})
+    monkeypatch.setattr(proxy, "dual_mode", False)
+
+    text = "x" * 500   # > 200 so it is compressed
+    assert proxy.compress_text(text, "sess") == "COMPRESSED"
+    assert proxy.compress_text(text, "sess") == "COMPRESSED"
+    assert calls["n"] == 1                                   # model ran only once
+    hits = conn.execute("SELECT COUNT(*) FROM compressions WHERE cache_hit=1").fetchone()[0]
+    assert hits == 1
+    texts = conn.execute("SELECT COUNT(*) FROM compression_texts").fetchone()[0]
+    assert texts == 1                                        # only the miss wrote text
+    conn.close()

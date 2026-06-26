@@ -533,9 +533,10 @@ def _migrate_db_location() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global backend, _db_conn
+    global backend, _db_conn, _cache
     _migrate_db_location()
     _db_conn = init_db(str(DB_PATH))
+    _cache = CompressionCache(_db_conn, max_mem=CACHE_MEM_SIZE, max_rows=CACHE_MAX_ROWS)
     migrate_from_json(_db_conn)
     recover_stats_from_backup(_db_conn)
     load_stats_from_db(_db_conn)
@@ -781,6 +782,19 @@ def compress_text(text: str, session_id: str, role: str = "user") -> str:
     active = _pick_backend(role)
     if active is None:
         return text
+    model_tag = active.get("type", "compressor")
+    rate = active.get("rate", 0.5)
+    key = _cache_key(text, model_tag, rate)
+
+    if _cache is not None:
+        hit = _cache.get(key)
+        if hit is not None:
+            compressed, orig, comp = hit
+            print(f"[cache] hit {orig} → {comp} tokens [{session_id[:8]}] role={role}")
+            record_compression(session_id, orig, comp, latency_ms=0.0,
+                               role=role, active_backend=active, cache_hit=1)
+            return compressed
+
     t0 = time.perf_counter()
     try:
         compressed, orig, comp = _compress_with(active, text)
@@ -788,9 +802,11 @@ def compress_text(text: str, session_id: str, role: str = "user") -> str:
         print(f"[compressor] compression failed, forwarding original: {e}")
         return text
     latency_ms = (time.perf_counter() - t0) * 1000
-    model_tag = active.get("type", "compressor")
     print(f"[{model_tag}] {orig} → {comp} tokens [{session_id[:8]}] role={role}")
-    record_compression(session_id, orig, comp, latency_ms, text, compressed, role=role, active_backend=active)
+    record_compression(session_id, orig, comp, latency_ms, text, compressed,
+                       role=role, active_backend=active, cache_hit=0)
+    if _cache is not None:
+        _cache.put(key, compressed, orig, comp, model_tag, rate)
     return compressed
 
 
