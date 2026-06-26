@@ -191,6 +191,26 @@ sqlite3 metrics.db \
 
 The dashboard recent-activity table shows each row's role with a color-coded badge (blue = system, green = user).
 
+### Compression cache
+
+The proxy maintains an **exact-match cache** keyed on `sha256(text) | model | rate`. The unit of caching is one message block — a single `system` field value or a single `user` content block — not the full conversation payload.
+
+This granularity is deliberate. The Anthropic API is stateless: every request resends the full conversation history. That means:
+
+- The `system` field (your `CLAUDE.md`, injected context, etc.) is identical across every turn in a session → **compressed once, served from cache for every subsequent turn (~95% hit rate in practice).**
+- Older `user` messages in the history are retransmitted unchanged → **cache hits on all prior turns, miss only on the newest one.**
+
+Chunk-splitting (breaking a block into smaller pieces) would add complexity without meaningfully improving the hit rate, because the natural repetition unit is already the message block. A block either repeats exactly (hit) or it doesn't (miss); partial-overlap cases are rare in practice.
+
+The cache is a bounded in-memory LRU backed by a SQLite `compression_cache` table. Env vars to tune it:
+
+| Variable | Default | Effect |
+|---|---|---|
+| `LLM_COMPRESSOR_CACHE_SIZE` | `2000` | Max entries in the in-memory LRU |
+| `LLM_COMPRESSOR_CACHE_MAX_ROWS` | `50000` | Max rows on disk (`0` disables disk cache) |
+
+Hit ratio is reported by `/stats` as `cache.since_deploy` and `cache.last_24h`, and displayed on the dashboard's **Cache Hit Rate** card.
+
 ---
 
 ## Endpoints

@@ -361,6 +361,11 @@
     <div class="card-value green" id="card_cost">—</div>
     <div style="font-size:9px;color:#484f58;margin-top:3px" id="card_cost_label">@ $3.00 / MTok</div>
   </div>
+  <div class="card">
+    <div class="card-label">Cache Hit Rate</div>
+    <div class="card-value green" id="card_cache_ratio">—</div>
+    <div style="font-size:9px;color:#484f58;margin-top:3px" id="card_cache_sub">since deploy</div>
+  </div>
 </div>
 
 <!-- rtk top commands (shown when rtk present) -->
@@ -783,6 +788,16 @@ async function refresh() {
       const cost = (at.tokens_saved / 1000000) * d.cost_per_mtok;
       document.getElementById('card_cost').textContent = '$' + cost.toFixed(2);
       document.getElementById('card_cost_label').textContent = '@ $' + d.cost_per_mtok.toFixed(2) + ' / MTok';
+    }
+
+    // ── Cache hit rate card ──
+    if (d.cache) {
+      const sd = d.cache.since_deploy;
+      const h24 = d.cache.last_24h;
+      const pct = Math.round((sd.hit_ratio || 0) * 100);
+      document.getElementById('card_cache_ratio').textContent = pct + '%';
+      document.getElementById('card_cache_sub').textContent =
+        sd.hits + ' hits / ' + sd.total + ' · 24h: ' + Math.round((h24.hit_ratio || 0) * 100) + '%';
     }
 
     // ── Row 4: Recent activity table ──
