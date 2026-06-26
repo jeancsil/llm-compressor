@@ -1,5 +1,6 @@
 import os
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+import hashlib
 import json
 import platform
 import re
@@ -52,6 +53,17 @@ dual_model_user   = "kompress"           # persisted in meta table
 
 KNOWN_MODELS    = ("llmlingua2", "llmlingua2-large", "kompress", "dual")
 DUAL_SUBMODELS  = ("llmlingua2", "llmlingua2-large", "kompress")
+
+
+# ---------------------------------------------------------------------------
+# Cache helpers
+# ---------------------------------------------------------------------------
+
+def _cache_key(text: str, model_tag: str, rate: float) -> str:
+    """Exact-match cache key. Model and rate are included because the same text
+    yields different output under a different backend/rate."""
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return f"{digest}|{model_tag}|{rate}"
 
 
 # ---------------------------------------------------------------------------
