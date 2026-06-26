@@ -129,12 +129,32 @@ def init_db(path: str):
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_rtk_events_session ON rtk_events(session_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_rtk_events_ts      ON rtk_events(ts)")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS compression_cache (
+            key               TEXT PRIMARY KEY,
+            model             TEXT NOT NULL,
+            rate              REAL NOT NULL,
+            compressed_text   TEXT NOT NULL,
+            original_tokens   INTEGER NOT NULL,
+            compressed_tokens INTEGER NOT NULL,
+            created_at        TEXT NOT NULL,
+            hit_count         INTEGER NOT NULL DEFAULT 0,
+            last_hit          TEXT
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_cache_last_hit ON compression_cache(last_hit)")
     try:
         conn.execute("ALTER TABLE trackers ADD COLUMN closed_at TEXT")
     except Exception:
         pass  # column already exists
     try:
         conn.execute("ALTER TABLE compressions ADD COLUMN role TEXT DEFAULT 'user'")
+    except Exception:
+        pass  # column already exists
+    try:
+        conn.execute("ALTER TABLE compressions ADD COLUMN cache_hit INTEGER DEFAULT 0")
     except Exception:
         pass  # column already exists
     try:
