@@ -580,6 +580,7 @@ def record_compression(
     compressed_text: str | None = None,
     role: str = "user",
     active_backend: dict | None = None,
+    cache_hit: int = 0,
 ):
     stats["total_original_tokens"] += original
     stats["total_compressed_tokens"] += compressed
@@ -590,8 +591,8 @@ def record_compression(
 
     if _db_conn:
         cur = _db_conn.execute(
-            "INSERT INTO compressions (ts, session_id, model, original_tokens, compressed_tokens, latency_ms, role) VALUES (?,?,?,?,?,?,?)",
-            (ts, session_id, model_name, original, compressed, latency_ms, role),
+            "INSERT INTO compressions (ts, session_id, model, original_tokens, compressed_tokens, latency_ms, role, cache_hit) VALUES (?,?,?,?,?,?,?,?)",
+            (ts, session_id, model_name, original, compressed, latency_ms, role, cache_hit),
         )
         if original_text is not None and compressed_text is not None:
             _db_conn.execute(

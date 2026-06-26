@@ -73,3 +73,17 @@ def test_cache_disk_row_cap_evicts_least_recently_hit(tmp_path, monkeypatch):
     keys = {r[0] for r in conn.execute("SELECT key FROM compression_cache")}
     assert len(keys) == 2 and "b" not in keys
     conn.close()
+
+
+def test_record_compression_writes_cache_hit_flag(tmp_path, monkeypatch):
+    proxy = _import_proxy(monkeypatch)
+    conn = proxy.init_db(str(tmp_path / "m.db"))
+    monkeypatch.setattr(proxy, "_db_conn", conn)
+    monkeypatch.setattr(proxy, "backend", {"type": "kompress", "rate": 0.5})
+    # hit path: no text passed -> no compression_texts row, cache_hit=1
+    proxy.record_compression("sess", 100, 60, latency_ms=0.0, role="user", cache_hit=1)
+    row = conn.execute("SELECT cache_hit FROM compressions ORDER BY id DESC LIMIT 1").fetchone()
+    assert row[0] == 1
+    texts = conn.execute("SELECT COUNT(*) FROM compression_texts").fetchone()[0]
+    assert texts == 0
+    conn.close()
