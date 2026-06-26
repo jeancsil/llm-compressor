@@ -45,6 +45,7 @@ DB_PATH = Path(os.environ.get("LLM_COMPRESSOR_DB") or _default_db_path())
 backend          = None
 backend_loading  = None   # set to model name while async load is in progress
 _db_conn         = None
+_cache           = None   # CompressionCache, set in lifespan
 backend_user     = None   # kompress instance in dual mode
 backend_system   = None   # llmlingua2-large instance in dual mode
 dual_mode        = False
