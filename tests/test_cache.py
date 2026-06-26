@@ -36,3 +36,40 @@ def test_init_db_creates_cache_schema(tmp_path, monkeypatch):
     comp_cols = [r[1] for r in conn.execute("PRAGMA table_info(compressions)")]
     assert "cache_hit" in comp_cols
     conn.close()
+
+
+def test_cache_get_put_memory_and_disk(tmp_path, monkeypatch):
+    proxy = _import_proxy(monkeypatch)
+    conn = proxy.init_db(str(tmp_path / "m.db"))
+    cache = proxy.CompressionCache(conn, max_mem=2, max_rows=50000)
+    assert cache.get("k1") is None
+    cache.put("k1", "COMP", 100, 60, "kompress", 0.5)
+    assert cache.get("k1") == ("COMP", 100, 60)               # memory hit
+    row = conn.execute("SELECT compressed_text, hit_count FROM compression_cache WHERE key='k1'").fetchone()
+    assert row[0] == "COMP" and row[1] >= 1                   # persisted + hit counted
+    conn.close()
+
+
+def test_cache_memory_lru_evicts_but_disk_retains(tmp_path, monkeypatch):
+    proxy = _import_proxy(monkeypatch)
+    conn = proxy.init_db(str(tmp_path / "m.db"))
+    cache = proxy.CompressionCache(conn, max_mem=2, max_rows=50000)
+    cache.put("a", "A", 1, 1, "m", 0.5)
+    cache.put("b", "B", 1, 1, "m", 0.5)
+    cache.put("c", "C", 1, 1, "m", 0.5)   # evicts "a" from memory
+    assert "a" not in cache._mem
+    assert cache.get("a") == ("A", 1, 1)  # served from disk, re-promoted
+    assert "a" in cache._mem
+
+
+def test_cache_disk_row_cap_evicts_least_recently_hit(tmp_path, monkeypatch):
+    proxy = _import_proxy(monkeypatch)
+    conn = proxy.init_db(str(tmp_path / "m.db"))
+    cache = proxy.CompressionCache(conn, max_mem=100, max_rows=2)
+    cache.put("a", "A", 1, 1, "m", 0.5)
+    cache.put("b", "B", 1, 1, "m", 0.5)
+    cache.get("a")                         # bump a's last_hit so b is oldest
+    cache.put("c", "C", 1, 1, "m", 0.5)    # over cap -> evict oldest last_hit
+    keys = {r[0] for r in conn.execute("SELECT key FROM compression_cache")}
+    assert len(keys) == 2 and "b" not in keys
+    conn.close()

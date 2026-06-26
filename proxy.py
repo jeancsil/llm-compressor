@@ -10,7 +10,7 @@ import threading
 import time
 import httpx
 import uvicorn
-from collections import deque
+from collections import deque, OrderedDict
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -64,6 +64,82 @@ def _cache_key(text: str, model_tag: str, rate: float) -> str:
     yields different output under a different backend/rate."""
     digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
     return f"{digest}|{model_tag}|{rate}"
+
+
+CACHE_MEM_SIZE = int(os.environ.get("LLM_COMPRESSOR_CACHE_SIZE", "2000"))
+CACHE_MAX_ROWS = int(os.environ.get("LLM_COMPRESSOR_CACHE_MAX_ROWS", "50000"))
+
+
+class CompressionCache:
+    """Hybrid exact-match cache: bounded in-memory LRU over a SQLite backing
+    table. Lookup order is memory -> SQLite -> miss. No seed-on-boot; disk hits
+    are promoted into memory lazily so RAM stays bounded regardless of table size."""
+
+    def __init__(self, conn, max_mem: int = 2000, max_rows: int = 50000):
+        self._conn = conn
+        self._max_mem = max_mem
+        self._max_rows = max_rows
+        self._mem: "OrderedDict[str, tuple[str, int, int]]" = OrderedDict()
+
+    def get(self, key: str):
+        if key in self._mem:
+            self._mem.move_to_end(key)
+            self._touch(key)
+            return self._mem[key]
+        if self._conn is not None:
+            row = self._conn.execute(
+                "SELECT compressed_text, original_tokens, compressed_tokens "
+                "FROM compression_cache WHERE key = ?",
+                (key,),
+            ).fetchone()
+            if row is not None:
+                entry = (row[0], row[1], row[2])
+                self._mem_put(key, entry)
+                self._touch(key)
+                return entry
+        return None
+
+    def put(self, key, compressed_text, original_tokens, compressed_tokens, model, rate):
+        self._mem_put(key, (compressed_text, original_tokens, compressed_tokens))
+        if self._conn is not None:
+            # microsecond precision so last_hit ordering (LRU disk eviction) is
+            # unambiguous even when many entries land in the same second.
+            ts = datetime.now(timezone.utc).isoformat()
+            self._conn.execute(
+                "INSERT OR REPLACE INTO compression_cache "
+                "(key, model, rate, compressed_text, original_tokens, compressed_tokens, "
+                " created_at, hit_count, last_hit) VALUES (?,?,?,?,?,?,?,0,?)",
+                (key, model, rate, compressed_text, original_tokens, compressed_tokens, ts, ts),
+            )
+            self._evict_disk()
+            self._conn.commit()
+
+    def _mem_put(self, key, entry):
+        self._mem[key] = entry
+        self._mem.move_to_end(key)
+        while len(self._mem) > self._max_mem:
+            self._mem.popitem(last=False)
+
+    def _touch(self, key):
+        if self._conn is None:
+            return
+        ts = datetime.now(timezone.utc).isoformat()  # microsecond precision (see put)
+        self._conn.execute(
+            "UPDATE compression_cache SET hit_count = hit_count + 1, last_hit = ? WHERE key = ?",
+            (ts, key),
+        )
+        self._conn.commit()
+
+    def _evict_disk(self):
+        if self._max_rows <= 0:
+            return
+        count = self._conn.execute("SELECT COUNT(*) FROM compression_cache").fetchone()[0]
+        if count > self._max_rows:
+            self._conn.execute(
+                "DELETE FROM compression_cache WHERE key IN "
+                "(SELECT key FROM compression_cache ORDER BY last_hit ASC LIMIT ?)",
+                (count - self._max_rows,),
+            )
 
 
 # ---------------------------------------------------------------------------
