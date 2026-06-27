@@ -515,9 +515,6 @@ function buildPager(containerId, page, pages, total, onPage) {
   const el = document.getElementById(containerId);
   if (!el) return;
   if (pages <= 0) { el.innerHTML = ''; return; }
-  const pageSize = Math.ceil(total / pages);
-  const start = (page - 1) * pageSize + 1;
-  const end = Math.min(page * pageSize, total);
   el.innerHTML =
     '<button class="pager-btn" id="' + containerId + '_prev" ' + (page <= 1 ? 'disabled' : '') + '>← Prev</button>' +
     '<span class="pager-info">Page ' + page + ' of ' + pages + ' &nbsp;·&nbsp; ' + total + ' total</span>' +
@@ -1154,12 +1151,13 @@ async function refreshRtkCommands(page) {
     const tbody = document.getElementById('rtk_cmd_list');
     const countEl = document.getElementById('rtk_cmd_count');
     const rows = data.items || [];
-    countEl.textContent = data.total + ' commands total';
     if (rows.length === 0 && data.total === 0) {
       tbody.innerHTML = '<tr><td colspan="5" class="spark-empty">No RTK commands this session</td></tr>';
+      countEl.textContent = '';
       document.getElementById('rtk_cmd_pager').innerHTML = '';
       return;
     }
+    countEl.textContent = data.total + ' commands total';
     tbody.innerHTML = rows.map(r => {
       const pct = r.savings_pct != null ? r.savings_pct : 0;
       const ts  = r.ts ? r.ts.slice(11, 16) : '';

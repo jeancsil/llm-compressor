@@ -2,6 +2,7 @@ import os
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 import hashlib
 import json
+import math
 import platform
 import re
 import secrets
@@ -1637,7 +1638,7 @@ async def get_session_compressions(slug: str, page: int = 1, page_size: int = 20
     page_size = max(1, min(200, page_size))
 
     if not session_id:
-        return JSONResponse({"items": [], "total": 0, "page": 1, "page_size": page_size, "pages": 0})
+        return JSONResponse({"items": [], "total": 0, "page": page, "page_size": page_size, "pages": 0})
 
     offset = (page - 1) * page_size
 
@@ -1658,7 +1659,6 @@ async def get_session_compressions(slug: str, page: int = 1, page_size: int = 20
         """,
         (session_id, page_size, offset),
     ).fetchall()
-    import math
     pages = math.ceil(total / page_size) if page_size > 0 else 0
     return JSONResponse({
         "items": [dict(r) for r in rows],

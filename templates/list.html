@@ -59,9 +59,6 @@ function buildPager(containerId, page, pages, total, onPage) {
   const el = document.getElementById(containerId);
   if (!el) return;
   if (pages <= 0) { el.innerHTML = ''; return; }
-  const pageSize = Math.ceil(total / pages);
-  const start = (page - 1) * pageSize + 1;
-  const end = Math.min(page * pageSize, total);
   el.innerHTML =
     '<button class="pager-btn" id="' + containerId + '_prev" ' + (page <= 1 ? 'disabled' : '') + '>← Prev</button>' +
     '<span class="pager-info">Page ' + page + ' of ' + pages + ' &nbsp;·&nbsp; ' + total + ' total</span>' +

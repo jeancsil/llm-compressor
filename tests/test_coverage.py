@@ -1304,12 +1304,12 @@ def test_get_session_compressions_not_found(client: TestClient):
 
 
 def test_get_session_compressions_no_linked_session(client: TestClient):
-    """GET /session/<slug>/compressions returns [] when tracker has no session_id."""
+    """GET /session/<slug>/compressions returns empty paginated response when tracker has no session_id."""
     r = client.post("/admin/tracker", json={"name": "unlinked"})
     slug = r.json()["slug"]
     r = client.get(f"/session/{slug}/compressions")
     assert r.status_code == 200
-    assert r.json() == []
+    assert r.json() == {"items": [], "total": 0, "page": 1, "page_size": 20, "pages": 0}
 
 
 def test_get_session_compressions_with_data(client: TestClient):
@@ -1330,8 +1330,8 @@ def test_get_session_compressions_with_data(client: TestClient):
     r = client.get(f"/session/{slug}/compressions")
     assert r.status_code == 200
     data = r.json()
-    assert len(data) >= 1
-    assert data[0]["original_tokens"] == 200
+    assert len(data["items"]) >= 1
+    assert data["items"][0]["original_tokens"] == 200
 
 
 # ===========================================================================
@@ -1957,12 +1957,12 @@ def test_get_session_rtk_commands_not_found(client: TestClient):
 
 
 def test_get_session_rtk_commands_no_linked_session(client: TestClient):
-    """GET /session/<slug>/rtk-commands returns [] when tracker has no session_id."""
+    """GET /session/<slug>/rtk-commands returns empty paginated response when tracker has no session_id."""
     r = client.post("/admin/tracker", json={"name": "rtkcmds-unlinked"})
     slug = r.json()["slug"]
     r = client.get(f"/session/{slug}/rtk-commands")
     assert r.status_code == 200
-    assert r.json() == []
+    assert r.json() == {"items": [], "total": 0, "page": 1, "page_size": 25, "pages": 0}
 
 
 def test_get_session_rtk_commands_with_data(client: TestClient):
@@ -1988,5 +1988,5 @@ def test_get_session_rtk_commands_with_data(client: TestClient):
     r = client.get(f"/session/{slug}/rtk-commands")
     assert r.status_code == 200
     data = r.json()
-    assert len(data) == 1
-    assert data[0]["rtk_cmd"] == "git status"
+    assert len(data["items"]) == 1
+    assert data["items"][0]["rtk_cmd"] == "git status"
