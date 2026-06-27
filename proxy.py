@@ -1671,6 +1671,8 @@ async def get_session_compressions(slug: str, page: int = 1, page_size: int = 20
 
 @app.get("/session/{slug}/rtk-commands")
 async def get_session_rtk_commands(slug: str, page: int = 1, page_size: int = 25):
+    page = max(1, page)
+    page_size = max(1, min(200, page_size))
     if _db_conn is None:
         return JSONResponse({"error": "db not ready"}, status_code=503)
     row = _db_conn.execute("SELECT session_id FROM trackers WHERE slug=?", (slug,)).fetchone()
@@ -1678,9 +1680,7 @@ async def get_session_rtk_commands(slug: str, page: int = 1, page_size: int = 25
         return JSONResponse({"error": "not found"}, status_code=404)
     session_id = row[0]
     if not session_id:
-        return JSONResponse({"items": [], "total": 0, "page": 1, "page_size": page_size, "pages": 0})
-    page = max(1, page)
-    page_size = max(1, min(200, page_size))
+        return JSONResponse({"items": [], "total": 0, "page": page, "page_size": page_size, "pages": 0})
     offset = (page - 1) * page_size
 
     total = _db_conn.execute(
