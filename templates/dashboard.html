@@ -489,6 +489,7 @@
     <span id="prompt_count" style="color:#484f58;font-size:10px;text-transform:none;letter-spacing:0"></span>
   </div>
   <div id="prompt_list"><span class="spark-empty">No compressions yet</span></div>
+  <div id="prompt_pager"></div>
 </div>
 
 <!-- RTK command history (session dashboards only) -->
@@ -529,6 +530,9 @@ function buildPager(containerId, page, pages, total, onPage) {
 let _recentPage = 1;
 const RECENT_PAGE_SIZE = 10;
 let _recentAll = [];
+
+let _comprPage = 1;
+const COMPR_PAGE_SIZE = 20;
 
 function renderRecentPage(page) {
   _recentPage = page;
@@ -1075,21 +1079,24 @@ function togglePrompt(id) {
   if (arrow) arrow.textContent = isOpen ? '▶' : '▼';
 }
 
-async function refreshCompressions() {
+async function refreshCompressions(page) {
   if (!TRACKER || !TRACKER.session_id) return;
   const section = document.getElementById('prompt_section');
   if (!section) return;
   section.style.display = 'block';
+  if (page !== undefined) _comprPage = page;
   try {
-    const rows = await fetch('/session/' + encodeURIComponent(TRACKER.slug) + '/compressions').then(r => r.json());
+    const data = await fetch('/session/' + encodeURIComponent(TRACKER.slug) + '/compressions?page=' + _comprPage + '&page_size=' + COMPR_PAGE_SIZE).then(r => r.json());
     const listEl = document.getElementById('prompt_list');
     const countEl = document.getElementById('prompt_count');
-    if (!Array.isArray(rows) || rows.length === 0) {
+    const rows = data.items || [];
+    if (rows.length === 0 && data.total === 0) {
       listEl.innerHTML = '<span class="spark-empty">No compressions yet</span>';
       countEl.textContent = '';
+      document.getElementById('prompt_pager').innerHTML = '';
       return;
     }
-    countEl.textContent = rows.length + (rows.length === 50 ? '+ ' : ' ') + 'requests';
+    countEl.textContent = data.total + ' requests total';
     const openIds = new Set([...listEl.querySelectorAll('.prompt-body.open')].map(el => el.id));
     listEl.innerHTML = rows.map(r => {
       const pct = r.savings_pct != null ? r.savings_pct : 0;
@@ -1128,6 +1135,7 @@ async function refreshCompressions() {
       const hdr = e.target.closest('[data-toggle-id]');
       if (hdr) togglePrompt(hdr.dataset.toggleId);
     };
+    buildPager('prompt_pager', data.page, data.pages, data.total, refreshCompressions);
   } catch(e) { console.error(e); }
 }
 
