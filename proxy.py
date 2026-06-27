@@ -1588,10 +1588,10 @@ async def delete_tracker(slug: str):
 
 @app.get("/admin/tracker/all")
 async def get_all_trackers(page: int = 1, page_size: int = 25):
-    if _db_conn is None:
-        return JSONResponse({"items": [], "total": 0, "page": 1, "page_size": page_size, "pages": 0})
     page = max(1, page)
     page_size = max(1, min(200, page_size))
+    if _db_conn is None:
+        return JSONResponse({"items": [], "total": 0, "page": page, "page_size": page_size, "pages": 0})
     offset = (page - 1) * page_size
 
     total = _db_conn.execute("SELECT COUNT(*) FROM trackers").fetchone()[0]
