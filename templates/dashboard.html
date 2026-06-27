@@ -479,6 +479,7 @@
     <thead><tr><th>Session</th><th>Name</th><th>API Req</th><th>API Saved</th><th>Ratio</th><th>RTK Cmds</th><th>RTK Saved</th><th>Last seen</th></tr></thead>
     <tbody id="sessions_body"></tbody>
   </table>
+  <div id="sessions_pager"></div>
 </div>
 
 <!-- Prompt compression history (session dashboards only) -->
@@ -554,6 +555,42 @@ function renderRecentPage(page) {
   }).join('');
   const pages = Math.ceil(_recentAll.length / RECENT_PAGE_SIZE);
   buildPager('recent_pager', _recentPage, pages, _recentAll.length, renderRecentPage);
+}
+
+let _sessionsPage = 1;
+const SESSIONS_PAGE_SIZE = 10;
+let _sessionsAll = [];
+
+function renderSessionsPage(page) {
+  _sessionsPage = page;
+  const start = (page - 1) * SESSIONS_PAGE_SIZE;
+  const rows = _sessionsAll.slice(start, start + SESSIONS_PAGE_SIZE);
+  document.getElementById('sessions_body').innerHTML = rows.map(function([id, s]) {
+    const sPct = s.original_tokens > 0
+      ? Math.round((1 - s.compressed_tokens / s.original_tokens) * 100) : 0;
+    const ratio = s.compressed_tokens > 0
+      ? (s.original_tokens / s.compressed_tokens).toFixed(2) : null;
+    const nameCell = s.name
+      ? '<span class="name-tag">' + s.name + '</span>'
+      : '<span class="muted">—</span>';
+    const ratioCell = ratio
+      ? '<span class="ratio-badge" style="' + ratioBadgeStyle(parseFloat(ratio)) + '">' + ratio + '×</span>'
+      : '<span class="muted">—</span>';
+    const rtkCmds  = s.rtk_commands != null ? s.rtk_commands : '—';
+    const rtkSaved = s.rtk_saved    != null ? '<span class="green">' + fmt(s.rtk_saved) + '</span>' : '<span class="muted">—</span>';
+    return '<tr>'
+      + '<td><span class="badge">' + id.slice(0, 8) + '</span></td>'
+      + '<td>' + nameCell + '</td>'
+      + '<td>' + s.requests + '</td>'
+      + '<td class="green">' + fmt(s.saved_tokens) + ' <span class="muted">(' + sPct + '%)</span></td>'
+      + '<td>' + ratioCell + '</td>'
+      + '<td class="muted">' + rtkCmds + '</td>'
+      + '<td>' + rtkSaved + '</td>'
+      + '<td class="muted">' + (s.last_seen ? new Date(s.last_seen).toLocaleTimeString() : '—') + '</td>'
+      + '</tr>';
+  }).join('');
+  const pages = Math.ceil(_sessionsAll.length / SESSIONS_PAGE_SIZE);
+  buildPager('sessions_pager', _sessionsPage, pages, _sessionsAll.length, renderSessionsPage);
 }
 
 function updateBanner() {
@@ -986,30 +1023,8 @@ async function refresh() {
     }
 
     // ── Session table ──
-    document.getElementById('sessions_body').innerHTML = sessions.map(([id, s]) => {
-      const sPct = s.original_tokens > 0
-        ? Math.round((1 - s.compressed_tokens / s.original_tokens) * 100) : 0;
-      const ratio = s.compressed_tokens > 0
-        ? (s.original_tokens / s.compressed_tokens).toFixed(2) : null;
-      const nameCell = s.name
-        ? '<span class="name-tag">' + s.name + '</span>'
-        : '<span class="muted">—</span>';
-      const ratioCell = ratio
-        ? '<span class="ratio-badge" style="' + ratioBadgeStyle(parseFloat(ratio)) + '">' + ratio + '×</span>'
-        : '<span class="muted">—</span>';
-      const rtkCmds  = s.rtk_commands != null ? s.rtk_commands : '—';
-      const rtkSaved = s.rtk_saved    != null ? '<span class="green">' + fmt(s.rtk_saved) + '</span>' : '<span class="muted">—</span>';
-      return '<tr>'
-        + '<td><span class="badge">' + id.slice(0, 8) + '</span></td>'
-        + '<td>' + nameCell + '</td>'
-        + '<td>' + s.requests + '</td>'
-        + '<td class="green">' + fmt(s.saved_tokens) + ' <span class="muted">(' + sPct + '%)</span></td>'
-        + '<td>' + ratioCell + '</td>'
-        + '<td class="muted">' + rtkCmds + '</td>'
-        + '<td>' + rtkSaved + '</td>'
-        + '<td class="muted">' + (s.last_seen ? new Date(s.last_seen).toLocaleTimeString() : '—') + '</td>'
-        + '</tr>';
-    }).join('');
+    _sessionsAll = sessions;   // sessions is already sorted by total saved (earlier in refresh())
+    renderSessionsPage(_sessionsPage);
 
     // Update main dashboard tracker chips (only on global dashboard, not session dashboard)
     if (!TRACKER) {
