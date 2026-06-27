@@ -470,3 +470,55 @@ def test_tracker_all_pagination(client):
     assert "page" in data
     assert "pages" in data
     assert data["page"] == 1
+
+
+def test_session_compressions_pagination(client):
+    """Task 2: GET /session/{slug}/compressions?page=1&page_size=5 returns paginated envelope."""
+    # Non-existent slug should 404
+    r = client.get("/session/nosuchslug/compressions?page=1&page_size=5")
+    assert r.status_code == 404
+
+    # Create a tracker with session_id to test with real data
+    from proxy import _db_conn
+    tracker_slug = "test-slug-123"
+    tracker_name = "Test Tracker"
+    session_id = "session-123"
+
+    _db_conn.execute(
+        "INSERT INTO trackers (slug, name, status, session_id, created_at) VALUES (?, ?, ?, ?, datetime('now'))",
+        (tracker_slug, tracker_name, "active", session_id),
+    )
+
+    # Insert 10 test compressions
+    for i in range(10):
+        _db_conn.execute(
+            "INSERT INTO compressions (ts, session_id, model, original_tokens, compressed_tokens, latency_ms) VALUES (?, ?, ?, ?, ?, ?)",
+            (f"2026-06-27T10:0{i}:00", session_id, "llmlingua2", 100 + i * 10, 60 + i * 5, 10.0),
+        )
+    _db_conn.commit()
+
+    # Test pagination with page_size=5
+    r = client.get(f"/session/{tracker_slug}/compressions?page=1&page_size=5")
+    assert r.status_code == 200
+    data = r.json()
+
+    # Check response structure
+    assert "items" in data
+    assert "total" in data
+    assert "page" in data
+    assert "page_size" in data
+    assert "pages" in data
+
+    # Check pagination values
+    assert data["total"] == 10
+    assert data["page"] == 1
+    assert data["page_size"] == 5
+    assert data["pages"] == 2
+    assert len(data["items"]) == 5
+
+    # Test page 2
+    r = client.get(f"/session/{tracker_slug}/compressions?page=2&page_size=5")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["page"] == 2
+    assert len(data["items"]) == 5

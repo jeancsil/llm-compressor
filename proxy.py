@@ -1624,15 +1624,26 @@ async def get_all_trackers(page: int = 1, page_size: int = 25):
 
 
 @app.get("/session/{slug}/compressions")
-async def get_session_compressions(slug: str, limit: int = 50):
+async def get_session_compressions(slug: str, page: int = 1, page_size: int = 20):
     if _db_conn is None:
         return JSONResponse({"error": "db not ready"}, status_code=503)
     row = _db_conn.execute("SELECT session_id FROM trackers WHERE slug=?", (slug,)).fetchone()
     if row is None:
         return JSONResponse({"error": "not found"}, status_code=404)
     session_id = row[0]
+
+    # Clamp page and page_size BEFORE any early returns
+    page = max(1, page)
+    page_size = max(1, min(200, page_size))
+
     if not session_id:
-        return JSONResponse([])
+        return JSONResponse({"items": [], "total": 0, "page": 1, "page_size": page_size, "pages": 0})
+
+    offset = (page - 1) * page_size
+
+    total = _db_conn.execute(
+        "SELECT COUNT(*) FROM compressions WHERE session_id=?", (session_id,)
+    ).fetchone()[0]
     rows = _db_conn.execute(
         """
         SELECT c.id, c.ts, c.model, c.original_tokens, c.compressed_tokens,
@@ -1643,11 +1654,19 @@ async def get_session_compressions(slug: str, limit: int = 50):
         LEFT JOIN compression_texts ct ON ct.compression_id = c.id
         WHERE c.session_id = ?
         ORDER BY c.id DESC
-        LIMIT ?
+        LIMIT ? OFFSET ?
         """,
-        (session_id, limit),
+        (session_id, page_size, offset),
     ).fetchall()
-    return JSONResponse([dict(r) for r in rows])
+    import math
+    pages = math.ceil(total / page_size) if page_size > 0 else 0
+    return JSONResponse({
+        "items": [dict(r) for r in rows],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "pages": pages,
+    })
 
 
 @app.get("/session/{slug}/rtk-commands")
