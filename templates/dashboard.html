@@ -1154,13 +1154,12 @@ async function refreshRtkCommands(page) {
     const tbody = document.getElementById('rtk_cmd_list');
     const countEl = document.getElementById('rtk_cmd_count');
     const rows = data.items || [];
+    countEl.textContent = data.total + ' commands total';
     if (rows.length === 0 && data.total === 0) {
       tbody.innerHTML = '<tr><td colspan="5" class="spark-empty">No RTK commands this session</td></tr>';
-      countEl.textContent = '';
       document.getElementById('rtk_cmd_pager').innerHTML = '';
       return;
     }
-    countEl.textContent = data.total + ' commands total';
     tbody.innerHTML = rows.map(r => {
       const pct = r.savings_pct != null ? r.savings_pct : 0;
       const ts  = r.ts ? r.ts.slice(11, 16) : '';
