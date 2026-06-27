@@ -1587,9 +1587,14 @@ async def delete_tracker(slug: str):
 
 
 @app.get("/admin/tracker/all")
-async def get_all_trackers():
+async def get_all_trackers(page: int = 1, page_size: int = 25):
     if _db_conn is None:
-        return JSONResponse([])
+        return JSONResponse({"items": [], "total": 0, "page": 1, "page_size": page_size, "pages": 0})
+    page = max(1, page)
+    page_size = max(1, min(200, page_size))
+    offset = (page - 1) * page_size
+
+    total = _db_conn.execute("SELECT COUNT(*) FROM trackers").fetchone()[0]
     rows = _db_conn.execute(
         """
         SELECT t.slug, t.name, t.status, t.session_id,
@@ -1603,9 +1608,19 @@ async def get_all_trackers():
         LEFT JOIN rtk_events   r ON r.session_id = t.session_id
         GROUP BY t.slug
         ORDER BY t.created_at DESC
-        """
+        LIMIT ? OFFSET ?
+        """,
+        (page_size, offset),
     ).fetchall()
-    return JSONResponse([dict(r) for r in rows])
+    import math
+    pages = math.ceil(total / page_size) if page_size > 0 else 0
+    return JSONResponse({
+        "items": [dict(r) for r in rows],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "pages": pages,
+    })
 
 
 @app.get("/session/{slug}/compressions")

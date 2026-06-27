@@ -1288,7 +1288,7 @@ def test_get_all_trackers_db_not_ready(client: TestClient, monkeypatch):
     try:
         r = client.get("/admin/tracker/all")
         assert r.status_code == 200
-        assert r.json() == []
+        assert r.json() == {"items": [], "total": 0, "page": 1, "page_size": 25, "pages": 0}
     finally:
         monkeypatch.setattr(proxy, "_db_conn", orig)
 

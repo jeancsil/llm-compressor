@@ -143,15 +143,15 @@ def test_all_trackers_includes_closed(client: TestClient):
     slug = r.json()["slug"]
     client.delete(f"/admin/tracker/{slug}")
     data = client.get("/admin/tracker/all").json()
-    assert any(t["slug"] == slug and t["status"] == "closed" for t in data)
+    assert any(t["slug"] == slug and t["status"] == "closed" for t in data["items"])
 
 
 def test_all_trackers_has_token_fields(client: TestClient):
     client.post("/admin/tracker", json={"name": "token test"})
     data = client.get("/admin/tracker/all").json()
-    assert len(data) == 1
-    assert "tokens_saved" in data[0]
-    assert "requests" in data[0]
+    assert len(data["items"]) == 1
+    assert "tokens_saved" in data["items"][0]
+    assert "requests" in data["items"][0]
 
 
 def test_play_list_returns_html(client: TestClient):

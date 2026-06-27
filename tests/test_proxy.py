@@ -458,3 +458,15 @@ def test_load_backend_llmlingua2_large(monkeypatch):
     b = load_backend()
     assert b["type"] == "llmlingua2-large"
     assert b["rate"] == 0.45
+
+
+def test_tracker_all_pagination(client):
+    """Task 1: GET /admin/tracker/all?page=1&page_size=10 returns paginated envelope."""
+    r = client.get("/admin/tracker/all?page=1&page_size=10")
+    assert r.status_code == 200
+    data = r.json()
+    assert "items" in data
+    assert "total" in data
+    assert "page" in data
+    assert "pages" in data
+    assert data["page"] == 1
