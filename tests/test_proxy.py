@@ -522,3 +522,55 @@ def test_session_compressions_pagination(client):
     data = r.json()
     assert data["page"] == 2
     assert len(data["items"]) == 5
+
+
+def test_session_rtk_commands_pagination(client):
+    """Task 3: GET /session/{slug}/rtk-commands?page=1&page_size=5 returns paginated envelope."""
+    # Non-existent slug should 404
+    r = client.get("/session/nosuchslug/rtk-commands?page=1&page_size=5")
+    assert r.status_code == 404
+
+    # Create a tracker with session_id to test with real data
+    from proxy import _db_conn
+    tracker_slug = "test-rtk-slug-123"
+    tracker_name = "Test RTK Tracker"
+    session_id = "rtk-session-123"
+
+    _db_conn.execute(
+        "INSERT INTO trackers (slug, name, status, session_id, created_at) VALUES (?, ?, ?, ?, datetime('now'))",
+        (tracker_slug, tracker_name, "active", session_id),
+    )
+
+    # Insert 10 test rtk_events
+    for i in range(10):
+        _db_conn.execute(
+            "INSERT INTO rtk_events (ts, session_id, rtk_cmd, input_tokens, output_tokens, saved_tokens, savings_pct, project_path) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (f"2026-06-27T10:0{i}:00", session_id, f"rtk gain --iteration {i}", 100 + i * 10, 50 + i * 5, 25 + i * 2, 25.0 + i, f"/path/to/project{i}"),
+        )
+    _db_conn.commit()
+
+    # Test pagination with page_size=5
+    r = client.get(f"/session/{tracker_slug}/rtk-commands?page=1&page_size=5")
+    assert r.status_code == 200
+    data = r.json()
+
+    # Check response structure
+    assert "items" in data
+    assert "total" in data
+    assert "page" in data
+    assert "page_size" in data
+    assert "pages" in data
+
+    # Check pagination values
+    assert data["total"] == 10
+    assert data["page"] == 1
+    assert data["page_size"] == 5
+    assert data["pages"] == 2
+    assert len(data["items"]) == 5
+
+    # Test page 2
+    r = client.get(f"/session/{tracker_slug}/rtk-commands?page=2&page_size=5")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["page"] == 2
+    assert len(data["items"]) == 5

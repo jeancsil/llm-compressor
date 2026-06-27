@@ -1670,7 +1670,7 @@ async def get_session_compressions(slug: str, page: int = 1, page_size: int = 20
 
 
 @app.get("/session/{slug}/rtk-commands")
-async def get_session_rtk_commands(slug: str, limit: int = 100):
+async def get_session_rtk_commands(slug: str, page: int = 1, page_size: int = 25):
     if _db_conn is None:
         return JSONResponse({"error": "db not ready"}, status_code=503)
     row = _db_conn.execute("SELECT session_id FROM trackers WHERE slug=?", (slug,)).fetchone()
@@ -1678,7 +1678,14 @@ async def get_session_rtk_commands(slug: str, limit: int = 100):
         return JSONResponse({"error": "not found"}, status_code=404)
     session_id = row[0]
     if not session_id:
-        return JSONResponse([])
+        return JSONResponse({"items": [], "total": 0, "page": 1, "page_size": page_size, "pages": 0})
+    page = max(1, page)
+    page_size = max(1, min(200, page_size))
+    offset = (page - 1) * page_size
+
+    total = _db_conn.execute(
+        "SELECT COUNT(*) FROM rtk_events WHERE session_id=?", (session_id,)
+    ).fetchone()[0]
     rows = _db_conn.execute(
         """
         SELECT id, ts, rtk_cmd, input_tokens, output_tokens, saved_tokens,
@@ -1686,11 +1693,19 @@ async def get_session_rtk_commands(slug: str, limit: int = 100):
         FROM rtk_events
         WHERE session_id = ?
         ORDER BY id DESC
-        LIMIT ?
+        LIMIT ? OFFSET ?
         """,
-        (session_id, limit),
+        (session_id, page_size, offset),
     ).fetchall()
-    return JSONResponse([dict(r) for r in rows])
+    import math
+    pages = math.ceil(total / page_size) if page_size > 0 else 0
+    return JSONResponse({
+        "items": [dict(r) for r in rows],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "pages": pages,
+    })
 
 
 @app.get("/v1/models")
