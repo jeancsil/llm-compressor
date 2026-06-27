@@ -502,6 +502,7 @@
     <thead><tr><th>Time</th><th>Command</th><th>Tokens in</th><th>Saved</th><th>%</th></tr></thead>
     <tbody id="rtk_cmd_list"></tbody>
   </table>
+  <div id="rtk_cmd_pager"></div>
 </div>
 
 <div class="footer">All data from metrics.db &amp; history.db in <code>~/Library/Application Support/rtk/</code> &nbsp;·&nbsp; updated every 2s</div>
@@ -533,6 +534,9 @@ let _recentAll = [];
 
 let _comprPage = 1;
 const COMPR_PAGE_SIZE = 20;
+
+let _rtkCmdPage = 1;
+const RTK_CMD_PAGE_SIZE = 25;
 
 function renderRecentPage(page) {
   _recentPage = page;
@@ -1139,21 +1143,24 @@ async function refreshCompressions(page) {
   } catch(e) { console.error(e); }
 }
 
-async function refreshRtkCommands() {
+async function refreshRtkCommands(page) {
   if (!TRACKER || !TRACKER.session_id) return;
   const section = document.getElementById('rtk_cmd_section');
   if (!section) return;
   section.style.display = 'block';
+  if (page !== undefined) _rtkCmdPage = page;
   try {
-    const rows = await fetch('/session/' + encodeURIComponent(TRACKER.slug) + '/rtk-commands').then(r => r.json());
-    const tbody  = document.getElementById('rtk_cmd_list');
+    const data = await fetch('/session/' + encodeURIComponent(TRACKER.slug) + '/rtk-commands?page=' + _rtkCmdPage + '&page_size=' + RTK_CMD_PAGE_SIZE).then(r => r.json());
+    const tbody = document.getElementById('rtk_cmd_list');
     const countEl = document.getElementById('rtk_cmd_count');
-    if (!Array.isArray(rows) || rows.length === 0) {
+    const rows = data.items || [];
+    if (rows.length === 0 && data.total === 0) {
       tbody.innerHTML = '<tr><td colspan="5" class="spark-empty">No RTK commands this session</td></tr>';
       countEl.textContent = '';
+      document.getElementById('rtk_cmd_pager').innerHTML = '';
       return;
     }
-    countEl.textContent = rows.length + ' commands';
+    countEl.textContent = data.total + ' commands total';
     tbody.innerHTML = rows.map(r => {
       const pct = r.savings_pct != null ? r.savings_pct : 0;
       const ts  = r.ts ? r.ts.slice(11, 16) : '';
@@ -1166,6 +1173,7 @@ async function refreshRtkCommands() {
         + '<td style="color:' + color + '">' + pct + '%</td>'
         + '</tr>';
     }).join('');
+    buildPager('rtk_cmd_pager', data.page, data.pages, data.total, refreshRtkCommands);
   } catch(e) { console.error(e); }
 }
 
