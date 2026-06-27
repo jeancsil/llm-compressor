@@ -53,6 +53,7 @@
   </thead>
   <tbody id="rows"></tbody>
 </table>
+<div id="pager"></div>
 <script>
 function buildPager(containerId, page, pages, total, onPage) {
   const el = document.getElementById(containerId);
@@ -83,23 +84,29 @@ function fmtDate(s) {
 function escapeHtml(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
-async function load() {
-  const data = await fetch('/admin/tracker/all').then(r => r.json());
-  const totalApiSaved = data.reduce((a, t) => a + (t.tokens_saved || 0), 0);
-  const totalRtkSaved = data.reduce((a, t) => a + (t.rtk_saved   || 0), 0);
-  const linked = data.filter(t => t.session_id);
+let _trackerPage = 1;
+const TRACKER_PAGE_SIZE = 25;
+async function load(page) {
+  page = page || _trackerPage;
+  _trackerPage = page;
+  const data = await fetch('/admin/tracker/all?page=' + page + '&page_size=' + TRACKER_PAGE_SIZE).then(r => r.json());
+  const items = data.items || [];
+  const totalApiSaved = items.reduce((a, t) => a + (t.tokens_saved || 0), 0);
+  const totalRtkSaved = items.reduce((a, t) => a + (t.rtk_saved   || 0), 0);
+  const linked = items.filter(t => t.session_id);
   document.getElementById('summary').innerHTML =
-    '<span><b>' + data.length + '</b> sessions total</span>' +
-    '<span><b>' + linked.length + '</b> linked to Claude</span>' +
-    '<span><b>' + fmt(totalApiSaved) + '</b> API tokens saved</span>' +
-    '<span><b>' + fmt(totalRtkSaved) + '</b> RTK tokens saved</span>' +
-    '<span><b>' + fmt(totalApiSaved + totalRtkSaved) + '</b> total saved</span>';
+    '<span><b>' + data.total + '</b> sessions total</span>' +
+    '<span><b>' + linked.length + '</b> linked to Claude (this page)</span>' +
+    '<span><b>' + fmt(totalApiSaved) + '</b> API tokens saved (this page)</span>' +
+    '<span><b>' + fmt(totalRtkSaved) + '</b> RTK tokens saved (this page)</span>' +
+    '<span><b>' + fmt(totalApiSaved + totalRtkSaved) + '</b> total saved (this page)</span>';
   const tbody = document.getElementById('rows');
-  if (!data.length) {
+  if (!items.length) {
     tbody.innerHTML = '<tr><td colspan="10" class="empty">No tracked sessions yet.</td></tr>';
+    document.getElementById('pager').innerHTML = '';
     return;
   }
-  tbody.innerHTML = data.map(t => {
+  tbody.innerHTML = items.map(t => {
     const slug  = encodeURIComponent(t.slug);
     const badge = '<span class="badge badge-' + escapeHtml(t.status) + '">' + escapeHtml(t.status) + '</span>';
     const total = (t.tokens_saved || 0) + (t.rtk_saved || 0);
@@ -117,6 +124,7 @@ async function load() {
       + '<td style="color:#484f58">' + fmtDate(t.closed_at) + '</td>'
       + '</tr>';
   }).join('');
+  buildPager('pager', data.page, data.pages, data.total, load);
 }
 load();
 </script>
