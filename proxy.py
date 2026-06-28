@@ -799,6 +799,7 @@ def compress_text(text: str, session_id: str, role: str = "user") -> str:
             compressed, orig, comp = hit
             print(f"[cache] hit {orig} → {comp} tokens [{session_id[:8]}] role={role}")
             record_compression(session_id, orig, comp, latency_ms=0.0,
+                               original_text=text, compressed_text=compressed,
                                role=role, active_backend=active, cache_hit=1)
             return compressed
 
