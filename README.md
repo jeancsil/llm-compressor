@@ -14,6 +14,17 @@ If this saves you tokens, ⭐ star the repo — it helps others find it.
 
 **[Install in 3 steps ↓](#install)** &nbsp;·&nbsp; [![Buy Me A Coffee](https://img.shields.io/badge/☕_Buy_me_a_coffee-FFDD00?style=flat&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/jeancsil)
 
+```
+make install     install dependencies
+make start       start proxy
+make stop        stop proxy
+make restart     stop then start fresh
+make check       verify proxy is up
+make dashboard   open live dashboard
+make stats       print compression stats (JSON)
+make rtk-stats   print rtk shell-layer savings
+```
+
 ---
 
 ## By the numbers
@@ -52,16 +63,14 @@ Running both compounds the savings. The dashboard automatically detects rtk and 
 ```bash
 git clone https://github.com/jeancsil/llm-compressor
 cd llm-compressor
-uv sync
+make install
 ```
-
-`uv sync` installs all dependencies into an isolated virtualenv. No `pip install` needed.
 
 ## Start the proxy
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
-uv run python proxy.py
+make start
 ```
 
 The first run downloads the compression model and loads it. Cold start is 20–90 seconds depending on the model. Once you see:
@@ -71,11 +80,15 @@ Model ready.
 INFO:     Uvicorn running on http://127.0.0.1:9099
 ```
 
-the proxy is ready.
+the proxy is ready. Verify with:
+
+```bash
+make check
+```
 
 ## Configure Claude Code
 
-In a separate terminal (or add to `~/.zshrc`):
+In your Claude Code terminal (or add to `~/.zshrc`):
 
 ```bash
 export ANTHROPIC_BASE_URL=http://127.0.0.1:9099
@@ -84,7 +97,13 @@ claude
 
 That's all. Claude Code now routes through the proxy transparently.
 
-To stop compressing:
+To stop the proxy:
+
+```bash
+make stop
+```
+
+To stop compressing without stopping the proxy:
 
 ```bash
 unset ANTHROPIC_BASE_URL
@@ -94,7 +113,13 @@ unset ANTHROPIC_BASE_URL
 
 ## Dashboard
 
-While the proxy is running, open `http://127.0.0.1:9099/dashboard` in a browser. It auto-refreshes every 2 seconds and shows:
+While the proxy is running:
+
+```bash
+make dashboard   # opens http://127.0.0.1:9099/dashboard in your browser
+```
+
+The dashboard auto-refreshes every 2 seconds and shows:
 
 - Overall compression ratio
 - Per-session efficiency bars and ratio badges
@@ -135,7 +160,7 @@ brew install rtk   # macOS
 
 Models are downloaded from HuggingFace on first use and cached in `~/.cache/huggingface/hub`.
 
-Switch via dashboard dropdown or API:
+Switch via the dashboard dropdown (`make dashboard`) or directly:
 
 ```bash
 curl -s -X POST http://127.0.0.1:9099/admin/set-model \
@@ -158,7 +183,7 @@ Every Anthropic API call is **stateless**: the client resends the full conversat
 
 ### Single-model mode (default)
 
-One compression model handles everything. Select from the dashboard or via API:
+One compression model handles everything. Select from `make dashboard` (dropdown) or directly:
 
 ```bash
 curl -s -X POST http://127.0.0.1:9099/admin/set-model \
@@ -170,7 +195,7 @@ Available models: `llmlingua2`, `llmlingua2-large`, `kompress`, `dual`
 
 ### Dual mode
 
-Select **"dual (system→large · user→kompress)"** from the dashboard or via API:
+Select **"dual (system→large · user→kompress)"** from `make dashboard` or directly:
 
 ```bash
 curl -s -X POST http://127.0.0.1:9099/admin/set-model \

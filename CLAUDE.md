@@ -6,11 +6,17 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 FastAPI proxy that intercepts Anthropic API calls and compresses prompts via LLMLingua-2 (or kompress) before forwarding. Single-file app: `proxy.py`.
 
-## Run
+## Common tasks
 
 ```bash
-uv run python proxy.py
-# Starts on http://127.0.0.1:9099
+make install    # Install dependencies via uv
+make start      # Start proxy in foreground (Ctrl-C to stop)
+make stop       # Stop the proxy
+make restart    # Stop then start fresh
+make check      # Verify proxy is reachable
+make dashboard  # Open the live dashboard in the browser
+make stats      # Print compression stats as JSON
+make rtk-stats  # Print rtk shell-layer savings
 ```
 
 ## Key endpoints
@@ -18,7 +24,7 @@ uv run python proxy.py
 - `POST /v1/messages` — proxy target; compresses system field + user messages, forwards to Anthropic
 - `GET /stats` — JSON compression stats
 - `GET /dashboard` — live HTML dashboard (auto-refreshes)
-- `GET /admin/set-model` — switch active compression model
+- `POST /admin/set-model` — switch active compression model
 - `GET /v1/models` — passthrough to Anthropic
 
 ## Architecture
@@ -38,7 +44,8 @@ uv run python proxy.py
 | `kompress` | Precision-oriented; ~27% savings; lower distortion |
 | `dual` | Routes system→llmlingua2-large, user→kompress; loads both (~1.5 GB RAM) |
 
-Switch via dashboard dropdown or:
+Switch via the dashboard dropdown (preferred) or directly:
+
 ```bash
 curl -s -X POST http://127.0.0.1:9099/admin/set-model \
   -H 'Content-Type: application/json' -d '{"model": "dual"}'
