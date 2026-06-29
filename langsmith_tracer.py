@@ -92,7 +92,10 @@ class LangSmithTracer:
     ) -> None:
         if not self._client:
             return
-        asyncio.create_task(self._add_to_dataset(run_inputs, run_outputs, dataset_name))
+        try:
+            asyncio.create_task(self._add_to_dataset(run_inputs, run_outputs, dataset_name))
+        except Exception as exc:
+            print(f"[langsmith] could not create task: {exc}")
 
     async def _add_to_dataset(self, run_inputs: dict, run_outputs: dict, dataset_name: str) -> None:
         try:
@@ -122,7 +125,10 @@ class LangSmithTracer:
     ) -> None:
         if not self._client:
             return
-        asyncio.create_task(self._attach_feedback(run_id, score, comment))
+        try:
+            asyncio.create_task(self._attach_feedback(run_id, score, comment))
+        except Exception as exc:
+            print(f"[langsmith] could not create task: {exc}")
 
     async def _attach_feedback(self, run_id: "uuid.UUID", score: float, comment: str) -> None:
         try:
