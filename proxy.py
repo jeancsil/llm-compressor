@@ -843,7 +843,6 @@ def compress_backend(text: str):
 
 def _extract_text_from_sse(raw: bytes) -> str:
     """Pull text_delta content from Anthropic SSE bytes. Best-effort; returns '' on failure."""
-    import json as _json
     parts = []
     for line in raw.decode("utf-8", errors="replace").splitlines():
         if not line.startswith("data: "):
@@ -852,7 +851,7 @@ def _extract_text_from_sse(raw: bytes) -> str:
         if payload == "[DONE]":
             break
         try:
-            obj = _json.loads(payload)
+            obj = json.loads(payload)
             if obj.get("type") == "content_block_delta":
                 delta = obj.get("delta", {})
                 if delta.get("type") == "text_delta":
@@ -1856,7 +1855,6 @@ async def proxy_messages(request: Request):
                 _response_text = (resp_data.get("content") or [{}])[0].get("text", "")
             except Exception:
                 pass
-            _cm = body.get("model", "unknown")
             await _ls_tracer.log_request(
                 original_messages=_ls_original_messages,
                 compressed_messages=body.get("messages", []),
@@ -1865,7 +1863,7 @@ async def proxy_messages(request: Request):
                 response_text=_response_text,
                 metadata={
                     "session_id": session_id,
-                    "anthropic_model": _cm,
+                    "anthropic_model": body.get("model", "unknown"),
                     "compression_model": _ls_compression_model,
                     "compression_ratio": _ls_compression_ratio,
                     "tokens_saved": _ls_tokens_saved,
