@@ -37,15 +37,18 @@ class LangSmithTracer:
     ) -> None:
         if not self._client:
             return
-        asyncio.create_task(self._send(
-            original_messages,
-            compressed_messages,
-            original_system,
-            compressed_system,
-            response_text,
-            metadata,
-            tags or [],
-        ))
+        try:
+            asyncio.create_task(self._send(
+                original_messages,
+                compressed_messages,
+                original_system,
+                compressed_system,
+                response_text,
+                metadata,
+                tags or [],
+            ))
+        except Exception as exc:
+            print(f"[langsmith] failed to schedule trace: {exc}")
 
     async def _send(
         self,
