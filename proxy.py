@@ -841,6 +841,27 @@ def compress_backend(text: str):
     return _compress_with(backend, text)
 
 
+def _extract_text_from_sse(raw: bytes) -> str:
+    """Pull text_delta content from Anthropic SSE bytes. Best-effort; returns '' on failure."""
+    import json as _json
+    parts = []
+    for line in raw.decode("utf-8", errors="replace").splitlines():
+        if not line.startswith("data: "):
+            continue
+        payload = line[6:]
+        if payload == "[DONE]":
+            break
+        try:
+            obj = _json.loads(payload)
+            if obj.get("type") == "content_block_delta":
+                delta = obj.get("delta", {})
+                if delta.get("type") == "text_delta":
+                    parts.append(delta.get("text", ""))
+        except Exception:
+            pass
+    return "".join(parts)
+
+
 def _compress_llmlingua2(active: dict, text: str):
     chunks = chunk_text(text)
     if len(chunks) == 1:
@@ -1749,6 +1770,7 @@ async def proxy_messages(request: Request):
 
     if is_streaming:
         async def stream_gen():
+            _chunks: list[bytes] = []
             async with httpx.AsyncClient(timeout=120) as client:
                 async with client.stream(
                     "POST",
@@ -1763,7 +1785,22 @@ async def proxy_messages(request: Request):
                         yield body_bytes
                         return
                     async for chunk in resp.aiter_bytes():
+                        _chunks.append(chunk)
                         yield chunk
+            if _ls_tracer.enabled:
+                _response_text = _extract_text_from_sse(b"".join(_chunks))
+                await _ls_tracer.log_request(
+                    original_messages=_ls_original_messages,
+                    compressed_messages=body.get("messages", []),
+                    original_system=_ls_original_system,
+                    compressed_system=body.get("system"),
+                    response_text=_response_text,
+                    metadata={
+                        "session_id": session_id,
+                        "model": body.get("model", "unknown"),
+                        "streaming": True,
+                    },
+                )
         return StreamingResponse(stream_gen(), media_type="text/event-stream")
     else:
         async with httpx.AsyncClient(timeout=120) as client:
