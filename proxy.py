@@ -1651,6 +1651,11 @@ async def get_all_trackers(page: int = 1, page_size: int = 25):
     })
 
 
+@app.get("/admin/langsmith-status")
+async def langsmith_status():
+    return JSONResponse(content=_ls_tracer.status())
+
+
 @app.get("/session/{slug}/compressions")
 async def get_session_compressions(slug: str, page: int = 1, page_size: int = 20):
     if _db_conn is None:
@@ -1760,11 +1765,20 @@ async def proxy_messages(request: Request):
     record_request(session_id, session_name)
 
     body = await request.json()
+    _ls_start_ms = time.monotonic() * 1000
     _ls_original_messages = copy.deepcopy(body.get("messages", []))
     _ls_original_system = copy.deepcopy(body.get("system"))
     if body.get("system"):
         body["system"] = compress_system_field(body["system"], session_id)
     body["messages"] = compress_messages(body["messages"], session_id)
+    _ls_compression_latency_ms = round(time.monotonic() * 1000 - _ls_start_ms, 1)
+    _sess = stats["sessions"].get(session_id, {})
+    _ls_original_tokens   = _sess.get("original_tokens", 0)
+    _ls_compressed_tokens = _sess.get("compressed_tokens", 0)
+    _ls_compression_ratio = round(_ls_compressed_tokens / _ls_original_tokens, 3) if _ls_original_tokens else 1.0
+    _ls_tokens_saved      = _ls_original_tokens - _ls_compressed_tokens
+    _ls_compression_model = (backend or {}).get("type", "unknown")
+    _ls_cache_hit         = False
     headers = build_headers(request)
     is_streaming = body.get("stream", False)
 
@@ -1788,6 +1802,7 @@ async def proxy_messages(request: Request):
                         _chunks.append(chunk)
                         yield chunk
             if _ls_tracer.enabled:
+                _end_ms = time.monotonic() * 1000
                 _response_text = _extract_text_from_sse(b"".join(_chunks))
                 await _ls_tracer.log_request(
                     original_messages=_ls_original_messages,
@@ -1797,10 +1812,31 @@ async def proxy_messages(request: Request):
                     response_text=_response_text,
                     metadata={
                         "session_id": session_id,
-                        "model": body.get("model", "unknown"),
+                        "anthropic_model": body.get("model", "unknown"),
+                        "compression_model": _ls_compression_model,
+                        "compression_ratio": _ls_compression_ratio,
+                        "tokens_saved": _ls_tokens_saved,
+                        "original_tokens": _ls_original_tokens,
+                        "compressed_tokens": _ls_compressed_tokens,
+                        "compression_latency_ms": _ls_compression_latency_ms,
+                        "total_latency_ms": round(_end_ms - _ls_start_ms, 1),
+                        "cache_hit": _ls_cache_hit,
                         "streaming": True,
                     },
+                    tags=[
+                        _ls_compression_model,
+                        "streaming",
+                        f"ratio:{int(_ls_compression_ratio * 100)}pct",
+                    ],
                 )
+                if stats["total_requests"] % 10 == 0:
+                    await _ls_tracer.add_to_dataset(
+                        run_inputs={
+                            "original_messages": _ls_original_messages,
+                            "original_system": _ls_original_system,
+                        },
+                        run_outputs={"response": _response_text},
+                    )
         return StreamingResponse(stream_gen(), media_type="text/event-stream")
     else:
         async with httpx.AsyncClient(timeout=120) as client:
@@ -1813,12 +1849,14 @@ async def proxy_messages(request: Request):
         if resp.status_code >= 400:
             print(f"[proxy] Anthropic error {resp.status_code}: {resp.text}")
         resp_data = resp.json()
+        _end_ms = time.monotonic() * 1000
         if _ls_tracer.enabled:
             _response_text = ""
             try:
                 _response_text = (resp_data.get("content") or [{}])[0].get("text", "")
             except Exception:
                 pass
+            _cm = body.get("model", "unknown")
             await _ls_tracer.log_request(
                 original_messages=_ls_original_messages,
                 compressed_messages=body.get("messages", []),
@@ -1827,9 +1865,31 @@ async def proxy_messages(request: Request):
                 response_text=_response_text,
                 metadata={
                     "session_id": session_id,
-                    "model": body.get("model", "unknown"),
+                    "anthropic_model": _cm,
+                    "compression_model": _ls_compression_model,
+                    "compression_ratio": _ls_compression_ratio,
+                    "tokens_saved": _ls_tokens_saved,
+                    "original_tokens": _ls_original_tokens,
+                    "compressed_tokens": _ls_compressed_tokens,
+                    "compression_latency_ms": _ls_compression_latency_ms,
+                    "total_latency_ms": round(_end_ms - _ls_start_ms, 1),
+                    "cache_hit": _ls_cache_hit,
+                    "streaming": False,
                 },
+                tags=[
+                    _ls_compression_model,
+                    "sync",
+                    f"ratio:{int(_ls_compression_ratio * 100)}pct",
+                ],
             )
+            if stats["total_requests"] % 10 == 0:
+                await _ls_tracer.add_to_dataset(
+                    run_inputs={
+                        "original_messages": _ls_original_messages,
+                        "original_system": _ls_original_system,
+                    },
+                    run_outputs={"response": _response_text},
+                )
         return JSONResponse(content=resp_data, status_code=resp.status_code)
 
 

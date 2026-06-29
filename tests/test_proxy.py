@@ -524,6 +524,29 @@ def test_session_compressions_pagination(client):
     assert len(data["items"]) == 5
 
 
+def test_langsmith_status_disabled(client):
+    resp = client.get("/admin/langsmith-status")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["enabled"] is False
+    assert data["api_key_set"] is False
+
+
+def test_langsmith_status_enabled(client, monkeypatch):
+    monkeypatch.setenv("LANGSMITH_API_KEY", "ls__test123")
+    from unittest.mock import MagicMock, patch
+    mock_client = MagicMock()
+    with patch("langsmith.Client", return_value=mock_client):
+        import langsmith_tracer
+        langsmith_tracer.tracer.init("llm-compressor")
+    resp = client.get("/admin/langsmith-status")
+    assert resp.status_code == 200
+    assert resp.json()["enabled"] is True
+    # cleanup
+    import langsmith_tracer
+    langsmith_tracer.tracer._client = None
+
+
 def test_session_rtk_commands_pagination(client):
     """Task 3: GET /session/{slug}/rtk-commands?page=1&page_size=5 returns paginated envelope."""
     # Non-existent slug should 404
