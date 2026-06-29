@@ -22,7 +22,7 @@ help:
 	@echo "  rtk-stats          Print rtk shell-layer savings"
 	@echo "  check              Check proxy is reachable"
 	@echo "  langsmith-status   Check if LangSmith tracing is active on running proxy"
-	@echo "  langsmith-test     Send a test request and check LangSmith received it"
+	@echo "  langsmith-test     Send a test request through the proxy"
 	@echo ""
 	@echo "LangSmith (optional): export LANGSMITH_API_KEY=ls__... then make start"
 
@@ -58,7 +58,9 @@ dashboard:
 	open $(URL)/dashboard
 
 stats:
-	@curl -s $(URL)/stats | python3 -m json.tool
+	@RESP=$$(curl -s $(URL)/stats); \
+	if [ -z "$$RESP" ]; then echo "Proxy is not running at $(URL)"; exit 1; fi; \
+	echo "$$RESP" | python3 -m json.tool
 
 rtk-stats:
 	rtk gain
@@ -67,18 +69,20 @@ check:
 	@curl -sf $(URL)/ > /dev/null && echo "Proxy is up at $(URL)" || echo "Proxy is not running"
 
 langsmith-status:
+	@curl -sf $(URL)/ > /dev/null 2>&1 || { echo "Proxy is not running at $(URL)"; exit 0; }
 	@curl -s $(URL)/admin/langsmith-status | python3 -m json.tool
 
 langsmith-test:
 	@if [ -z "$$ANTHROPIC_API_KEY" ]; then \
 		echo "Error: ANTHROPIC_API_KEY is not set"; exit 1; \
 	fi
+	@curl -sf $(URL)/ > /dev/null 2>&1 || { echo "Error: proxy is not running. Run 'make start' first."; exit 1; }
 	@echo "Sending test request through proxy..."
-	@curl -s -X POST $(URL)/v1/messages \
+	@RESP=$$(curl -s -X POST $(URL)/v1/messages \
 		-H "Content-Type: application/json" \
 		-H "x-api-key: $$ANTHROPIC_API_KEY" \
 		-H "anthropic-version: 2023-06-01" \
-		-d '{"model":"claude-haiku-4-5","max_tokens":30,"messages":[{"role":"user","content":"Say hi in one word."}]}' \
-		| python3 -m json.tool
+		-d '{"model":"claude-haiku-4-5","max_tokens":30,"messages":[{"role":"user","content":"Say hi in one word."}]}'); \
+	echo "$$RESP" | python3 -m json.tool 2>/dev/null || echo "$$RESP"
 	@echo ""
-	@echo "Check LangSmith: https://smith.langchain.com/o/projects (project: $(LANGSMITH_PROJECT))"
+	@echo "Check traces: https://smith.langchain.com (project: $(LANGSMITH_PROJECT))"
