@@ -1,5 +1,6 @@
 import os
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+import copy
 import hashlib
 import json
 import math
@@ -18,6 +19,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse, JSONResponse, HTMLResponse
 from llmlingua import PromptCompressor
+from langsmith_tracer import tracer as _ls_tracer
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 ANTHROPIC_BASE    = "https://api.anthropic.com"
@@ -548,6 +550,9 @@ async def lifespan(app: FastAPI):
     recover_stats_from_backup(_db_conn)
     load_stats_from_db(_db_conn)
     backend = _load_backend()
+    _ls_tracer.init()
+    if _ls_tracer.enabled:
+        print("[langsmith] tracing enabled")
     yield
     # Release model references before process exit to avoid MPS semaphore leaks
     backend = None
@@ -1734,6 +1739,8 @@ async def proxy_messages(request: Request):
     record_request(session_id, session_name)
 
     body = await request.json()
+    _ls_original_messages = copy.deepcopy(body.get("messages", []))
+    _ls_original_system = copy.deepcopy(body.get("system"))
     if body.get("system"):
         body["system"] = compress_system_field(body["system"], session_id)
     body["messages"] = compress_messages(body["messages"], session_id)
@@ -1768,7 +1775,25 @@ async def proxy_messages(request: Request):
             )
         if resp.status_code >= 400:
             print(f"[proxy] Anthropic error {resp.status_code}: {resp.text}")
-        return JSONResponse(content=resp.json(), status_code=resp.status_code)
+        resp_data = resp.json()
+        if _ls_tracer.enabled:
+            _response_text = ""
+            try:
+                _response_text = (resp_data.get("content") or [{}])[0].get("text", "")
+            except Exception:
+                pass
+            await _ls_tracer.log_request(
+                original_messages=_ls_original_messages,
+                compressed_messages=body.get("messages", []),
+                original_system=_ls_original_system,
+                compressed_system=body.get("system"),
+                response_text=_response_text,
+                metadata={
+                    "session_id": session_id,
+                    "model": body.get("model", "unknown"),
+                },
+            )
+        return JSONResponse(content=resp_data, status_code=resp.status_code)
 
 
 # ---------------------------------------------------------------------------
