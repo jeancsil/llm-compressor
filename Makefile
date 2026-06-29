@@ -52,7 +52,7 @@ restart: stop
 	@if [ -z "$$ANTHROPIC_API_KEY" ]; then \
 		echo "Error: ANTHROPIC_API_KEY is not set"; exit 1; \
 	fi
-	@nohup LANGSMITH_PROJECT=$(LANGSMITH_PROJECT) uv run python proxy.py >> proxy.log 2>&1 & echo $$! > $(PID_FILE) && echo "Started PID $$(cat $(PID_FILE))"
+	@nohup env LANGSMITH_PROJECT="$(LANGSMITH_PROJECT)" LANGSMITH_API_KEY="$$LANGSMITH_API_KEY" ANTHROPIC_API_KEY="$$ANTHROPIC_API_KEY" ANTHROPIC_BASE_URL="$$ANTHROPIC_BASE_URL" uv run python proxy.py >> proxy.log 2>&1 & echo $$! > $(PID_FILE) && echo "Started PID $$(cat $(PID_FILE))"
 
 dashboard:
 	open $(URL)/dashboard
@@ -70,7 +70,9 @@ check:
 
 langsmith-status:
 	@curl -sf $(URL)/ > /dev/null 2>&1 || { echo "Proxy is not running at $(URL)"; exit 0; }
-	@curl -s $(URL)/admin/langsmith-status | python3 -m json.tool
+	@RESP=$$(curl -s $(URL)/admin/langsmith-status); \
+	if [ -z "$$RESP" ]; then echo "langsmith-status endpoint not found"; exit 1; fi; \
+	echo "$$RESP" | python3 -m json.tool
 
 langsmith-test:
 	@if [ -z "$$ANTHROPIC_API_KEY" ]; then \
