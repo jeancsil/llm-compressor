@@ -55,16 +55,16 @@ class TestMakefileRestartTarget:
                 "ANTHROPIC_API_KEY not forwarded in restart nohup line"
             )
 
-    def test_restart_forwards_langsmith_project(self):
+    def test_restart_forwards_langfuse_host(self):
         for line in _restart_nohup_lines():
-            assert "LANGSMITH_PROJECT" in line, (
-                "LANGSMITH_PROJECT not forwarded in restart nohup line"
+            assert "LANGFUSE_HOST" in line, (
+                "LANGFUSE_HOST not forwarded in restart nohup line"
             )
 
-    def test_restart_forwards_langsmith_api_key(self):
+    def test_restart_forwards_langfuse_keys(self):
         for line in _restart_nohup_lines():
-            assert "LANGSMITH_API_KEY" in line, (
-                "LANGSMITH_API_KEY not forwarded in restart nohup line"
+            assert "LANGFUSE_PUBLIC_KEY" in line and "LANGFUSE_SECRET_KEY" in line, (
+                "LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY not forwarded in restart nohup line"
             )
 
 
@@ -99,25 +99,25 @@ class TestMakefileStatsTarget:
 
 
 # ---------------------------------------------------------------------------
-# langsmith targets safe when proxy is down
+# langfuse targets safe when proxy is down
 # ---------------------------------------------------------------------------
 
-class TestMakefileLangsmithTargets:
+class TestMakefileLangfuseTargets:
     def _target_recipe(self, name: str) -> str:
         text = _makefile_text()
         block = re.search(rf"^{name}:.*?(?=^\S|\Z)", text, re.MULTILINE | re.DOTALL)
         assert block, f"{name}: target not found in Makefile"
         return block.group(0)
 
-    def test_langsmith_status_checks_proxy_first(self):
-        recipe = self._target_recipe("langsmith-status")
+    def test_langfuse_status_checks_proxy_first(self):
+        recipe = self._target_recipe("langfuse-status")
         assert "curl -sf" in recipe and ("exit 0" in recipe or "exit 1" in recipe), (
-            "langsmith-status doesn't guard against proxy being down"
+            "langfuse-status doesn't guard against proxy being down"
         )
 
-    def test_langsmith_status_exits_zero_when_proxy_down(self):
+    def test_langfuse_status_exits_zero_when_proxy_down(self):
         result = subprocess.run(
-            ["make", "langsmith-status"],
+            ["make", "langfuse-status"],
             cwd=REPO_ROOT,
             capture_output=True,
             text=True,
@@ -127,9 +127,9 @@ class TestMakefileLangsmithTargets:
         assert "Traceback" not in combined
         assert "json.decoder.JSONDecodeError" not in combined
 
-    def test_langsmith_test_exits_with_message_when_proxy_down(self):
+    def test_langfuse_test_exits_with_message_when_proxy_down(self):
         result = subprocess.run(
-            ["make", "langsmith-test"],
+            ["make", "langfuse-test"],
             cwd=REPO_ROOT,
             capture_output=True,
             text=True,
@@ -200,8 +200,9 @@ class TestMakefileRestartShellSyntax:
             "#!/bin/bash",
             "ANTHROPIC_API_KEY=test",
             "ANTHROPIC_BASE_URL=http://localhost",
-            "LANGSMITH_API_KEY=test",
-            "LANGSMITH_PROJECT=test",
+            "LANGFUSE_HOST=test",
+            "LANGFUSE_PUBLIC_KEY=test",
+            "LANGFUSE_SECRET_KEY=test",
         ] + lines)
         with tempfile.NamedTemporaryFile(mode="w", suffix=".sh", delete=False) as f:
             f.write(script)
