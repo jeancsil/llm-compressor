@@ -1,5 +1,6 @@
 import os
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+import copy
 import hashlib
 import json
 import math
@@ -18,6 +19,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse, JSONResponse, HTMLResponse
 from llmlingua import PromptCompressor
+from langfuse_tracer import tracer as _lf_tracer
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 ANTHROPIC_BASE    = "https://api.anthropic.com"
@@ -548,7 +550,15 @@ async def lifespan(app: FastAPI):
     recover_stats_from_backup(_db_conn)
     load_stats_from_db(_db_conn)
     backend = _load_backend()
+    _lf_tracer.init()
+    # print handled inside tracer.init()
     yield
+    # Flush langfuse traces before shutdown
+    if _lf_tracer.enabled and _lf_tracer._client:
+        try:
+            _lf_tracer._client.flush()
+        except Exception:
+            pass
     # Release model references before process exit to avoid MPS semaphore leaks
     backend = None
     import gc
@@ -834,6 +844,26 @@ def compress_backend(text: str):
     if backend is None:
         raise RuntimeError("No backend loaded")
     return _compress_with(backend, text)
+
+
+def _extract_text_from_sse(raw: bytes) -> str:
+    """Pull text_delta content from Anthropic SSE bytes. Best-effort; returns '' on failure."""
+    parts = []
+    for line in raw.decode("utf-8", errors="replace").splitlines():
+        if not line.startswith("data: "):
+            continue
+        payload = line[6:]
+        if payload == "[DONE]":
+            break
+        try:
+            obj = json.loads(payload)
+            if obj.get("type") == "content_block_delta":
+                delta = obj.get("delta", {})
+                if delta.get("type") == "text_delta":
+                    parts.append(delta.get("text", ""))
+        except Exception:
+            pass
+    return "".join(parts)
 
 
 def _compress_llmlingua2(active: dict, text: str):
@@ -1625,6 +1655,11 @@ async def get_all_trackers(page: int = 1, page_size: int = 25):
     })
 
 
+@app.get("/admin/langfuse-status")
+async def langfuse_status():
+    return JSONResponse(content=_lf_tracer.status())
+
+
 @app.get("/session/{slug}/compressions")
 async def get_session_compressions(slug: str, page: int = 1, page_size: int = 20):
     if _db_conn is None:
@@ -1734,14 +1769,26 @@ async def proxy_messages(request: Request):
     record_request(session_id, session_name)
 
     body = await request.json()
+    _ls_start_ms = time.monotonic() * 1000
+    _ls_original_messages = copy.deepcopy(body.get("messages", []))
+    _ls_original_system = copy.deepcopy(body.get("system"))
     if body.get("system"):
         body["system"] = compress_system_field(body["system"], session_id)
     body["messages"] = compress_messages(body["messages"], session_id)
+    _ls_compression_latency_ms = round(time.monotonic() * 1000 - _ls_start_ms, 1)
+    _sess = stats["sessions"].get(session_id, {})
+    _ls_original_tokens   = _sess.get("original_tokens", 0)
+    _ls_compressed_tokens = _sess.get("compressed_tokens", 0)
+    _ls_compression_ratio = round(_ls_compressed_tokens / _ls_original_tokens, 3) if _ls_original_tokens else 1.0
+    _ls_tokens_saved      = _ls_original_tokens - _ls_compressed_tokens
+    _ls_compression_model = (backend or {}).get("type", "unknown")
+    _ls_cache_hit         = False
     headers = build_headers(request)
     is_streaming = body.get("stream", False)
 
     if is_streaming:
         async def stream_gen():
+            _chunks: list[bytes] = []
             async with httpx.AsyncClient(timeout=120) as client:
                 async with client.stream(
                     "POST",
@@ -1756,7 +1803,44 @@ async def proxy_messages(request: Request):
                         yield body_bytes
                         return
                     async for chunk in resp.aiter_bytes():
+                        _chunks.append(chunk)
                         yield chunk
+            if _lf_tracer.enabled:
+                _end_ms = time.monotonic() * 1000
+                _response_text = _extract_text_from_sse(b"".join(_chunks))
+                await _lf_tracer.log_request(
+                    original_messages=_ls_original_messages,
+                    compressed_messages=body.get("messages", []),
+                    original_system=_ls_original_system,
+                    compressed_system=body.get("system"),
+                    response_text=_response_text,
+                    metadata={
+                        "session_id": session_id,
+                        "anthropic_model": body.get("model", "unknown"),
+                        "compression_model": _ls_compression_model,
+                        "compression_ratio": _ls_compression_ratio,
+                        "tokens_saved": _ls_tokens_saved,
+                        "original_tokens": _ls_original_tokens,
+                        "compressed_tokens": _ls_compressed_tokens,
+                        "compression_latency_ms": _ls_compression_latency_ms,
+                        "total_latency_ms": round(_end_ms - _ls_start_ms, 1),
+                        "cache_hit": _ls_cache_hit,
+                        "streaming": True,
+                    },
+                    tags=[
+                        _ls_compression_model,
+                        "streaming",
+                        f"ratio:{int(_ls_compression_ratio * 100)}pct",
+                    ],
+                )
+                if stats["total_requests"] % 10 == 0:
+                    await _lf_tracer.add_to_dataset(
+                        run_inputs={
+                            "original_messages": _ls_original_messages,
+                            "original_system": _ls_original_system,
+                        },
+                        run_outputs={"response": _response_text},
+                    )
         return StreamingResponse(stream_gen(), media_type="text/event-stream")
     else:
         async with httpx.AsyncClient(timeout=120) as client:
@@ -1768,7 +1852,48 @@ async def proxy_messages(request: Request):
             )
         if resp.status_code >= 400:
             print(f"[proxy] Anthropic error {resp.status_code}: {resp.text}")
-        return JSONResponse(content=resp.json(), status_code=resp.status_code)
+        resp_data = resp.json()
+        _end_ms = time.monotonic() * 1000
+        if _lf_tracer.enabled:
+            _response_text = ""
+            try:
+                _response_text = (resp_data.get("content") or [{}])[0].get("text", "")
+            except Exception:
+                pass
+            await _lf_tracer.log_request(
+                original_messages=_ls_original_messages,
+                compressed_messages=body.get("messages", []),
+                original_system=_ls_original_system,
+                compressed_system=body.get("system"),
+                response_text=_response_text,
+                metadata={
+                    "session_id": session_id,
+                    "anthropic_model": body.get("model", "unknown"),
+                    "compression_model": _ls_compression_model,
+                    "compression_ratio": _ls_compression_ratio,
+                    "tokens_saved": _ls_tokens_saved,
+                    "original_tokens": _ls_original_tokens,
+                    "compressed_tokens": _ls_compressed_tokens,
+                    "compression_latency_ms": _ls_compression_latency_ms,
+                    "total_latency_ms": round(_end_ms - _ls_start_ms, 1),
+                    "cache_hit": _ls_cache_hit,
+                    "streaming": False,
+                },
+                tags=[
+                    _ls_compression_model,
+                    "sync",
+                    f"ratio:{int(_ls_compression_ratio * 100)}pct",
+                ],
+            )
+            if stats["total_requests"] % 10 == 0:
+                await _lf_tracer.add_to_dataset(
+                    run_inputs={
+                        "original_messages": _ls_original_messages,
+                        "original_system": _ls_original_system,
+                    },
+                    run_outputs={"response": _response_text},
+                )
+        return JSONResponse(content=resp_data, status_code=resp.status_code)
 
 
 # ---------------------------------------------------------------------------

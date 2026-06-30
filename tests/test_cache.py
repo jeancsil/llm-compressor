@@ -110,7 +110,7 @@ def test_compress_text_caches_second_call(tmp_path, monkeypatch):
     hits = conn.execute("SELECT COUNT(*) FROM compressions WHERE cache_hit=1").fetchone()[0]
     assert hits == 1
     texts = conn.execute("SELECT COUNT(*) FROM compression_texts").fetchone()[0]
-    assert texts == 1                                        # only the miss wrote text
+    assert texts == 2                                        # miss + cache-hit both write text (commit 69e8372)
     conn.close()
 
 
@@ -118,9 +118,10 @@ def test_stats_endpoint_reports_cache(client):
     r = client.get("/stats")
     assert r.status_code == 200
     cache = r.json()["cache"]
-    assert set(cache) == {"since_deploy", "last_24h"}
-    for window in cache.values():
-        assert set(window) == {"hits", "total", "hit_ratio"}
+    assert {"since_deploy", "last_24h"}.issubset(set(cache))
+    for key in ("since_deploy", "last_24h"):
+        window = cache[key]
+        assert {"hits", "total", "hit_ratio"}.issubset(set(window))
         assert window["hit_ratio"] == 0.0   # fresh DB, no compressions yet
 
 

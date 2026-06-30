@@ -256,5 +256,37 @@ All configuration is via environment variables:
 |---|---|---|
 | `ANTHROPIC_API_KEY` | — | **Required.** Your Anthropic API key |
 | `ANTHROPIC_BASE_URL` | — | Set to `http://127.0.0.1:9099` in the Claude Code terminal |
+| `LANGFUSE_PUBLIC_KEY` | — | Optional. Enables Langfuse tracing when set with secret key |
+| `LANGFUSE_SECRET_KEY` | — | Optional. See above |
+| `LANGFUSE_HOST` | `https://cloud.langfuse.com` | Optional. Override for self-hosted Langfuse |
 
 The compression rate (default `0.5`) and minimum text length (default `200` chars) are constants in `proxy.py` at the top of `compress_text()`.
+
+---
+
+## Observability (optional)
+
+LLM-Compressor can send a trace to [Langfuse](https://langfuse.com) for every proxied request — model used, compressed input, output, token counts, and compression metadata.
+
+**Setup:**
+
+```bash
+make install-langfuse
+```
+
+Export your keys before starting the proxy:
+
+```bash
+export LANGFUSE_PUBLIC_KEY=pk-lf-...
+export LANGFUSE_SECRET_KEY=sk-lf-...
+make restart
+```
+
+**Verify:**
+
+```bash
+make langfuse-status   # → {"enabled": true, ...}
+make langfuse-test     # sends a real request; check cloud.langfuse.com/traces
+```
+
+Tracing is fire-and-forget — errors are logged to `proxy.log` but never affect the proxy or your Claude Code session. The proxy starts without tracing if the keys are absent.

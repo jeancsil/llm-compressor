@@ -19,12 +19,21 @@ make stats      # Print compression stats as JSON
 make rtk-stats  # Print rtk shell-layer savings
 ```
 
+### Langfuse observability (optional)
+
+```bash
+make install-langfuse   # Install langfuse SDK into the venv
+make langfuse-status    # Check whether proxy has Langfuse enabled
+make langfuse-test      # Send a test request and verify a trace appears
+```
+
 ## Key endpoints
 
 - `POST /v1/messages` — proxy target; compresses system field + user messages, forwards to Anthropic
 - `GET /stats` — JSON compression stats
 - `GET /dashboard` — live HTML dashboard (auto-refreshes)
 - `POST /admin/set-model` — switch active compression model
+- `GET /admin/langfuse-status` — Langfuse enabled/key status
 - `GET /v1/models` — passthrough to Anthropic
 
 ## Architecture
@@ -34,6 +43,7 @@ make rtk-stats  # Print rtk shell-layer savings
 - `compress_messages()` compresses `role=user` messages; skips text ≤200 chars; skips `assistant` turns
 - Stats persisted to `metrics.db` (SQLite); `compressions` table includes `role` column (`system` | `user`)
 - Session tracked via `x-claude-code-session-id` header
+- `langfuse_tracer.py` — optional fire-and-forget tracing module; no-ops when keys are absent
 
 ## Compression models
 
@@ -58,6 +68,16 @@ export ANTHROPIC_API_KEY=sk-ant-...
 # Point Claude Code at proxy:
 export ANTHROPIC_BASE_URL=http://127.0.0.1:9099
 ```
+
+### Langfuse tracing (optional)
+
+```bash
+export LANGFUSE_PUBLIC_KEY=pk-lf-...
+export LANGFUSE_SECRET_KEY=sk-lf-...
+export LANGFUSE_HOST=https://cloud.langfuse.com  # default; omit for cloud
+```
+
+The proxy enables tracing automatically when both keys are present at startup. Traces are sent fire-and-forget — errors are logged but never affect the proxy.
 
 ## Dependencies
 
