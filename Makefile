@@ -3,40 +3,40 @@ PORT  := 9099
 URL   := http://$(HOST):$(PORT)
 PID_FILE := .proxy.pid
 
-# Optional: export LANGSMITH_API_KEY=ls__... in your shell to enable tracing.
-# Get a free key at https://smith.langchain.com → Settings → API Keys
-LANGSMITH_PROJECT ?= llm-compressor
+# Optional: export LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY in your shell.
+# Get keys at https://cloud.langfuse.com → Settings → API Keys
+LANGFUSE_HOST ?= https://cloud.langfuse.com
 
-.PHONY: install install-langsmith start restart stop dashboard stats rtk-stats check langsmith-status langsmith-test help
+.PHONY: install install-langfuse start restart stop dashboard stats rtk-stats check langfuse-status langfuse-test help
 
 help:
 	@echo "Usage: make <target>"
 	@echo ""
-	@echo "  install            Install core dependencies via uv"
-	@echo "  install-langsmith  Install core + langsmith optional dep"
-	@echo "  start              Start the proxy (requires ANTHROPIC_API_KEY)"
-	@echo "  stop               Stop the running proxy"
-	@echo "  restart            Stop and start fresh"
-	@echo "  dashboard          Open the dashboard in the browser"
-	@echo "  stats              Print proxy compression stats (JSON)"
-	@echo "  rtk-stats          Print rtk shell-layer savings"
-	@echo "  check              Check proxy is reachable"
-	@echo "  langsmith-status   Check if LangSmith tracing is active on running proxy"
-	@echo "  langsmith-test     Send a test request through the proxy"
+	@echo "  install          Install core dependencies via uv"
+	@echo "  install-langfuse Install core + langfuse optional dep"
+	@echo "  start            Start the proxy (requires ANTHROPIC_API_KEY)"
+	@echo "  stop             Stop the running proxy"
+	@echo "  restart          Stop and start fresh"
+	@echo "  dashboard        Open the dashboard in the browser"
+	@echo "  stats            Print proxy compression stats (JSON)"
+	@echo "  rtk-stats        Print rtk shell-layer savings"
+	@echo "  check            Check proxy is reachable"
+	@echo "  langfuse-status  Check if Langfuse tracing is active on running proxy"
+	@echo "  langfuse-test    Send a test request through the proxy"
 	@echo ""
-	@echo "LangSmith (optional): export LANGSMITH_API_KEY=ls__... then make start"
+	@echo "Langfuse (optional): export LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-... then make start"
 
 install:
 	uv sync
 
-install-langsmith:
-	uv sync --group langsmith
+install-langfuse:
+	uv sync --group langfuse
 
 start:
 	@if [ -z "$$ANTHROPIC_API_KEY" ]; then \
 		echo "Error: ANTHROPIC_API_KEY is not set"; exit 1; \
 	fi
-	LANGSMITH_PROJECT=$(LANGSMITH_PROJECT) uv run python proxy.py
+	LANGFUSE_HOST=$(LANGFUSE_HOST) uv run python proxy.py
 
 stop:
 	@if [ -f $(PID_FILE) ]; then \
@@ -52,7 +52,7 @@ restart: stop
 	@if [ -z "$$ANTHROPIC_API_KEY" ]; then \
 		echo "Error: ANTHROPIC_API_KEY is not set"; exit 1; \
 	fi
-	@nohup env LANGSMITH_PROJECT="$(LANGSMITH_PROJECT)" LANGSMITH_API_KEY="$$LANGSMITH_API_KEY" ANTHROPIC_API_KEY="$$ANTHROPIC_API_KEY" ANTHROPIC_BASE_URL="$$ANTHROPIC_BASE_URL" uv run python proxy.py >> proxy.log 2>&1 & echo $$! > $(PID_FILE) && echo "Started PID $$(cat $(PID_FILE))"
+	@nohup env LANGFUSE_HOST="$(LANGFUSE_HOST)" LANGFUSE_PUBLIC_KEY="$$LANGFUSE_PUBLIC_KEY" LANGFUSE_SECRET_KEY="$$LANGFUSE_SECRET_KEY" ANTHROPIC_API_KEY="$$ANTHROPIC_API_KEY" ANTHROPIC_BASE_URL="$$ANTHROPIC_BASE_URL" uv run python proxy.py >> proxy.log 2>&1 & echo $$! > $(PID_FILE) && echo "Started PID $$(cat $(PID_FILE))"
 
 dashboard:
 	open $(URL)/dashboard
@@ -68,13 +68,13 @@ rtk-stats:
 check:
 	@curl -sf $(URL)/ > /dev/null && echo "Proxy is up at $(URL)" || echo "Proxy is not running"
 
-langsmith-status:
+langfuse-status:
 	@curl -sf $(URL)/ > /dev/null 2>&1 || { echo "Proxy is not running at $(URL)"; exit 0; }
-	@RESP=$$(curl -s $(URL)/admin/langsmith-status); \
-	if [ -z "$$RESP" ]; then echo "langsmith-status endpoint not found"; exit 1; fi; \
+	@RESP=$$(curl -s $(URL)/admin/langfuse-status); \
+	if [ -z "$$RESP" ]; then echo "langfuse-status endpoint not found"; exit 1; fi; \
 	echo "$$RESP" | python3 -m json.tool
 
-langsmith-test:
+langfuse-test:
 	@if [ -z "$$ANTHROPIC_API_KEY" ]; then \
 		echo "Error: ANTHROPIC_API_KEY is not set"; exit 1; \
 	fi
@@ -87,4 +87,4 @@ langsmith-test:
 		-d '{"model":"claude-haiku-4-5","max_tokens":30,"messages":[{"role":"user","content":"Say hi in one word."}]}'); \
 	echo "$$RESP" | python3 -m json.tool 2>/dev/null || echo "$$RESP"
 	@echo ""
-	@echo "Check traces: https://smith.langchain.com (project: $(LANGSMITH_PROJECT))"
+	@echo "Check traces: $(LANGFUSE_HOST)"
