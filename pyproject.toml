@@ -17,6 +17,12 @@ dependencies = [
     "uvicorn>=0.46.0",
 ]
 
+[project.scripts]
+llm-compressor = "cli:main"
+
+[tool.setuptools]
+py-modules = ["cli", "proxy", "langfuse_tracer"]
+
 [dependency-groups]
 dev = [
     "httpx>=0.28.1",
