@@ -7,12 +7,12 @@
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'SF Mono', 'Fira Code', monospace; background: #0d1117; color: #c9d1d9;
-         display: flex; flex-direction: column; height: 100vh; padding: 16px; gap: 12px; }
+         display: flex; flex-direction: column; height: 100vh; padding: 20px 48px; gap: 12px; }
 
-  .header { display: flex; align-items: center; gap: 10px; padding-bottom: 12px;
+  .header { display: flex; align-items: center; justify-content: space-between; padding-bottom: 12px;
              border-bottom: 1px solid #21262d; flex-shrink: 0; }
-  .back-link { font-size: 11px; color: #58a6ff; text-decoration: none; }
-  .back-link:hover { text-decoration: underline; }
+  .header-left { display: flex; align-items: center; gap: 10px; }
+  .header-right { display: flex; align-items: center; gap: 16px; font-size: 11px; color: #8b949e; }
   .title { color: #58a6ff; font-size: 14px; font-weight: 700; letter-spacing: .04em; }
   .sep { color: #30363d; }
 
@@ -64,20 +64,23 @@
 <body>
 
 <div class="header">
-  <a class="back-link" href="/dashboard">← dashboard</a>
-  <span class="sep">|</span>
-  <div class="title">Playground</div>
-
-  <div class="controls">
-    <select class="model-select" id="model_select">
-      <option value="llmlingua2">llmlingua2</option>
-      <option value="llmlingua2-large">llmlingua2-large</option>
-      <option value="kompress">kompress</option>
-      <option value="dual">dual (configurable)</option>
-    </select>
-    <span class="model-loading" id="model_loading"><span class="dot"></span>loading model…</span>
-
-    <button class="compress-btn" id="compress_btn" onclick="compress()">▶ Compress</button>
+  <div class="header-left">
+    <div class="title">Playground</div>
+    <span class="sep">|</span>
+    <div class="controls">
+      <select class="model-select" id="model_select">
+        <option value="llmlingua2">llmlingua2</option>
+        <option value="llmlingua2-large">llmlingua2-large</option>
+        <option value="kompress">kompress</option>
+        <option value="dual">dual (configurable)</option>
+      </select>
+      <span class="model-loading" id="model_loading"><span class="dot"></span>loading model…</span>
+      <button class="compress-btn" id="compress_btn" onclick="compress()">▶ Compress</button>
+    </div>
+  </div>
+  <div class="header-right">
+    <a href="/dashboard" style="color:#8b949e;text-decoration:none;letter-spacing:.02em">← dashboard</a>
+    <a href="/play/list" style="color:#8b949e;text-decoration:none;letter-spacing:.02em">▶ history</a>
   </div>
 </div>
 

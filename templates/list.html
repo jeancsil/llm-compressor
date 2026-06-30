@@ -6,54 +6,72 @@
 <title>Session History · LLMLingua</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: 'SF Mono','Fira Code',monospace; background: #0d1117; color: #c9d1d9; padding: 20px; max-width: 900px; margin: 0 auto; }
+  body { font-family: 'SF Mono', 'Fira Code', monospace; background: #0d1117; color: #c9d1d9; padding: 20px 48px; max-width: 1440px; margin: 0 auto; }
   .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid #21262d; }
   .title { color: #58a6ff; font-size: 14px; font-weight: 700; letter-spacing: .04em; }
+  .header-right { display: flex; align-items: center; gap: 16px; font-size: 11px; color: #8b949e; }
   a { color: #58a6ff; text-decoration: none; }
   a:hover { text-decoration: underline; }
-  .summary { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 14px 18px; margin-bottom: 16px; font-size: 12px; color: #8b949e; display: flex; gap: 24px; flex-wrap: wrap; }
+  .summary { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px 18px; margin-bottom: 16px; font-size: 12px; color: #8b949e; display: flex; gap: 28px; flex-wrap: wrap; }
   .summary b { color: #c9d1d9; }
+  .section { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px 18px; margin-bottom: 14px; }
+  .section-title { font-size: 11px; color: #8b949e; text-transform: uppercase; letter-spacing: .08em; margin-bottom: 13px; display: flex; align-items: center; gap: 10px; }
+  .section-title::before { content: ''; width: 3px; height: 13px; border-radius: 2px; flex-shrink: 0; background: #6e7681; }
   table { width: 100%; border-collapse: collapse; font-size: 12px; }
-  th { text-align: left; color: #8b949e; font-weight: 600; padding: 8px 12px; border-bottom: 1px solid #21262d; letter-spacing: .04em; font-size: 10px; text-transform: uppercase; }
-  td { padding: 10px 12px; border-bottom: 1px solid #161b22; vertical-align: middle; }
-  tr:hover td { background: #161b22; }
-  .badge { display: inline-block; font-size: 10px; padding: 1px 7px; border-radius: 3px; font-weight: 600; letter-spacing: .03em; }
+  th { text-align: left; color: #8b949e; padding: 6px 10px; border-bottom: 1px solid #21262d; font-weight: normal; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
+  td { padding: 8px 10px; border-bottom: 1px solid #21262d; vertical-align: middle; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: #1c2128; }
+  .badge { display: inline-block; font-size: 10px; padding: 2px 7px; border-radius: 4px; }
   .badge-pending { background: #2b2200; color: #d29922; }
   .badge-active  { background: #0d2b1a; color: #3fb950; }
   .badge-closed  { background: #1c2128; color: #484f58; }
+  .name-tag { display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: 10px; background: #2d1f3d; color: #bc8cff; }
   .slug-hint { font-size: 10px; color: #484f58; margin-top: 2px; }
   .empty { text-align: center; color: #484f58; padding: 40px; font-size: 12px; }
+  .muted { color: #8b949e; }
+  .green { color: #3fb950; }
+  .blue  { color: #58a6ff; }
   .pager { display: flex; align-items: center; gap: 10px; padding: 12px 0 4px; margin-top: 2px; border-top: 1px solid #21262d; }
   .pager-btn { background: #161b22; color: #58a6ff; border: 1px solid #30363d; border-radius: 5px; padding: 3px 10px; cursor: pointer; font-family: inherit; font-size: 11px; line-height: 1.4; }
   .pager-btn:hover:not(:disabled) { border-color: #58a6ff; }
   .pager-btn:disabled { opacity: .35; cursor: default; }
   .pager-info { color: #484f58; font-size: 11px; line-height: 1.4; }
+  .footer { font-size: 9px; color: #484f58; text-align: center; padding-top: 8px; }
+  @media (max-width: 900px) { body { padding: 16px 20px; } }
 </style>
 </head>
 <body>
 <div class="header">
-  <span class="title">SESSION HISTORY</span>
-  <a href="/dashboard" style="font-size:11px;color:#8b949e">← dashboard</a>
+  <div class="title">Session History</div>
+  <div class="header-right">
+    <a href="/dashboard" style="color:#8b949e;font-size:11px;text-decoration:none;letter-spacing:.02em">← dashboard</a>
+    <a href="/play" style="color:#8b949e;font-size:11px;text-decoration:none;letter-spacing:.02em">▶ play</a>
+  </div>
 </div>
 <div class="summary" id="summary">loading…</div>
-<table>
-  <thead>
-    <tr>
-      <th>Name</th>
-      <th>Status</th>
-      <th>API Saved</th>
-      <th>API Req</th>
-      <th>RTK Saved</th>
-      <th>RTK Cmds</th>
-      <th>Total Saved</th>
-      <th>Created</th>
-      <th>Linked</th>
-      <th>Closed</th>
-    </tr>
-  </thead>
-  <tbody id="rows"></tbody>
-</table>
-<div id="pager"></div>
+<div class="section">
+  <div class="section-title">Sessions</div>
+  <table>
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Status</th>
+        <th>API Tokens Saved</th>
+        <th>API Requests</th>
+        <th>RTK Tokens Saved</th>
+        <th>RTK Commands</th>
+        <th>Total Saved</th>
+        <th>Created</th>
+        <th>Linked</th>
+        <th>Closed</th>
+      </tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <div id="pager"></div>
+</div>
+<div class="footer">All data from history.db &nbsp;·&nbsp; <a href="/dashboard">← back to dashboard</a></div>
 <script>
 function buildPager(containerId, page, pages, total, onPage) {
   const el = document.getElementById(containerId);
