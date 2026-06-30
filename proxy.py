@@ -19,7 +19,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse, JSONResponse, HTMLResponse
 from llmlingua import PromptCompressor
-from langsmith_tracer import tracer as _ls_tracer
+from langfuse_tracer import tracer as _lf_tracer
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 ANTHROPIC_BASE    = "https://api.anthropic.com"
@@ -550,9 +550,8 @@ async def lifespan(app: FastAPI):
     recover_stats_from_backup(_db_conn)
     load_stats_from_db(_db_conn)
     backend = _load_backend()
-    _ls_tracer.init()
-    if _ls_tracer.enabled:
-        print("[langsmith] tracing enabled")
+    _lf_tracer.init()
+    # print handled inside tracer.init()
     yield
     # Release model references before process exit to avoid MPS semaphore leaks
     backend = None
@@ -1650,9 +1649,9 @@ async def get_all_trackers(page: int = 1, page_size: int = 25):
     })
 
 
-@app.get("/admin/langsmith-status")
-async def langsmith_status():
-    return JSONResponse(content=_ls_tracer.status())
+@app.get("/admin/langfuse-status")
+async def langfuse_status():
+    return JSONResponse(content=_lf_tracer.status())
 
 
 @app.get("/session/{slug}/compressions")
@@ -1800,10 +1799,10 @@ async def proxy_messages(request: Request):
                     async for chunk in resp.aiter_bytes():
                         _chunks.append(chunk)
                         yield chunk
-            if _ls_tracer.enabled:
+            if _lf_tracer.enabled:
                 _end_ms = time.monotonic() * 1000
                 _response_text = _extract_text_from_sse(b"".join(_chunks))
-                await _ls_tracer.log_request(
+                await _lf_tracer.log_request(
                     original_messages=_ls_original_messages,
                     compressed_messages=body.get("messages", []),
                     original_system=_ls_original_system,
@@ -1829,7 +1828,7 @@ async def proxy_messages(request: Request):
                     ],
                 )
                 if stats["total_requests"] % 10 == 0:
-                    await _ls_tracer.add_to_dataset(
+                    await _lf_tracer.add_to_dataset(
                         run_inputs={
                             "original_messages": _ls_original_messages,
                             "original_system": _ls_original_system,
@@ -1849,13 +1848,13 @@ async def proxy_messages(request: Request):
             print(f"[proxy] Anthropic error {resp.status_code}: {resp.text}")
         resp_data = resp.json()
         _end_ms = time.monotonic() * 1000
-        if _ls_tracer.enabled:
+        if _lf_tracer.enabled:
             _response_text = ""
             try:
                 _response_text = (resp_data.get("content") or [{}])[0].get("text", "")
             except Exception:
                 pass
-            await _ls_tracer.log_request(
+            await _lf_tracer.log_request(
                 original_messages=_ls_original_messages,
                 compressed_messages=body.get("messages", []),
                 original_system=_ls_original_system,
@@ -1881,7 +1880,7 @@ async def proxy_messages(request: Request):
                 ],
             )
             if stats["total_requests"] % 10 == 0:
-                await _ls_tracer.add_to_dataset(
+                await _lf_tracer.add_to_dataset(
                     run_inputs={
                         "original_messages": _ls_original_messages,
                         "original_system": _ls_original_system,

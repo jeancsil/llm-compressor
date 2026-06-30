@@ -524,27 +524,29 @@ def test_session_compressions_pagination(client):
     assert len(data["items"]) == 5
 
 
-def test_langsmith_status_disabled(client):
-    resp = client.get("/admin/langsmith-status")
+def test_langfuse_status_disabled(client):
+    resp = client.get("/admin/langfuse-status")
     assert resp.status_code == 200
     data = resp.json()
     assert data["enabled"] is False
-    assert data["api_key_set"] is False
+    assert data["public_key_set"] is False
+    assert data["secret_key_set"] is False
 
 
-def test_langsmith_status_enabled(client, monkeypatch):
-    monkeypatch.setenv("LANGSMITH_API_KEY", "ls__test123")
+def test_langfuse_status_enabled(client, monkeypatch):
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-lf-test123")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-lf-test456")
     from unittest.mock import MagicMock, patch
     mock_client = MagicMock()
-    with patch("langsmith.Client", return_value=mock_client):
-        import langsmith_tracer
-        langsmith_tracer.tracer.init("llm-compressor")
-    resp = client.get("/admin/langsmith-status")
+    with patch("langfuse.Langfuse", return_value=mock_client):
+        import langfuse_tracer
+        langfuse_tracer.tracer.init()
+    resp = client.get("/admin/langfuse-status")
     assert resp.status_code == 200
     assert resp.json()["enabled"] is True
     # cleanup
-    import langsmith_tracer
-    langsmith_tracer.tracer._client = None
+    import langfuse_tracer
+    langfuse_tracer.tracer._client = None
 
 
 def test_session_rtk_commands_pagination(client):
