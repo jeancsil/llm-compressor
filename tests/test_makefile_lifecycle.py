@@ -33,7 +33,7 @@ class TestMakefileRestartTarget:
     def test_nohup_does_not_have_inline_var_assignment(self):
         """nohup VAR=val cmd is invalid — nohup treats VAR=val as a filename.
         Must use: nohup env VAR=val cmd
-        Root cause: 'nohup: LANGSMITH_PROJECT=llm-compressor: No such file or directory'
+        This catches regressions where env vars aren't properly forwarded through nohup.
         """
         for line in _restart_nohup_lines():
             bad = re.search(r"nohup\s+[A-Z_]+=\S+", line)
