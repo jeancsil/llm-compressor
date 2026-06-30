@@ -28,7 +28,16 @@ dev = [
     "httpx>=0.28.1",
     "pytest>=9.1.0",
     "pytest-cov>=7.1.0",
+    "ruff>=0.8.0",
 ]
 langfuse = [
     "langfuse>=4.0",
 ]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+ignore = ["E501"]

@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="260" viewBox="0 0 1200 260">
+  <rect width="1200" height="260" rx="12" ry="12" fill="#0d1117" stroke="#30363d" stroke-width="1"/>
+
+  <!-- Logo mark -->
+  <g transform="translate(40,30) scale(1.5)">
+    <rect width="80" height="80" rx="16" fill="#0d1117" stroke="#3fb950" stroke-width="2"/>
+    <rect x="12" y="10" width="56" height="12" rx="2" fill="#8b949e"/>
+    <polygon points="18,34 30,40 18,46" fill="#3fb950"/>
+    <polygon points="62,34 50,40 62,46" fill="#3fb950"/>
+    <rect x="28" y="58" width="24" height="12" rx="2" fill="#3fb950"/>
+  </g>
+
+  <!-- Title + tagline -->
+  <text x="190" y="92" font-family="system-ui, -apple-system, sans-serif"
+        font-size="40" font-weight="800" fill="#f0f6fc">
+    LLM-Compressor
+  </text>
+  <text x="190" y="122" font-family="system-ui, -apple-system, sans-serif"
+        font-size="16" fill="#8b949e">
+    Every prompt compressed before it's billed.
+  </text>
+  <text x="190" y="148" font-family="system-ui, -apple-system, sans-serif"
+        font-size="13" font-weight="600" fill="#3fb950" letter-spacing="0.06em">
+    NO WORKFLOW CHANGES · ONE ENV VAR
+  </text>
+
+  <!-- Divider -->
+  <line x1="650" y1="40" x2="650" y2="220" stroke="#30363d" stroke-width="1"/>
+
+  <!-- Before/after compression visual -->
+  <text x="680" y="75" font-family="system-ui, -apple-system, sans-serif"
+        font-size="11" fill="#8b949e" letter-spacing="0.08em">
+    YOUR PROMPT
+  </text>
+  <rect x="680" y="84" width="480" height="28" rx="4" fill="#21262d" stroke="#30363d" stroke-width="1"/>
+
+  <!-- Savings badge + arrow -->
+  <rect x="860" y="135" width="120" height="22" rx="11" fill="#3fb950" fill-opacity="0.15" stroke="#3fb950" stroke-width="1"/>
+  <text x="920" y="150" text-anchor="middle" font-family="'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace"
+        font-size="12" font-weight="700" fill="#3fb950">
+    up to -52%
+  </text>
+  <polygon points="911,166 920,177 929,166" fill="#3fb950"/>
+
+  <text x="680" y="178" font-family="system-ui, -apple-system, sans-serif"
+        font-size="11" fill="#8b949e" letter-spacing="0.08em">
+    COMPRESSED
+  </text>
+  <rect x="680" y="187" width="230" height="28" rx="4" fill="#3fb950" fill-opacity="0.15" stroke="#3fb950" stroke-width="1"/>
+</svg>

@@ -10,18 +10,14 @@ FastAPI proxy that intercepts Anthropic API calls and compresses prompts via LLM
 
 ```bash
 make install    # Install dependencies via uv
-make start      # Start proxy in foreground (Ctrl-C to stop)
-make stop       # Stop the proxy
-make restart    # Stop then start fresh
-make check      # Verify proxy is reachable
 make dashboard  # Open the live dashboard in the browser
 make stats      # Print compression stats as JSON
 make rtk-stats  # Print rtk shell-layer savings
 ```
 
-### wrap CLI (ephemeral daemon)
+### wrap CLI (primary way to run the proxy)
 
-`cli.py` provides `llm-compressor wrap <cmd>` — starts the proxy as a background process, injects `ANTHROPIC_BASE_URL`, runs the command, then kills the proxy on exit. No `make start`/`make stop` needed.
+`cli.py` provides `llm-compressor wrap <cmd>` — starts the proxy as a background process, injects `ANTHROPIC_BASE_URL`, runs the command, then kills the proxy on exit. This is the default workflow; `make start`/`make stop` (foreground daemon) is only for running the proxy persistently across multiple terminals.
 
 ```bash
 uv run llm-compressor wrap claude
@@ -29,6 +25,15 @@ uv run llm-compressor wrap aider
 ```
 
 Entry point registered in `pyproject.toml`; install with `uv pip install -e .` then the binary lives at `.venv/bin/llm-compressor`.
+
+### Persistent daemon (alternative)
+
+```bash
+make start      # Start proxy in foreground (Ctrl-C to stop)
+make stop       # Stop the proxy
+make restart    # Stop then start fresh
+make check      # Verify proxy is reachable
+```
 
 ### Langfuse observability (optional)
 

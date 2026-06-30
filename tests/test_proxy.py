@@ -1,5 +1,5 @@
-import sys
 import json
+import sys
 from collections import deque
 
 from starlette.testclient import TestClient
@@ -13,28 +13,54 @@ def test_health(client: TestClient):
 
 def test_init_db_creates_table(tmp_path):
     from proxy import init_db
+
     conn = init_db(str(tmp_path / "metrics.db"))
     cur = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='compressions'")
     assert cur.fetchone() is not None
     cols = [row[1] for row in conn.execute("PRAGMA table_info(compressions)")]
-    for col in ("id", "ts", "session_id", "model", "original_tokens", "compressed_tokens", "latency_ms"):
+    for col in (
+        "id",
+        "ts",
+        "session_id",
+        "model",
+        "original_tokens",
+        "compressed_tokens",
+        "latency_ms",
+    ):
         assert col in cols
     conn.close()
 
 
 def test_migrate_imports_rows(tmp_path):
     from proxy import init_db, migrate_from_json
+
     stats_json = tmp_path / "stats.json"
-    stats_json.write_text(json.dumps({
-        "total_requests": 5,
-        "total_original_tokens": 500,
-        "total_compressed_tokens": 300,
-        "sessions": {},
-        "recent_compressions": [
-            {"ts": "10:00:00", "session_id": "abc", "original": 100, "compressed": 60, "saved": 40},
-            {"ts": "10:01:00", "session_id": "def", "original": 200, "compressed": 120, "saved": 80},
-        ],
-    }))
+    stats_json.write_text(
+        json.dumps(
+            {
+                "total_requests": 5,
+                "total_original_tokens": 500,
+                "total_compressed_tokens": 300,
+                "sessions": {},
+                "recent_compressions": [
+                    {
+                        "ts": "10:00:00",
+                        "session_id": "abc",
+                        "original": 100,
+                        "compressed": 60,
+                        "saved": 40,
+                    },
+                    {
+                        "ts": "10:01:00",
+                        "session_id": "def",
+                        "original": 200,
+                        "compressed": 120,
+                        "saved": 80,
+                    },
+                ],
+            }
+        )
+    )
     conn = init_db(str(tmp_path / "metrics.db"))
     migrate_from_json(conn, json_path=str(stats_json))
     count = conn.execute("SELECT COUNT(*) FROM compressions").fetchone()[0]
@@ -46,12 +72,23 @@ def test_migrate_imports_rows(tmp_path):
 
 def test_migrate_is_idempotent(tmp_path):
     from proxy import init_db, migrate_from_json
+
     stats_json = tmp_path / "stats.json"
-    stats_json.write_text(json.dumps({
-        "recent_compressions": [
-            {"ts": "10:00:00", "session_id": "abc", "original": 100, "compressed": 60, "saved": 40},
-        ],
-    }))
+    stats_json.write_text(
+        json.dumps(
+            {
+                "recent_compressions": [
+                    {
+                        "ts": "10:00:00",
+                        "session_id": "abc",
+                        "original": 100,
+                        "compressed": 60,
+                        "saved": 40,
+                    },
+                ],
+            }
+        )
+    )
     conn = init_db(str(tmp_path / "metrics.db"))
     migrate_from_json(conn, json_path=str(stats_json))
     migrate_from_json(conn, json_path=str(stats_json))
@@ -62,6 +99,7 @@ def test_migrate_is_idempotent(tmp_path):
 
 def test_migrate_no_json(tmp_path):
     from proxy import init_db, migrate_from_json
+
     conn = init_db(str(tmp_path / "metrics.db"))
     migrate_from_json(conn, json_path=str(tmp_path / "nonexistent.json"))
     conn.close()
@@ -69,6 +107,7 @@ def test_migrate_no_json(tmp_path):
 
 def test_load_stats_from_db(tmp_path):
     from proxy import init_db, load_stats_from_db, stats
+
     conn = init_db(str(tmp_path / "metrics.db"))
     conn.executemany(
         "INSERT INTO compressions (ts, session_id, model, original_tokens, compressed_tokens, latency_ms) VALUES (?,?,?,?,?,?)",
@@ -94,23 +133,50 @@ def test_load_stats_from_db(tmp_path):
 
 def test_recover_stats_from_backup(tmp_path):
     from collections import deque
-    from proxy import init_db, migrate_from_json, recover_stats_from_backup, load_stats_from_db, stats
+
+    from proxy import (
+        init_db,
+        load_stats_from_db,
+        migrate_from_json,
+        recover_stats_from_backup,
+        stats,
+    )
 
     stats_json = tmp_path / "stats.json"
-    stats_json.write_text(json.dumps({
-        "total_requests": 50,
-        "total_original_tokens": 5000,
-        "total_compressed_tokens": 3000,
-        "sessions": {
-            "sess-a": {"requests": 30, "original_tokens": 3000, "compressed_tokens": 1800,
-                       "first_seen": "2026-06-01T10:00:00", "last_seen": "2026-06-10T10:00:00"},
-            "sess-b": {"requests": 20, "original_tokens": 2000, "compressed_tokens": 1200,
-                       "first_seen": "2026-06-01T11:00:00", "last_seen": "2026-06-10T11:00:00"},
-        },
-        "recent_compressions": [
-            {"ts": "10:00:00", "session_id": "sess-a", "original": 100, "compressed": 60, "saved": 40},
-        ],
-    }))
+    stats_json.write_text(
+        json.dumps(
+            {
+                "total_requests": 50,
+                "total_original_tokens": 5000,
+                "total_compressed_tokens": 3000,
+                "sessions": {
+                    "sess-a": {
+                        "requests": 30,
+                        "original_tokens": 3000,
+                        "compressed_tokens": 1800,
+                        "first_seen": "2026-06-01T10:00:00",
+                        "last_seen": "2026-06-10T10:00:00",
+                    },
+                    "sess-b": {
+                        "requests": 20,
+                        "original_tokens": 2000,
+                        "compressed_tokens": 1200,
+                        "first_seen": "2026-06-01T11:00:00",
+                        "last_seen": "2026-06-10T11:00:00",
+                    },
+                },
+                "recent_compressions": [
+                    {
+                        "ts": "10:00:00",
+                        "session_id": "sess-a",
+                        "original": 100,
+                        "compressed": 60,
+                        "saved": 40,
+                    },
+                ],
+            }
+        )
+    )
     conn = init_db(str(tmp_path / "metrics.db"))
     migrate_from_json(conn, json_path=str(stats_json))
     bak = tmp_path / "stats.json.bak"
@@ -136,6 +202,7 @@ def test_record_compression_writes_to_db(tmp_path):
     for dep in ("llmlingua", "torch", "transformers"):
         if dep not in sys.modules:
             import unittest.mock as _mock
+
             sys.modules[dep] = _mock.MagicMock()
 
     import proxy as proxy
@@ -205,6 +272,7 @@ def test_load_backend_llmlingua2(monkeypatch):
 
     monkeypatch.setattr("llmlingua.PromptCompressor", mock_cls)
     from proxy import load_backend
+
     b = load_backend()
     assert b["type"] == "llmlingua2"
     assert b["rate"] == 0.4
@@ -212,15 +280,23 @@ def test_load_backend_llmlingua2(monkeypatch):
 
 def test_load_backend_kompress_raises_without_package(monkeypatch):
     """load_backend with COMPRESSOR_MODEL=kompress raises RuntimeError when headroom-ai is absent."""
-    import pytest
     import unittest.mock as mock
+
+    import pytest
 
     monkeypatch.setenv("COMPRESSOR_MODEL", "kompress")
     monkeypatch.delitem(sys.modules, "proxy", raising=False)
 
-    with mock.patch.dict(sys.modules, {"headroom": None, "headroom.transforms": None,
-                                        "headroom.transforms.kompress_compressor": None}):
+    with mock.patch.dict(
+        sys.modules,
+        {
+            "headroom": None,
+            "headroom.transforms": None,
+            "headroom.transforms.kompress_compressor": None,
+        },
+    ):
         import proxy as proxy
+
         monkeypatch.setattr(proxy, "_load_backend", proxy.load_backend)
         with pytest.raises((RuntimeError, ImportError)):
             proxy._load_kompress_backend()
@@ -235,8 +311,8 @@ def test_timeseries_empty(client):
 
 def test_timeseries_structure(tmp_path, monkeypatch):
     """Task 10: /stats/timeseries returns hourly buckets with required keys."""
-    from unittest.mock import MagicMock
     from datetime import datetime, timedelta, timezone
+    from unittest.mock import MagicMock
 
     for dep in ("llmlingua", "torch", "transformers"):
         if dep not in sys.modules:
@@ -246,7 +322,6 @@ def test_timeseries_structure(tmp_path, monkeypatch):
 
     import proxy as proxy
     from proxy import init_db
-    from tests.conftest import make_mock_llmlingua
 
     conn = init_db(str(tmp_path / "metrics.db"))
 
@@ -256,11 +331,19 @@ def test_timeseries_structure(tmp_path, monkeypatch):
         [
             (
                 (now - timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%S"),
-                "sess1", "llmlingua2", 200, 120, 100.0,
+                "sess1",
+                "llmlingua2",
+                200,
+                120,
+                100.0,
             ),
             (
                 (now - timedelta(minutes=20)).strftime("%Y-%m-%dT%H:%M:%S"),
-                "sess2", "llmlingua2", 300, 180, 200.0,
+                "sess2",
+                "llmlingua2",
+                300,
+                180,
+                200.0,
             ),
         ],
     )
@@ -272,9 +355,12 @@ def test_timeseries_structure(tmp_path, monkeypatch):
     monkeypatch.setattr(proxy, "DB_PATH", tmp_path / "metrics.db")
     monkeypatch.setattr(proxy, "_migrate_db_location", lambda: None)
     monkeypatch.setattr(proxy, "migrate_from_json", lambda conn, json_path="stats.json": None)
-    monkeypatch.setattr(proxy, "recover_stats_from_backup", lambda conn, bak_path="stats.json.bak": None)
+    monkeypatch.setattr(
+        proxy, "recover_stats_from_backup", lambda conn, bak_path="stats.json.bak": None
+    )
 
     from starlette.testclient import TestClient
+
     with TestClient(proxy.app) as c:
         r = c.get("/stats/timeseries")
 
@@ -316,7 +402,6 @@ def test_stats_by_model(tmp_path, monkeypatch):
     import proxy as proxy
     from proxy import init_db
 
-    from pathlib import Path as _Path
     db_path = tmp_path / "metrics.db"
     monkeypatch.setattr(proxy, "DB_PATH", db_path)
     conn = init_db(str(db_path))
@@ -334,7 +419,9 @@ def test_stats_by_model(tmp_path, monkeypatch):
     mock_backend = {"type": "llmlingua2", "rate": 0.5}
     monkeypatch.setattr(proxy, "_load_backend", lambda: mock_backend)
     monkeypatch.setattr(proxy, "migrate_from_json", lambda conn, json_path="stats.json": None)
-    monkeypatch.setattr(proxy, "recover_stats_from_backup", lambda conn, bak_path="stats.json.bak": None)
+    monkeypatch.setattr(
+        proxy, "recover_stats_from_backup", lambda conn, bak_path="stats.json.bak": None
+    )
     monkeypatch.setattr(proxy, "_migrate_db_location", lambda: None)
 
     with TestClient(proxy.app) as c:
@@ -354,6 +441,7 @@ def test_stats_by_model(tmp_path, monkeypatch):
 def test_no_utcnow_in_source():
     """Task 1: Verify that datetime.utcnow is not used in proxy.py."""
     from pathlib import Path
+
     src = Path(__file__).parent.parent / "proxy.py"
     source = src.read_text()
     assert "utcnow" not in source, "Found deprecated datetime.utcnow in proxy.py"
@@ -362,6 +450,7 @@ def test_no_utcnow_in_source():
 # ---------------------------------------------------------------------------
 # Task 2: chunk_text helpers and multi-chunk compress_llmlingua2
 # ---------------------------------------------------------------------------
+
 
 def test_chunk_text_short_returns_single(monkeypatch):
     """Text under 400 tokens is returned as a single-element list."""
@@ -420,7 +509,7 @@ def test_compress_llmlingua2_multi_chunk(monkeypatch):
     monkeypatch.delitem(sys.modules, "proxy", raising=False)
 
     import proxy as proxy
-    from tests.conftest import make_mock_llmlingua, MOCK_COMPRESS_RESULT
+    from tests.conftest import MOCK_COMPRESS_RESULT, make_mock_llmlingua
 
     mock_compressor = make_mock_llmlingua()
     mock_backend = {"type": "llmlingua2", "compressor": mock_compressor, "rate": 0.5}
@@ -434,8 +523,8 @@ def test_compress_llmlingua2_multi_chunk(monkeypatch):
     # compress_prompt should have been called once per chunk (2 total)
     assert mock_compressor.compress_prompt.call_count == 2
     # Token counts should be aggregated across both chunks
-    assert orig_tokens == MOCK_COMPRESS_RESULT["origin_tokens"] * 2       # 100 * 2
-    assert comp_tokens == MOCK_COMPRESS_RESULT["compressed_tokens"] * 2   # 60 * 2
+    assert orig_tokens == MOCK_COMPRESS_RESULT["origin_tokens"] * 2  # 100 * 2
+    assert comp_tokens == MOCK_COMPRESS_RESULT["compressed_tokens"] * 2  # 60 * 2
 
 
 def test_load_backend_llmlingua2_large(monkeypatch):
@@ -455,6 +544,7 @@ def test_load_backend_llmlingua2_large(monkeypatch):
 
     monkeypatch.setattr("llmlingua.PromptCompressor", mock_cls)
     from proxy import load_backend
+
     b = load_backend()
     assert b["type"] == "llmlingua2-large"
     assert b["rate"] == 0.45
@@ -480,6 +570,7 @@ def test_session_compressions_pagination(client):
 
     # Create a tracker with session_id to test with real data
     from proxy import _db_conn
+
     tracker_slug = "test-slug-123"
     tracker_name = "Test Tracker"
     session_id = "session-123"
@@ -537,15 +628,18 @@ def test_langfuse_status_enabled(client, monkeypatch):
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-lf-test123")
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-lf-test456")
     from unittest.mock import MagicMock, patch
+
     mock_client = MagicMock()
     with patch("langfuse.Langfuse", return_value=mock_client):
         import langfuse_tracer
+
         langfuse_tracer.tracer.init()
     resp = client.get("/admin/langfuse-status")
     assert resp.status_code == 200
     assert resp.json()["enabled"] is True
     # cleanup
     import langfuse_tracer
+
     langfuse_tracer.tracer._client = None
 
 
@@ -557,6 +651,7 @@ def test_session_rtk_commands_pagination(client):
 
     # Create a tracker with session_id to test with real data
     from proxy import _db_conn
+
     tracker_slug = "test-rtk-slug-123"
     tracker_name = "Test RTK Tracker"
     session_id = "rtk-session-123"
@@ -570,7 +665,16 @@ def test_session_rtk_commands_pagination(client):
     for i in range(10):
         _db_conn.execute(
             "INSERT INTO rtk_events (ts, session_id, rtk_cmd, input_tokens, output_tokens, saved_tokens, savings_pct, project_path) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (f"2026-06-27T10:0{i}:00", session_id, f"rtk gain --iteration {i}", 100 + i * 10, 50 + i * 5, 25 + i * 2, 25.0 + i, f"/path/to/project{i}"),
+            (
+                f"2026-06-27T10:0{i}:00",
+                session_id,
+                f"rtk gain --iteration {i}",
+                100 + i * 10,
+                50 + i * 5,
+                25 + i * 2,
+                25.0 + i,
+                f"/path/to/project{i}",
+            ),
         )
     _db_conn.commit()
 

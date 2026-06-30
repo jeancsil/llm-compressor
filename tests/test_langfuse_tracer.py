@@ -1,14 +1,15 @@
 import asyncio
 from unittest.mock import MagicMock, patch
-import pytest
 
 
 def make_tracer():
     import langfuse_tracer as mod
+
     return mod.LangfuseTracer()
 
 
 # --- enabled / disabled ---
+
 
 def test_disabled_when_no_keys(monkeypatch):
     monkeypatch.delenv("LANGFUSE_PUBLIC_KEY", raising=False)
@@ -47,6 +48,7 @@ def test_disabled_when_langfuse_not_installed(monkeypatch):
 
 # --- log_request disabled ---
 
+
 def test_log_request_noop_when_disabled(monkeypatch):
     monkeypatch.delenv("LANGFUSE_PUBLIC_KEY", raising=False)
     monkeypatch.delenv("LANGFUSE_SECRET_KEY", raising=False)
@@ -56,6 +58,7 @@ def test_log_request_noop_when_disabled(monkeypatch):
 
 
 # --- log_request enabled ---
+
 
 def test_log_request_creates_generation(monkeypatch):
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-lf-test")
@@ -72,7 +75,8 @@ def test_log_request_creates_generation(monkeypatch):
         await t.log_request(
             [{"role": "user", "content": "hello"}],
             [{"role": "user", "content": "hi"}],
-            "system orig", "system compressed",
+            "system orig",
+            "system compressed",
             "response text",
             {"compression_ratio": 0.55, "anthropic_model": "claude-haiku-4-5"},
         )
@@ -126,6 +130,7 @@ def test_log_request_swallows_errors(monkeypatch):
 
 # --- add_to_dataset ---
 
+
 def test_add_to_dataset_calls_create_item(monkeypatch):
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-lf-test")
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-lf-test")
@@ -174,6 +179,7 @@ def test_add_to_dataset_swallows_errors(monkeypatch):
 
 # --- attach_feedback ---
 
+
 def test_attach_feedback_calls_create_score(monkeypatch):
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-lf-test")
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-lf-test")
@@ -184,6 +190,7 @@ def test_attach_feedback_calls_create_score(monkeypatch):
         t.init()
 
     import uuid as _uuid
+
     trace_id = str(_uuid.uuid4())
 
     async def run():
@@ -227,6 +234,7 @@ def test_attach_feedback_noop_when_disabled(monkeypatch):
 
 
 # --- status ---
+
 
 def test_status_disabled(monkeypatch):
     monkeypatch.delenv("LANGFUSE_PUBLIC_KEY", raising=False)

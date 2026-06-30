@@ -4,6 +4,7 @@ These tests parse Makefile shell fragments so regressions like
 "nohup VAR=val cmd" (treated as a filename by nohup) are caught before
 they waste debugging time in production.
 """
+
 import os
 import re
 import subprocess
@@ -29,14 +30,14 @@ def _restart_nohup_lines() -> list[str]:
 # nohup env-var forwarding (the bug that killed us)
 # ---------------------------------------------------------------------------
 
+
 class TestMakefileRestartTarget:
     def test_nohup_does_not_have_inline_var_assignment(self):
         """nohup VAR=val cmd is invalid — nohup treats VAR=val as a filename."""
         for line in _restart_nohup_lines():
             bad = re.search(r"nohup\s+[A-Z_]+=\S+", line)
             assert bad is None, (
-                f"'nohup VAR=val' treats VAR=val as a filename.\n"
-                f"Offending line: {line}"
+                f"'nohup VAR=val' treats VAR=val as a filename.\nOffending line: {line}"
             )
 
     def test_nohup_calls_uv_directly(self):
@@ -50,6 +51,7 @@ class TestMakefileRestartTarget:
 # ---------------------------------------------------------------------------
 # stats target must not crash when proxy is down
 # ---------------------------------------------------------------------------
+
 
 class TestMakefileStatsTarget:
     def test_stats_captures_before_json_parse(self):
@@ -80,6 +82,7 @@ class TestMakefileStatsTarget:
 # ---------------------------------------------------------------------------
 # langfuse targets safe when proxy is down
 # ---------------------------------------------------------------------------
+
 
 class TestMakefileLangfuseTargets:
     def _target_recipe(self, name: str) -> str:
@@ -125,6 +128,7 @@ class TestMakefileLangfuseTargets:
 # stop: no crash when PID file absent
 # ---------------------------------------------------------------------------
 
+
 class TestMakefileStopTarget:
     def test_stop_recipe_handles_missing_pid_file(self):
         """Static check: stop recipe must have an else branch for missing PID file.
@@ -134,7 +138,9 @@ class TestMakefileStopTarget:
         stop_block = re.search(r"^stop:.*?(?=^\S|\Z)", text, re.MULTILINE | re.DOTALL)
         assert stop_block, "stop: target not found"
         recipe = stop_block.group(0)
-        assert "else" in recipe, "stop target has no else branch — crashes when .proxy.pid is absent"
+        assert "else" in recipe, (
+            "stop target has no else branch — crashes when .proxy.pid is absent"
+        )
         assert "nothing to stop" in recipe or "not found" in recipe, (
             "stop target doesn't print a helpful message when PID file is absent"
         )
@@ -143,6 +149,7 @@ class TestMakefileStopTarget:
 # ---------------------------------------------------------------------------
 # check: always exits 0
 # ---------------------------------------------------------------------------
+
 
 class TestMakefileCheckTarget:
     def test_check_exits_zero_regardless_of_proxy_state(self):
@@ -171,18 +178,22 @@ class TestMakefileCheckTarget:
 # shell syntax check on the nohup env line
 # ---------------------------------------------------------------------------
 
+
 class TestMakefileRestartShellSyntax:
     def test_nohup_env_line_is_valid_shell(self):
         lines = _restart_nohup_lines()
         assert lines, "No nohup line in restart recipe"
-        script = "\n".join([
-            "#!/bin/bash",
-            "ANTHROPIC_API_KEY=test",
-            "ANTHROPIC_BASE_URL=http://localhost",
-            "LANGFUSE_HOST=test",
-            "LANGFUSE_PUBLIC_KEY=test",
-            "LANGFUSE_SECRET_KEY=test",
-        ] + lines)
+        script = "\n".join(
+            [
+                "#!/bin/bash",
+                "ANTHROPIC_API_KEY=test",
+                "ANTHROPIC_BASE_URL=http://localhost",
+                "LANGFUSE_HOST=test",
+                "LANGFUSE_PUBLIC_KEY=test",
+                "LANGFUSE_SECRET_KEY=test",
+            ]
+            + lines
+        )
         with tempfile.NamedTemporaryFile(mode="w", suffix=".sh", delete=False) as f:
             f.write(script)
             tmp = f.name

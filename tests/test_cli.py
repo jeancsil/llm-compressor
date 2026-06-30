@@ -1,15 +1,12 @@
 import subprocess
 import sys
 import threading
-from pathlib import Path
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from cli import _proxy_path, wait_for_proxy
 
-
 # --- _proxy_path ---
+
 
 def test_proxy_path_points_to_existing_file():
     p = _proxy_path()
@@ -18,6 +15,7 @@ def test_proxy_path_points_to_existing_file():
 
 
 # --- wait_for_proxy ---
+
 
 def test_wait_for_proxy_returns_true_when_healthy(tmp_path):
     """Spin a tiny stdlib HTTP server to simulate a healthy proxy."""
@@ -51,6 +49,7 @@ def test_wait_for_proxy_returns_false_on_timeout():
 
 # --- main() usage errors ---
 
+
 def _run_cli(*args):
     return subprocess.run(
         [sys.executable, str(_proxy_path().parent / "cli.py"), *args],
@@ -73,6 +72,7 @@ def test_main_wrong_subcommand_prints_usage():
 
 # --- main() happy-path (fully mocked) ---
 
+
 def test_main_starts_proxy_and_runs_agent():
     """Full happy-path: proxy starts, becomes healthy, agent exits 0."""
     proxy_mock = MagicMock()
@@ -89,6 +89,7 @@ def test_main_starts_proxy_and_runs_agent():
         patch("sys.exit") as mock_exit,
     ):
         import cli
+
         cli.main()
 
     mock_popen.assert_called_once()
@@ -109,6 +110,7 @@ def test_main_proxy_unhealthy_exits_1():
         patch("sys.exit") as mock_exit,
     ):
         import cli
+
         try:
             cli.main()
         except SystemExit:
@@ -129,6 +131,7 @@ def test_main_agent_not_found_exits_1():
         patch("sys.exit") as mock_exit,
     ):
         import cli
+
         try:
             cli.main()
         except SystemExit:

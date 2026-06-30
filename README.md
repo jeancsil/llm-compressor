@@ -1,35 +1,37 @@
 # LLM-Compressor
 
-<img src="assets/logo.svg" width="64" alt="LLM-Compressor logo">
+![LLM-Compressor — a local proxy that compresses every Claude Code prompt before it's billed](assets/hero-banner.svg)
 
-> A local proxy that compresses every Claude Code prompt before it's billed — **no workflow changes, one env var.**
-
-![savings summary](assets/savings-hero.svg)
-
----
+- **Transparent proxy** — one env var, no workflow changes; Claude never notices.
+- **~47–52% token savings** — compresses the `system` field and `user` messages before every API call.
+- **Live dashboard** — per-session compression ratios, sparklines, cache hit rate.
+- **4 compression models** — pick a tradeoff from fast/light to aggressive/precise.
+- **Stacks with [rtk](https://github.com/rtk-ai/rtk)** — two independent savings layers: shell output + API payload.
+- **Optional Langfuse tracing** — full observability into every compressed request.
 
 If you use Claude Code daily, every request resends the full conversation history plus your entire `CLAUDE.md`. Those tokens add up fast. LLM-Compressor sits transparently between Claude Code and the Anthropic API and shrinks each payload with a local compression model before forwarding it. Claude never notices. Your invoice does.
+
+---
 
 If this saves you tokens, ⭐ star the repo — it helps others find it.
 
 **[Install in 3 steps ↓](#install)** &nbsp;·&nbsp; [![Buy Me A Coffee](https://img.shields.io/badge/☕_Buy_me_a_coffee-FFDD00?style=flat&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/jeancsil)
 
 ```
-make install     install dependencies
-make start       start proxy
-make stop        stop proxy
-make restart     stop then start fresh
-make check       verify proxy is up
-make dashboard   open live dashboard
-make stats       print compression stats (JSON)
-make rtk-stats   print rtk shell-layer savings
+make install                       install dependencies
+uv run llm-compressor wrap claude  run Claude Code through the proxy
+make dashboard                     open live dashboard
+make stats                         print compression stats (JSON)
+make rtk-stats                     print rtk shell-layer savings
 ```
 
 ---
 
 ## By the numbers
 
-The chart below is generated from real usage data — `metrics.db` logged by this proxy across ~5 weeks of daily Claude Code sessions.
+The stats and chart below are generated from real usage data — `metrics.db` logged by this proxy across ~5 weeks of daily Claude Code sessions.
+
+![savings summary](assets/savings-hero.svg)
 
 ![daily savings timeline](assets/savings-timeline.svg)
 
@@ -66,54 +68,10 @@ cd llm-compressor
 make install
 ```
 
-## Start the proxy
+## Run Claude Code through the proxy
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
-make start
-```
-
-The first run downloads the compression model and loads it. Cold start is 20–90 seconds depending on the model. Once you see:
-
-```
-Model ready.
-INFO:     Uvicorn running on http://127.0.0.1:9099
-```
-
-the proxy is ready. Verify with:
-
-```bash
-make check
-```
-
-## Configure Claude Code
-
-In your Claude Code terminal (or add to `~/.zshrc`):
-
-```bash
-export ANTHROPIC_BASE_URL=http://127.0.0.1:9099
-claude
-```
-
-That's all. Claude Code now routes through the proxy transparently.
-
-To stop the proxy:
-
-```bash
-make stop
-```
-
-To stop compressing without stopping the proxy:
-
-```bash
-unset ANTHROPIC_BASE_URL
-```
-
-### Alternative: `wrap` — ephemeral daemon (no manual start/stop)
-
-Instead of running the proxy as a persistent daemon, you can let the CLI manage it automatically:
-
-```bash
 uv run llm-compressor wrap claude
 ```
 
@@ -121,10 +79,28 @@ This single command:
 1. Spawns the proxy in the background
 2. Waits until it's healthy (up to 30 s)
 3. Injects `ANTHROPIC_BASE_URL` for the child process only
-4. Runs your agent command with full TTY
-5. Kills the proxy when the agent exits
+4. Runs `claude` with full TTY
+5. Kills the proxy when `claude` exits
 
-Works with any agent: `claude`, `aider`, `cursor`, etc. The proxy is completely invisible — you never touch `make start` or `make stop`.
+The first run downloads the compression model and loads it, so the first `wrap` invocation takes 20–90 seconds depending on the model. Works with any agent: `wrap claude`, `wrap aider`, `wrap cursor`, etc. There's no proxy to manually start, stop, or point `ANTHROPIC_BASE_URL` at — it's invisible.
+
+### Alternative: persistent daemon
+
+If you'd rather run the proxy continuously across multiple terminals/agents instead of spawning it per-command:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+make start    # starts in foreground; Ctrl-C to stop, or `make stop` from another shell
+```
+
+Then point any client at it manually:
+
+```bash
+export ANTHROPIC_BASE_URL=http://127.0.0.1:9099
+claude
+```
+
+Verify it's up with `make check`. Unset `ANTHROPIC_BASE_URL` to stop compressing without killing the proxy.
 
 ---
 
