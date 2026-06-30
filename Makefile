@@ -46,7 +46,11 @@ stop:
 	else \
 		echo "No $(PID_FILE) found — nothing to stop"; \
 	fi
-	@lsof -ti tcp:$(PORT) -sTCP:LISTEN | xargs kill -9 2>/dev/null || true
+	@for i in 1 2 3; do \
+		lsof -ti tcp:$(PORT) -sTCP:LISTEN >/dev/null 2>&1 || break; \
+		sleep 1; \
+	done; \
+	lsof -ti tcp:$(PORT) -sTCP:LISTEN | xargs kill -9 2>/dev/null || true
 
 restart: stop
 	@if [ -z "$$ANTHROPIC_API_KEY" ]; then \
