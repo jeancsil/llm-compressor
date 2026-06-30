@@ -1,11 +1,11 @@
 import atexit
 import os
+import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-import subprocess
 
 PORT = "9099"
 _PROXY_URL = f"http://127.0.0.1:{PORT}"
