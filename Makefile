@@ -52,7 +52,7 @@ restart: stop
 	@if [ -z "$$ANTHROPIC_API_KEY" ]; then \
 		echo "Error: ANTHROPIC_API_KEY is not set"; exit 1; \
 	fi
-	@nohup env LANGFUSE_HOST="$(LANGFUSE_HOST)" LANGFUSE_PUBLIC_KEY="$$LANGFUSE_PUBLIC_KEY" LANGFUSE_SECRET_KEY="$$LANGFUSE_SECRET_KEY" ANTHROPIC_API_KEY="$$ANTHROPIC_API_KEY" ANTHROPIC_BASE_URL="$$ANTHROPIC_BASE_URL" uv run python proxy.py >> proxy.log 2>&1 & echo $$! > $(PID_FILE) && echo "Started PID $$(cat $(PID_FILE))"
+	@nohup uv run python proxy.py >> proxy.log 2>&1 & echo $$! > $(PID_FILE) && echo "Started PID $$(cat $(PID_FILE))"
 
 dashboard:
 	open $(URL)/dashboard

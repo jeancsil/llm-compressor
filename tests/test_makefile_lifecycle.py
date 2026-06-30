@@ -31,40 +31,19 @@ def _restart_nohup_lines() -> list[str]:
 
 class TestMakefileRestartTarget:
     def test_nohup_does_not_have_inline_var_assignment(self):
-        """nohup VAR=val cmd is invalid — nohup treats VAR=val as a filename.
-        Must use: nohup env VAR=val cmd
-        This catches regressions where env vars aren't properly forwarded through nohup.
-        """
+        """nohup VAR=val cmd is invalid — nohup treats VAR=val as a filename."""
         for line in _restart_nohup_lines():
             bad = re.search(r"nohup\s+[A-Z_]+=\S+", line)
             assert bad is None, (
-                f"'nohup VAR=val' treats VAR=val as a filename — use 'nohup env VAR=val cmd'.\n"
+                f"'nohup VAR=val' treats VAR=val as a filename.\n"
                 f"Offending line: {line}"
             )
 
-    def test_nohup_uses_env_to_forward_vars(self):
-        """nohup env ... is the correct pattern to pass env vars through nohup."""
+    def test_nohup_calls_uv_directly(self):
+        """nohup must call uv directly — 'nohup env ... uv' silently kills uv on macOS."""
         for line in _restart_nohup_lines():
-            assert re.search(r"nohup\s+env\b", line), (
-                f"nohup line doesn't use 'env' to forward variables: {line}"
-            )
-
-    def test_restart_forwards_anthropic_api_key(self):
-        for line in _restart_nohup_lines():
-            assert "ANTHROPIC_API_KEY" in line, (
-                "ANTHROPIC_API_KEY not forwarded in restart nohup line"
-            )
-
-    def test_restart_forwards_langfuse_host(self):
-        for line in _restart_nohup_lines():
-            assert "LANGFUSE_HOST" in line, (
-                "LANGFUSE_HOST not forwarded in restart nohup line"
-            )
-
-    def test_restart_forwards_langfuse_keys(self):
-        for line in _restart_nohup_lines():
-            assert "LANGFUSE_PUBLIC_KEY" in line and "LANGFUSE_SECRET_KEY" in line, (
-                "LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY not forwarded in restart nohup line"
+            assert re.search(r"nohup\s+uv\b", line), (
+                f"nohup must call uv directly (not via env): {line}"
             )
 
 
