@@ -1015,7 +1015,7 @@ dev = [
     { name = "pytest", specifier = ">=9.1.0" },
     { name = "pytest-cov", specifier = ">=7.1.0" },
 ]
-langfuse = [{ name = "langfuse", specifier = ">=2.0" }]
+langfuse = [{ name = "langfuse", specifier = ">=3.0" }]
 
 [[package]]
 name = "llmlingua"

@@ -553,6 +553,12 @@ async def lifespan(app: FastAPI):
     _lf_tracer.init()
     # print handled inside tracer.init()
     yield
+    # Flush langfuse traces before shutdown
+    if _lf_tracer.enabled and _lf_tracer._client:
+        try:
+            _lf_tracer._client.flush()
+        except Exception:
+            pass
     # Release model references before process exit to avoid MPS semaphore leaks
     backend = None
     import gc
