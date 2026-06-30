@@ -19,6 +19,17 @@ make stats      # Print compression stats as JSON
 make rtk-stats  # Print rtk shell-layer savings
 ```
 
+### wrap CLI (ephemeral daemon)
+
+`cli.py` provides `llm-compressor wrap <cmd>` — starts the proxy as a background process, injects `ANTHROPIC_BASE_URL`, runs the command, then kills the proxy on exit. No `make start`/`make stop` needed.
+
+```bash
+uv run llm-compressor wrap claude
+uv run llm-compressor wrap aider
+```
+
+Entry point registered in `pyproject.toml`; install with `uv pip install -e .` then the binary lives at `.venv/bin/llm-compressor`.
+
 ### Langfuse observability (optional)
 
 ```bash
