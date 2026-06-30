@@ -1,6 +1,5 @@
 import asyncio
 import os
-from datetime import datetime, timezone
 
 
 class LangfuseTracer:
@@ -65,30 +64,25 @@ class LangfuseTracer:
         metadata: dict,
         tags: list,
     ) -> None:
-        start = datetime.now(timezone.utc)
         try:
-            trace = self._client.trace(
-                name="proxy-request",
-                input={
-                    "original_messages": original_messages,
-                    "original_system": original_system,
-                },
-                tags=tags,
-                metadata=metadata,
-            )
-            trace.generation(
+            obs = self._client.start_observation(
                 name="anthropic-call",
-                model=metadata.get("anthropic_model", "unknown"),
+                as_type="generation",
                 input={
                     "messages": compressed_messages,
                     "system": compressed_system,
                 },
                 output={"text": response_text},
-                start_time=start,
-                end_time=datetime.now(timezone.utc),
-                metadata=metadata,
+                model=metadata.get("anthropic_model", "unknown"),
+                metadata={
+                    **metadata,
+                    "original_messages": original_messages,
+                    "original_system": original_system,
+                    "tags": tags,
+                },
             )
-            self._last_trace_id = trace.id
+            wrapper = obs.end()
+            self._last_trace_id = getattr(wrapper, "trace_id", None)
         except Exception as exc:
             print(f"[langfuse] trace failed: {exc}")
 
@@ -130,7 +124,7 @@ class LangfuseTracer:
 
     async def _attach_feedback(self, trace_id: str, score: float, comment: str) -> None:
         try:
-            self._client.score(
+            self._client.create_score(
                 trace_id=trace_id,
                 name="quality",
                 value=max(0.0, min(1.0, score)),

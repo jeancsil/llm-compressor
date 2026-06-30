@@ -57,12 +57,12 @@ def test_log_request_noop_when_disabled(monkeypatch):
 
 # --- log_request enabled ---
 
-def test_log_request_creates_trace_and_generation(monkeypatch):
+def test_log_request_creates_generation(monkeypatch):
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-lf-test")
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-lf-test")
     mock_lf = MagicMock()
-    mock_trace = MagicMock()
-    mock_lf.trace.return_value = mock_trace
+    mock_obs = MagicMock()
+    mock_lf.start_observation.return_value = mock_obs
 
     with patch("langfuse.Langfuse", return_value=mock_lf):
         t = make_tracer()
@@ -79,17 +79,19 @@ def test_log_request_creates_trace_and_generation(monkeypatch):
         await asyncio.sleep(0)
 
     asyncio.run(run())
-    assert mock_lf.trace.called
-    assert mock_trace.generation.called
-    gen_kwargs = mock_trace.generation.call_args.kwargs
-    assert gen_kwargs["output"] == {"text": "response text"}
+    assert mock_lf.start_observation.called
+    kwargs = mock_lf.start_observation.call_args.kwargs
+    assert kwargs["as_type"] == "generation"
+    assert kwargs["output"] == {"text": "response text"}
+    assert kwargs["model"] == "claude-haiku-4-5"
+    assert mock_obs.end.called
 
 
 def test_log_request_passes_tags(monkeypatch):
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-lf-test")
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-lf-test")
     mock_lf = MagicMock()
-    mock_lf.trace.return_value = MagicMock()
+    mock_lf.start_observation.return_value = MagicMock()
 
     with patch("langfuse.Langfuse", return_value=mock_lf):
         t = make_tracer()
@@ -100,16 +102,16 @@ def test_log_request_passes_tags(monkeypatch):
         await asyncio.sleep(0)
 
     asyncio.run(run())
-    trace_kwargs = mock_lf.trace.call_args.kwargs
-    assert "streaming" in trace_kwargs["tags"]
-    assert "llmlingua2" in trace_kwargs["tags"]
+    kwargs = mock_lf.start_observation.call_args.kwargs
+    assert "streaming" in kwargs["metadata"]["tags"]
+    assert "llmlingua2" in kwargs["metadata"]["tags"]
 
 
 def test_log_request_swallows_errors(monkeypatch):
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-lf-test")
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-lf-test")
     mock_lf = MagicMock()
-    mock_lf.trace.side_effect = RuntimeError("langfuse is down")
+    mock_lf.start_observation.side_effect = RuntimeError("langfuse is down")
 
     with patch("langfuse.Langfuse", return_value=mock_lf):
         t = make_tracer()
@@ -172,7 +174,7 @@ def test_add_to_dataset_swallows_errors(monkeypatch):
 
 # --- attach_feedback ---
 
-def test_attach_feedback_calls_score(monkeypatch):
+def test_attach_feedback_calls_create_score(monkeypatch):
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-lf-test")
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-lf-test")
     mock_lf = MagicMock()
@@ -189,8 +191,8 @@ def test_attach_feedback_calls_score(monkeypatch):
         await asyncio.sleep(0)
 
     asyncio.run(run())
-    assert mock_lf.score.called
-    kwargs = mock_lf.score.call_args.kwargs
+    assert mock_lf.create_score.called
+    kwargs = mock_lf.create_score.call_args.kwargs
     assert kwargs["trace_id"] == trace_id
     assert kwargs["value"] == 0.8
     assert kwargs["name"] == "quality"
@@ -211,7 +213,7 @@ def test_attach_feedback_clamps_score(monkeypatch):
         await asyncio.sleep(0)
 
     asyncio.run(run())
-    scores = [c.kwargs["value"] for c in mock_lf.score.call_args_list]
+    scores = [c.kwargs["value"] for c in mock_lf.create_score.call_args_list]
     assert scores[0] == 1.0
     assert scores[1] == 0.0
 
