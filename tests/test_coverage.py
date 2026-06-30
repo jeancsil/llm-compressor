@@ -67,23 +67,22 @@ Coverage gaps addressed (by proxy.py line range):
   1341-386 proxy_messages endpoint (streaming + non-streaming + errors)
 """
 
-import json
 import platform
 import sqlite3
 import sys
+import threading as _threading_mod
 from collections import deque
 from datetime import datetime, timezone
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
 from starlette.testclient import TestClient
 
-
 # ---------------------------------------------------------------------------
 # Helper: stub heavy deps before importing proxy in isolation tests
 # ---------------------------------------------------------------------------
+
 
 def _stub_heavy_deps(monkeypatch):
     for dep in ("llmlingua", "torch", "transformers"):
@@ -96,12 +95,14 @@ def _fresh_proxy(monkeypatch):
     _stub_heavy_deps(monkeypatch)
     monkeypatch.delitem(sys.modules, "proxy", raising=False)
     import proxy as _proxy
+
     return _proxy
 
 
 # ===========================================================================
 # migrate_from_json – error path (lines 140-141)
 # ===========================================================================
+
 
 def test_migrate_from_json_error_path(tmp_path, monkeypatch):
     """migrate_from_json swallows errors gracefully when JSON is corrupt."""
@@ -119,6 +120,7 @@ def test_migrate_from_json_error_path(tmp_path, monkeypatch):
 # recover_stats_from_backup – absent file (line 153)
 # ===========================================================================
 
+
 def test_recover_stats_from_backup_no_file(tmp_path, monkeypatch):
     """recover_stats_from_backup returns early when backup file is absent."""
     _stub_heavy_deps(monkeypatch)
@@ -132,6 +134,7 @@ def test_recover_stats_from_backup_no_file(tmp_path, monkeypatch):
 # ===========================================================================
 # recover_stats_from_backup – error path (lines 184-185)
 # ===========================================================================
+
 
 def test_recover_stats_from_backup_corrupt_json(tmp_path, monkeypatch):
     """recover_stats_from_backup swallows errors on corrupt backup."""
@@ -148,6 +151,7 @@ def test_recover_stats_from_backup_corrupt_json(tmp_path, monkeypatch):
 # ===========================================================================
 # load_stats_from_db – meta query exception (lines 200-201)
 # ===========================================================================
+
 
 def test_load_stats_from_db_meta_exception(tmp_path, monkeypatch):
     """load_stats_from_db falls back gracefully when meta table is absent."""
@@ -170,6 +174,7 @@ def test_load_stats_from_db_meta_exception(tmp_path, monkeypatch):
 # _load_llmlingua2_backend – backend_key=None path (line 251)
 # ===========================================================================
 
+
 def test_load_llmlingua2_backend_none_key(monkeypatch):
     """_load_llmlingua2_backend reads COMPRESSOR_MODEL env when key is None."""
     proxy = _fresh_proxy(monkeypatch)
@@ -178,7 +183,10 @@ def test_load_llmlingua2_backend_none_key(monkeypatch):
 
     mock_cls = MagicMock()
     mock_cls.return_value.compress_prompt.return_value = {
-        "compressed_prompt": "x", "origin_tokens": 10, "compressed_tokens": 6, "ratio": 0.6,
+        "compressed_prompt": "x",
+        "origin_tokens": 10,
+        "compressed_tokens": 6,
+        "ratio": 0.6,
     }
     monkeypatch.setattr("llmlingua.PromptCompressor", mock_cls)
 
@@ -189,6 +197,7 @@ def test_load_llmlingua2_backend_none_key(monkeypatch):
 # ===========================================================================
 # _load_kompress_backend – success path (lines 285-297)
 # ===========================================================================
+
 
 def test_load_kompress_backend_success(monkeypatch):
     """_load_kompress_backend returns a valid backend dict when headroom is present."""
@@ -219,6 +228,7 @@ def test_load_kompress_backend_success(monkeypatch):
 # _load_dual_backend (lines 307-312)
 # ===========================================================================
 
+
 def test_load_dual_backend(monkeypatch):
     """_load_dual_backend loads both backends and sets dual_mode globals."""
     proxy = _fresh_proxy(monkeypatch)
@@ -239,6 +249,7 @@ def test_load_dual_backend(monkeypatch):
 # load_backend – DB meta path (lines 329-330), dual (334), kompress (336)
 # ===========================================================================
 
+
 def test_load_backend_reads_db_meta(tmp_path, monkeypatch):
     """load_backend uses current_model from DB meta when _db_conn is set."""
     proxy = _fresh_proxy(monkeypatch)
@@ -250,7 +261,10 @@ def test_load_backend_reads_db_meta(tmp_path, monkeypatch):
 
     mock_cls = MagicMock()
     mock_cls.return_value.compress_prompt.return_value = {
-        "compressed_prompt": "x", "origin_tokens": 10, "compressed_tokens": 6, "ratio": 0.6,
+        "compressed_prompt": "x",
+        "origin_tokens": 10,
+        "compressed_tokens": 6,
+        "ratio": 0.6,
     }
     monkeypatch.setattr("llmlingua.PromptCompressor", mock_cls)
 
@@ -289,6 +303,7 @@ def test_load_backend_kompress_dispatch(monkeypatch):
 # _pick_backend – dual mode path (line 346)
 # ===========================================================================
 
+
 def test_pick_backend_dual_mode(monkeypatch):
     """_pick_backend returns system/user backends when dual_mode is active."""
     proxy = _fresh_proxy(monkeypatch)
@@ -307,6 +322,7 @@ def test_pick_backend_dual_mode(monkeypatch):
 # lifespan teardown – torch exception handler (lines 372-373)
 # ===========================================================================
 
+
 def test_lifespan_teardown_torch_exception(tmp_path, monkeypatch):
     """Lifespan teardown swallows torch exceptions gracefully."""
     _stub_heavy_deps(monkeypatch)
@@ -321,7 +337,9 @@ def test_lifespan_teardown_torch_exception(tmp_path, monkeypatch):
     mock_backend = {"type": "llmlingua2", "compressor": MagicMock(), "rate": 0.5}
     monkeypatch.setattr(proxy, "_load_backend", lambda: mock_backend)
     monkeypatch.setattr(proxy, "migrate_from_json", lambda conn, json_path="stats.json": None)
-    monkeypatch.setattr(proxy, "recover_stats_from_backup", lambda conn, bak_path="stats.json.bak": None)
+    monkeypatch.setattr(
+        proxy, "recover_stats_from_backup", lambda conn, bak_path="stats.json.bak": None
+    )
     monkeypatch.setattr(proxy, "_migrate_db_location", lambda: None)
     monkeypatch.setattr(proxy, "DB_PATH", tmp_path / "metrics.db")
 
@@ -334,18 +352,20 @@ def test_lifespan_teardown_torch_exception(tmp_path, monkeypatch):
 # _try_link_pending_tracker – early return for "unknown" / empty session (line 444)
 # ===========================================================================
 
+
 def test_try_link_pending_tracker_early_returns(monkeypatch):
     """_try_link_pending_tracker is a no-op for 'unknown' or empty session_id."""
     proxy = _fresh_proxy(monkeypatch)
     monkeypatch.setattr(proxy, "_db_conn", None)
 
     proxy._try_link_pending_tracker("unknown")  # must not raise
-    proxy._try_link_pending_tracker("")          # must not raise
+    proxy._try_link_pending_tracker("")  # must not raise
 
 
 # ===========================================================================
 # record_request – session_name stored (line 470)
 # ===========================================================================
+
 
 def test_record_request_stores_session_name(monkeypatch):
     """record_request stores the optional session_name in stats."""
@@ -361,6 +381,7 @@ def test_record_request_stores_session_name(monkeypatch):
 # ===========================================================================
 # _rtk_db_path – Windows / Linux branches (lines 479-484)
 # ===========================================================================
+
 
 def test_rtk_db_path_darwin(tmp_path, monkeypatch):
     """_rtk_db_path returns the macOS Library path on Darwin."""
@@ -395,6 +416,7 @@ def test_rtk_db_path_linux(tmp_path, monkeypatch):
 # ===========================================================================
 # read_rtk_stats (lines 487-527)
 # ===========================================================================
+
 
 def test_read_rtk_stats_no_db(tmp_path, monkeypatch):
     """read_rtk_stats returns None when history.db is absent."""
@@ -441,7 +463,7 @@ def test_read_rtk_stats_with_since(tmp_path, monkeypatch):
         "INSERT INTO commands VALUES (?,?,?,?,?,?,?)",
         [
             (1, "2026-01-01T10:00:00", "git status", 100, 50, 30, 30.0),
-            (2, "2026-06-01T10:00:00", "git diff",   200, 100, 60, 30.0),
+            (2, "2026-06-01T10:00:00", "git diff", 200, 100, 60, 30.0),
         ],
     )
     conn.commit()
@@ -470,6 +492,7 @@ def test_read_rtk_stats_db_error(tmp_path, monkeypatch):
 # _char_split – long text (lines 542-543)
 # ===========================================================================
 
+
 def test_char_split_long_text(monkeypatch):
     """_char_split splits text longer than _CHUNK_MAX_CHARS."""
     proxy = _fresh_proxy(monkeypatch)
@@ -483,9 +506,11 @@ def test_char_split_long_text(monkeypatch):
 # _split_into_segments – sentence split inside a long paragraph (lines 560-565)
 # ===========================================================================
 
+
 def test_split_into_segments_long_para_sentence_split(monkeypatch):
     """_split_into_segments splits a long paragraph on sentence boundaries."""
     from tests.conftest import make_mock_llmlingua
+
     proxy = _fresh_proxy(monkeypatch)
 
     # Tokenizer returns 10 tokens per word → long para exceeds 400-token limit
@@ -506,9 +531,11 @@ def test_split_into_segments_long_para_sentence_split(monkeypatch):
 # (lines 570-573)
 # ===========================================================================
 
+
 def test_split_into_segments_sentence_fallback(monkeypatch):
     """_split_into_segments falls back to sentence splitting for a single paragraph."""
     from tests.conftest import make_mock_llmlingua
+
     proxy = _fresh_proxy(monkeypatch)
     mock_backend = {"type": "llmlingua2", "compressor": make_mock_llmlingua(), "rate": 0.5}
     monkeypatch.setattr(proxy, "backend", mock_backend)
@@ -521,6 +548,7 @@ def test_split_into_segments_sentence_fallback(monkeypatch):
 def test_split_into_segments_char_fallback(monkeypatch):
     """_split_into_segments falls back to _char_split when no sentence boundaries exist."""
     from tests.conftest import make_mock_llmlingua
+
     proxy = _fresh_proxy(monkeypatch)
     mock_backend = {"type": "llmlingua2", "compressor": make_mock_llmlingua(), "rate": 0.5}
     monkeypatch.setattr(proxy, "backend", mock_backend)
@@ -534,6 +562,7 @@ def test_split_into_segments_char_fallback(monkeypatch):
 # ===========================================================================
 # compress_text – short text (603), no backend (606), error (610-612)
 # ===========================================================================
+
 
 def test_compress_text_short_unchanged(monkeypatch):
     """compress_text returns text unchanged when len <= 200."""
@@ -557,6 +586,7 @@ def test_compress_text_no_backend_unchanged(monkeypatch):
 def test_compress_text_error_returns_original(monkeypatch):
     """compress_text returns the original text when compression raises."""
     from tests.conftest import make_mock_llmlingua
+
     proxy = _fresh_proxy(monkeypatch)
 
     mock_compressor = make_mock_llmlingua()
@@ -576,6 +606,7 @@ def test_compress_text_error_returns_original(monkeypatch):
 # _compress_with – kompress dispatch (line 626)
 # ===========================================================================
 
+
 def test_compress_with_kompress_dispatch(monkeypatch):
     """_compress_with routes kompress type to _compress_kompress."""
     proxy = _fresh_proxy(monkeypatch)
@@ -585,7 +616,10 @@ def test_compress_with_kompress_dispatch(monkeypatch):
     mock_result.original_tokens = 100
     mock_result.compressed_tokens = 60
 
-    active = {"type": "kompress", "compressor": MagicMock(compress=MagicMock(return_value=mock_result))}
+    active = {
+        "type": "kompress",
+        "compressor": MagicMock(compress=MagicMock(return_value=mock_result)),
+    }
     text, orig, comp = proxy._compress_with(active, "some text")
     assert text == "compressed text"
     assert orig == 100 and comp == 60
@@ -594,6 +628,7 @@ def test_compress_with_kompress_dispatch(monkeypatch):
 # ===========================================================================
 # compress_backend (lines 633-635)
 # ===========================================================================
+
 
 def test_compress_backend_raises_when_no_backend(monkeypatch):
     """compress_backend raises RuntimeError when global backend is None."""
@@ -606,6 +641,7 @@ def test_compress_backend_raises_when_no_backend(monkeypatch):
 def test_compress_backend_success(monkeypatch):
     """compress_backend delegates to global backend."""
     from tests.conftest import make_mock_llmlingua
+
     proxy = _fresh_proxy(monkeypatch)
     mock_backend = {"type": "llmlingua2", "compressor": make_mock_llmlingua(), "rate": 0.5}
     monkeypatch.setattr(proxy, "backend", mock_backend)
@@ -618,6 +654,7 @@ def test_compress_backend_success(monkeypatch):
 # _compress_kompress (lines 664-665)
 # ===========================================================================
 
+
 def test_compress_kompress(monkeypatch):
     """_compress_kompress extracts fields from compressor.compress() result."""
     proxy = _fresh_proxy(monkeypatch)
@@ -627,7 +664,10 @@ def test_compress_kompress(monkeypatch):
     mock_result.original_tokens = 200
     mock_result.compressed_tokens = 120
 
-    active = {"type": "kompress", "compressor": MagicMock(compress=MagicMock(return_value=mock_result))}
+    active = {
+        "type": "kompress",
+        "compressor": MagicMock(compress=MagicMock(return_value=mock_result)),
+    }
     text, orig, comp = proxy._compress_kompress(active, "input")
     assert text == "out" and orig == 200 and comp == 120
 
@@ -636,11 +676,15 @@ def test_compress_kompress(monkeypatch):
 # compress_system_field (lines 670-678)
 # ===========================================================================
 
+
 def test_compress_system_field_string(monkeypatch):
     """compress_system_field compresses a string system field."""
     from tests.conftest import make_mock_llmlingua
+
     proxy = _fresh_proxy(monkeypatch)
-    monkeypatch.setattr(proxy, "backend", {"type": "llmlingua2", "compressor": make_mock_llmlingua(), "rate": 0.5})
+    monkeypatch.setattr(
+        proxy, "backend", {"type": "llmlingua2", "compressor": make_mock_llmlingua(), "rate": 0.5}
+    )
     monkeypatch.setattr(proxy, "dual_mode", False)
     monkeypatch.setattr(proxy, "backend_user", None)
     monkeypatch.setattr(proxy, "backend_system", None)
@@ -653,8 +697,11 @@ def test_compress_system_field_string(monkeypatch):
 def test_compress_system_field_list_with_text_and_non_text(monkeypatch):
     """compress_system_field compresses text blocks and passes non-text blocks through."""
     from tests.conftest import make_mock_llmlingua
+
     proxy = _fresh_proxy(monkeypatch)
-    monkeypatch.setattr(proxy, "backend", {"type": "llmlingua2", "compressor": make_mock_llmlingua(), "rate": 0.5})
+    monkeypatch.setattr(
+        proxy, "backend", {"type": "llmlingua2", "compressor": make_mock_llmlingua(), "rate": 0.5}
+    )
     monkeypatch.setattr(proxy, "dual_mode", False)
     monkeypatch.setattr(proxy, "backend_user", None)
     monkeypatch.setattr(proxy, "backend_system", None)
@@ -680,6 +727,7 @@ def test_compress_system_field_other_type(monkeypatch):
 # compress_messages (lines 682-700)
 # ===========================================================================
 
+
 def test_compress_messages_skips_assistant(monkeypatch):
     """compress_messages passes assistant messages through unchanged."""
     proxy = _fresh_proxy(monkeypatch)
@@ -693,20 +741,25 @@ def test_compress_messages_skips_assistant(monkeypatch):
 def test_compress_messages_list_content(monkeypatch):
     """compress_messages compresses text blocks in list-typed content."""
     from tests.conftest import make_mock_llmlingua
+
     proxy = _fresh_proxy(monkeypatch)
-    monkeypatch.setattr(proxy, "backend", {"type": "llmlingua2", "compressor": make_mock_llmlingua(), "rate": 0.5})
+    monkeypatch.setattr(
+        proxy, "backend", {"type": "llmlingua2", "compressor": make_mock_llmlingua(), "rate": 0.5}
+    )
     monkeypatch.setattr(proxy, "dual_mode", False)
     monkeypatch.setattr(proxy, "backend_user", None)
     monkeypatch.setattr(proxy, "backend_system", None)
     monkeypatch.setattr(proxy, "_db_conn", None)
 
-    msgs = [{
-        "role": "user",
-        "content": [
-            {"type": "text", "text": "compress this " * 20},  # > 200 chars
-            {"type": "image_url", "url": "http://example.com/img.png"},  # non-text
-        ],
-    }]
+    msgs = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "compress this " * 20},  # > 200 chars
+                {"type": "image_url", "url": "http://example.com/img.png"},  # non-text
+            ],
+        }
+    ]
     result = proxy.compress_messages(msgs, "sess")
     # non-text block passed through unchanged
     assert result[0]["content"][1]["url"] == "http://example.com/img.png"
@@ -725,6 +778,7 @@ def test_compress_messages_non_string_non_list_content(monkeypatch):
 # ===========================================================================
 # build_headers (lines 709-711)
 # ===========================================================================
+
 
 def test_build_headers(client: TestClient):
     """build_headers filters hop-by-hop headers and forces content-type."""
@@ -755,6 +809,7 @@ def test_build_headers(client: TestClient):
 # ===========================================================================
 # get_stats – backend_loading (742), dual (749), kompress (756)
 # ===========================================================================
+
 
 def test_stats_while_loading(client: TestClient):
     """GET /stats shows loading=True when backend_loading is set."""
@@ -808,9 +863,9 @@ def test_stats_dual_aggregates_across_submodels(client: TestClient):
         proxy.backend = {"type": "dual"}
         d = client.get("/stats").json()
         assert d["compressor"]["model"] == "dual"
-        assert d["today"]["requests"] == 3          # 3 rows today, across all sub-models
+        assert d["today"]["requests"] == 3  # 3 rows today, across all sub-models
         assert d["today"]["tokens_saved"] == 80 + 240 + 150
-        assert d["alltime"]["requests"] == 4         # + the 2020 row
+        assert d["alltime"]["requests"] == 4  # + the 2020 row
         models = {m["model"] for m in d["by_model"]}
         assert {"kompress", "llmlingua2", "llmlingua2-large"} <= models
         # recent-activity must span sub-model rows in dual mode (not match model='dual')
@@ -840,6 +895,7 @@ def test_stats_kompress_backend(client: TestClient):
 # get_stats – rtk_events present (lines 925-931)
 # ===========================================================================
 
+
 def test_stats_includes_rtk_data(client: TestClient):
     """GET /stats returns rtk key when rtk_events has rows."""
     proxy = sys.modules["proxy"]
@@ -859,6 +915,7 @@ def test_stats_includes_rtk_data(client: TestClient):
 # ===========================================================================
 # get_timeseries – model filter (lines 984, 988)
 # ===========================================================================
+
 
 def test_timeseries_with_model_filter(client: TestClient):
     """GET /stats/timeseries?model=llmlingua2 filters to that model."""
@@ -880,18 +937,22 @@ def test_timeseries_with_model_filter(client: TestClient):
 # rtk_log endpoint (lines 1022-1046)
 # ===========================================================================
 
+
 def test_rtk_log_inserts_row(client: TestClient):
     """POST /rtk/log inserts a row and returns ok."""
-    r = client.post("/rtk/log", json={
-        "rtk_id": 99,
-        "ts": datetime.now(timezone.utc).isoformat(),
-        "session_id": "sess-rtk-log",
-        "rtk_cmd": "git status",
-        "input_tokens": 100,
-        "output_tokens": 50,
-        "saved_tokens": 30,
-        "savings_pct": 30.0,
-    })
+    r = client.post(
+        "/rtk/log",
+        json={
+            "rtk_id": 99,
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "session_id": "sess-rtk-log",
+            "rtk_cmd": "git status",
+            "input_tokens": 100,
+            "output_tokens": 50,
+            "saved_tokens": 30,
+            "savings_pct": 30.0,
+        },
+    )
     assert r.status_code == 200
     assert r.json()["ok"] is True
 
@@ -903,7 +964,10 @@ def test_rtk_log_idempotent_duplicate_id(client: TestClient):
         "ts": datetime.now(timezone.utc).isoformat(),
         "session_id": "sess-dup",
         "rtk_cmd": "git diff",
-        "input_tokens": 100, "output_tokens": 50, "saved_tokens": 30, "savings_pct": 30.0,
+        "input_tokens": 100,
+        "output_tokens": 50,
+        "saved_tokens": 30,
+        "savings_pct": 30.0,
     }
     client.post("/rtk/log", json=payload)
     r = client.post("/rtk/log", json=payload)
@@ -919,13 +983,19 @@ def test_rtk_log_db_error(client: TestClient, monkeypatch):
     bad_conn.execute.side_effect = Exception("disk full")
     monkeypatch.setattr(proxy, "_db_conn", bad_conn)
     try:
-        r = client.post("/rtk/log", json={
-            "rtk_id": 1,
-            "ts": datetime.now(timezone.utc).isoformat(),
-            "session_id": "s",
-            "rtk_cmd": "cmd",
-            "input_tokens": 1, "output_tokens": 1, "saved_tokens": 0, "savings_pct": 0.0,
-        })
+        r = client.post(
+            "/rtk/log",
+            json={
+                "rtk_id": 1,
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "session_id": "s",
+                "rtk_cmd": "cmd",
+                "input_tokens": 1,
+                "output_tokens": 1,
+                "saved_tokens": 0,
+                "savings_pct": 0.0,
+            },
+        )
         assert r.status_code == 500
     finally:
         monkeypatch.setattr(proxy, "_db_conn", orig_conn)
@@ -934,6 +1004,7 @@ def test_rtk_log_db_error(client: TestClient, monkeypatch):
 # ===========================================================================
 # session_dashboard – db not ready (line 1052)
 # ===========================================================================
+
 
 def test_session_dashboard_db_not_ready(client: TestClient, monkeypatch):
     """GET /dashboard/<slug> returns 503 when _db_conn is None."""
@@ -951,6 +1022,7 @@ def test_session_dashboard_db_not_ready(client: TestClient, monkeypatch):
 # dashboard endpoint (line 1068)
 # ===========================================================================
 
+
 def test_dashboard_returns_html(client: TestClient):
     """GET /dashboard returns the main dashboard HTML page."""
     r = client.get("/dashboard")
@@ -963,6 +1035,7 @@ def test_dashboard_returns_html(client: TestClient):
 # play endpoint (line 1073)
 # ===========================================================================
 
+
 def test_play_returns_html(client: TestClient):
     """GET /play returns the Playground HTML page."""
     r = client.get("/play")
@@ -973,6 +1046,7 @@ def test_play_returns_html(client: TestClient):
 # ===========================================================================
 # play_compress endpoint – all branches (lines 1084-1144)
 # ===========================================================================
+
 
 def test_play_compress_success(client: TestClient):
     """POST /play/compress returns compression stats for loaded backend."""
@@ -1011,8 +1085,13 @@ def test_play_compress_triggers_model_switch(client: TestClient, monkeypatch):
     orig_loading = proxy.backend_loading
     # Stub loader so no real model loads in the background thread
     monkeypatch.setattr(
-        proxy, "_load_llmlingua2_backend",
-        lambda backend_key=None: {"type": "llmlingua2-large", "rate": 0.5, "compressor": MagicMock()},
+        proxy,
+        "_load_llmlingua2_backend",
+        lambda backend_key=None: {
+            "type": "llmlingua2-large",
+            "rate": 0.5,
+            "compressor": MagicMock(),
+        },
     )
     try:
         r = client.post("/play/compress", json={"text": "hello", "model": "llmlingua2-large"})
@@ -1020,7 +1099,7 @@ def test_play_compress_triggers_model_switch(client: TestClient, monkeypatch):
         assert r.json()["loading"] is True
     finally:
         monkeypatch.setattr(proxy, "backend", orig_backend)
-        monkeypatch.setattr(proxy, "backend_loading", None)
+        monkeypatch.setattr(proxy, "backend_loading", orig_loading)
 
 
 def test_play_compress_same_model_already_loading(client: TestClient, monkeypatch):
@@ -1072,6 +1151,7 @@ def test_play_compress_no_model_but_loading(client: TestClient, monkeypatch):
 # set_model endpoint – all branches (lines 1158-1211)
 # ===========================================================================
 
+
 def test_set_model_unknown_returns_400(client: TestClient):
     """POST /admin/set-model with unknown model name returns 400."""
     r = client.post("/admin/set-model", json={"model": "gpt-4"})
@@ -1084,7 +1164,8 @@ def test_set_model_triggers_load(client: TestClient, monkeypatch):
     orig_backend = proxy.backend
     orig_loading = proxy.backend_loading
     monkeypatch.setattr(
-        proxy, "_load_llmlingua2_backend",
+        proxy,
+        "_load_llmlingua2_backend",
         lambda backend_key=None: {"type": "llmlingua2", "rate": 0.5, "compressor": MagicMock()},
     )
     try:
@@ -1093,7 +1174,7 @@ def test_set_model_triggers_load(client: TestClient, monkeypatch):
         assert r.json()["status"] == "loading"
     finally:
         monkeypatch.setattr(proxy, "backend", orig_backend)
-        monkeypatch.setattr(proxy, "backend_loading", None)
+        monkeypatch.setattr(proxy, "backend_loading", orig_loading)
 
 
 def test_set_model_clears_dual_globals(client: TestClient, monkeypatch):
@@ -1105,7 +1186,8 @@ def test_set_model_clears_dual_globals(client: TestClient, monkeypatch):
     orig_backend = proxy.backend
     orig_loading = proxy.backend_loading
     monkeypatch.setattr(
-        proxy, "_load_llmlingua2_backend",
+        proxy,
+        "_load_llmlingua2_backend",
         lambda backend_key=None: {"type": "llmlingua2", "rate": 0.5, "compressor": MagicMock()},
     )
     monkeypatch.setattr(proxy, "dual_mode", True)
@@ -1128,6 +1210,7 @@ def test_set_model_clears_dual_globals(client: TestClient, monkeypatch):
 # ===========================================================================
 # set_dual_models endpoint + _load_single_backend (dual sub-model routing)
 # ===========================================================================
+
 
 def test_set_dual_models_no_args_returns_400(client: TestClient):
     """POST /admin/set-dual-models with neither key returns 400."""
@@ -1200,7 +1283,8 @@ def test_load_single_backend_dispatches(monkeypatch):
     proxy = _fresh_proxy(monkeypatch)
     monkeypatch.setattr(proxy, "_load_kompress_backend", lambda: {"type": "kompress"})
     monkeypatch.setattr(
-        proxy, "_load_llmlingua2_backend",
+        proxy,
+        "_load_llmlingua2_backend",
         lambda backend_key=None: {"type": backend_key},
     )
     assert proxy._load_single_backend("kompress")["type"] == "kompress"
@@ -1228,6 +1312,7 @@ def test_load_backend_reads_dual_submodels_from_meta(tmp_path, monkeypatch):
 # clear_compression_texts endpoint (lines 1217-1234)
 # ===========================================================================
 
+
 def test_clear_compression_texts_all(client: TestClient):
     """DELETE /admin/compression-texts removes all stored text rows."""
     r = client.delete("/admin/compression-texts")
@@ -1246,6 +1331,7 @@ def test_clear_compression_texts_by_session(client: TestClient):
 # ===========================================================================
 # Tracker endpoints – db not ready paths (lines 1244, 1258, 1269, 1284)
 # ===========================================================================
+
 
 def test_create_tracker_db_not_ready(client: TestClient, monkeypatch):
     proxy = sys.modules["proxy"]
@@ -1297,6 +1383,7 @@ def test_get_all_trackers_db_not_ready(client: TestClient, monkeypatch):
 # get_session_compressions endpoint (lines 1302-1324)
 # ===========================================================================
 
+
 def test_get_session_compressions_not_found(client: TestClient):
     """GET /session/<slug>/compressions returns 404 for unknown slug."""
     r = client.get("/session/nonexistent/compressions")
@@ -1338,6 +1425,7 @@ def test_get_session_compressions_with_data(client: TestClient):
 # list_models endpoint (lines 1329-1336)
 # ===========================================================================
 
+
 def test_list_models_proxies_response(client: TestClient, monkeypatch):
     """GET /v1/models proxies to Anthropic and returns the response."""
     mock_response = MagicMock()
@@ -1360,6 +1448,7 @@ def test_list_models_proxies_response(client: TestClient, monkeypatch):
 # proxy_messages endpoint (lines 1341-1386)
 # ===========================================================================
 
+
 def test_proxy_messages_non_streaming(client: TestClient, monkeypatch):
     """POST /v1/messages (non-streaming) compresses payload and proxies."""
     mock_response = MagicMock()
@@ -1373,11 +1462,14 @@ def test_proxy_messages_non_streaming(client: TestClient, monkeypatch):
 
     monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: mock_http)
 
-    r = client.post("/v1/messages", json={
-        "model": "claude-3-haiku-20240307",
-        "max_tokens": 10,
-        "messages": [{"role": "user", "content": "Hello"}],
-    })
+    r = client.post(
+        "/v1/messages",
+        json={
+            "model": "claude-3-haiku-20240307",
+            "max_tokens": 10,
+            "messages": [{"role": "user", "content": "Hello"}],
+        },
+    )
     assert r.status_code == 200
 
 
@@ -1394,12 +1486,15 @@ def test_proxy_messages_compresses_system_field(client: TestClient, monkeypatch)
 
     monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: mock_http)
 
-    r = client.post("/v1/messages", json={
-        "model": "claude-3-haiku-20240307",
-        "max_tokens": 10,
-        "system": "You are a helpful assistant.",
-        "messages": [{"role": "user", "content": "Hello"}],
-    })
+    r = client.post(
+        "/v1/messages",
+        json={
+            "model": "claude-3-haiku-20240307",
+            "max_tokens": 10,
+            "system": "You are a helpful assistant.",
+            "messages": [{"role": "user", "content": "Hello"}],
+        },
+    )
     assert r.status_code == 200
 
 
@@ -1417,16 +1512,20 @@ def test_proxy_messages_anthropic_error(client: TestClient, monkeypatch):
 
     monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: mock_http)
 
-    r = client.post("/v1/messages", json={
-        "model": "claude-3-haiku-20240307",
-        "max_tokens": 10,
-        "messages": [{"role": "user", "content": "Hello"}],
-    })
+    r = client.post(
+        "/v1/messages",
+        json={
+            "model": "claude-3-haiku-20240307",
+            "max_tokens": 10,
+            "messages": [{"role": "user", "content": "Hello"}],
+        },
+    )
     assert r.status_code == 401
 
 
 def test_proxy_messages_streaming(client: TestClient, monkeypatch):
     """POST /v1/messages with stream=True returns a streaming response."""
+
     async def _aiter_bytes():
         yield b"data: test\n\n"
 
@@ -1443,17 +1542,21 @@ def test_proxy_messages_streaming(client: TestClient, monkeypatch):
 
     monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: mock_http)
 
-    r = client.post("/v1/messages", json={
-        "model": "claude-3-haiku-20240307",
-        "max_tokens": 10,
-        "stream": True,
-        "messages": [{"role": "user", "content": "Hello"}],
-    })
+    r = client.post(
+        "/v1/messages",
+        json={
+            "model": "claude-3-haiku-20240307",
+            "max_tokens": 10,
+            "stream": True,
+            "messages": [{"role": "user", "content": "Hello"}],
+        },
+    )
     assert r.status_code == 200
 
 
 def test_proxy_messages_streaming_error_response(client: TestClient, monkeypatch):
     """POST /v1/messages streaming forwards body bytes on Anthropic error."""
+
     async def _aread():
         return b'{"error": "auth"}'
 
@@ -1470,12 +1573,15 @@ def test_proxy_messages_streaming_error_response(client: TestClient, monkeypatch
 
     monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: mock_http)
 
-    r = client.post("/v1/messages", json={
-        "model": "claude-3-haiku-20240307",
-        "max_tokens": 10,
-        "stream": True,
-        "messages": [{"role": "user", "content": "Hello"}],
-    })
+    r = client.post(
+        "/v1/messages",
+        json={
+            "model": "claude-3-haiku-20240307",
+            "max_tokens": 10,
+            "stream": True,
+            "messages": [{"role": "user", "content": "Hello"}],
+        },
+    )
     # StreamingResponse always returns 200 at the HTTP layer; the error is in the body
     assert r.status_code == 200
 
@@ -1488,9 +1594,11 @@ def test_proxy_messages_streaming_error_response(client: TestClient, monkeypatch
 # _migrate_db_location – actual function body (lines 379-389)
 # ---------------------------------------------------------------------------
 
+
 def test_migrate_db_location_no_old_file(tmp_path, monkeypatch):
     """_migrate_db_location early-returns when the old metrics.db doesn't exist."""
     import os
+
     _stub_heavy_deps(monkeypatch)
     monkeypatch.setenv("LLM_COMPRESSOR_DB", str(tmp_path / "metrics.db"))
     proxy = _fresh_proxy(monkeypatch)
@@ -1519,6 +1627,7 @@ def test_migrate_db_location_copies_old_file(tmp_path, monkeypatch):
 
     # Temporarily change CWD so Path("metrics.db").resolve() points to our file
     import os
+
     orig_cwd = os.getcwd()
     os.chdir(tmp_path)
     try:
@@ -1532,6 +1641,7 @@ def test_migrate_db_location_copies_old_file(tmp_path, monkeypatch):
 def test_migrate_db_location_new_db_has_data(tmp_path, monkeypatch):
     """_migrate_db_location skips copy when new DB already has real data (>64 KiB)."""
     import os
+
     _stub_heavy_deps(monkeypatch)
     monkeypatch.setenv("LLM_COMPRESSOR_DB", str(tmp_path / "metrics.db"))
     proxy = _fresh_proxy(monkeypatch)
@@ -1554,6 +1664,7 @@ def test_migrate_db_location_copy_exception(tmp_path, monkeypatch):
     """_migrate_db_location swallows copy errors gracefully."""
     import os
     import shutil
+
     _stub_heavy_deps(monkeypatch)
     monkeypatch.setenv("LLM_COMPRESSOR_DB", str(tmp_path / "metrics.db"))
     proxy = _fresh_proxy(monkeypatch)
@@ -1571,13 +1682,16 @@ def test_migrate_db_location_copy_exception(tmp_path, monkeypatch):
     finally:
         os.chdir(orig_cwd)
 
+
 # ---------------------------------------------------------------------------
 # _count_tokens – tokenizer exception fallback (lines 542-543)
 # ---------------------------------------------------------------------------
 
+
 def test_count_tokens_tokenizer_exception(monkeypatch):
     """_count_tokens falls back to whitespace split when tokenizer raises."""
     from tests.conftest import make_mock_llmlingua
+
     proxy = _fresh_proxy(monkeypatch)
 
     mock_compressor = make_mock_llmlingua()
@@ -1594,6 +1708,7 @@ def test_count_tokens_tokenizer_exception(monkeypatch):
 # _char_split – short text early return (line 549)
 # ---------------------------------------------------------------------------
 
+
 def test_char_split_short_text(monkeypatch):
     """_char_split returns single-element list for text within the char limit."""
     proxy = _fresh_proxy(monkeypatch)
@@ -1606,9 +1721,11 @@ def test_char_split_short_text(monkeypatch):
 # _split_into_segments – multi-line paragraph, extend(lines) (line 562)
 # ---------------------------------------------------------------------------
 
+
 def test_split_into_segments_multiline_paragraph(monkeypatch):
     """_split_into_segments splits a long paragraph into its constituent lines."""
     from tests.conftest import make_mock_llmlingua
+
     proxy = _fresh_proxy(monkeypatch)
 
     # Make tokenizer return many tokens per word so paragraph exceeds 400-token limit
@@ -1634,6 +1751,7 @@ def test_split_into_segments_multiline_paragraph(monkeypatch):
 # get_timeseries – _db_conn is None (line 984)
 # ---------------------------------------------------------------------------
 
+
 def test_timeseries_db_not_ready(client: TestClient, monkeypatch):
     """GET /stats/timeseries returns [] when _db_conn is None."""
     proxy = sys.modules["proxy"]
@@ -1650,6 +1768,7 @@ def test_timeseries_db_not_ready(client: TestClient, monkeypatch):
 # ---------------------------------------------------------------------------
 # rtk_log – _db_conn is None (line 1023)
 # ---------------------------------------------------------------------------
+
 
 def test_rtk_log_db_not_ready(client: TestClient, monkeypatch):
     """POST /rtk/log returns 503 when _db_conn is None."""
@@ -1668,11 +1787,10 @@ def test_rtk_log_db_not_ready(client: TestClient, monkeypatch):
 # (lines 1114, 1116, 1120-1121)
 # ---------------------------------------------------------------------------
 
-import threading as _threading_mod
-
 
 def _sync_thread_factory(target_name: str, result_holder: list):
     """Return a Thread-like class that runs the target synchronously on start()."""
+
     class SyncThread:
         def __init__(self, target=None, daemon=False):
             self._target = target
@@ -1687,6 +1805,7 @@ def _sync_thread_factory(target_name: str, result_holder: list):
 def test_play_compress_triggers_kompress_load(client: TestClient, monkeypatch):
     """play_compress load thread runs _load_kompress_backend for kompress model."""
     import threading
+
     proxy = sys.modules["proxy"]
     orig_backend = proxy.backend
     orig_loading = proxy.backend_loading
@@ -1700,13 +1819,14 @@ def test_play_compress_triggers_kompress_load(client: TestClient, monkeypatch):
         assert r.status_code == 202
     finally:
         monkeypatch.setattr(proxy, "backend", orig_backend)
-        monkeypatch.setattr(proxy, "backend_loading", None)
+        monkeypatch.setattr(proxy, "backend_loading", orig_loading)
         monkeypatch.setattr(threading, "Thread", _threading_mod.Thread)
 
 
 def test_play_compress_triggers_dual_load(client: TestClient, monkeypatch):
     """play_compress load thread runs _load_dual_backend for dual model."""
     import threading
+
     proxy = sys.modules["proxy"]
     orig_backend = proxy.backend
     orig_loading = proxy.backend_loading
@@ -1720,13 +1840,14 @@ def test_play_compress_triggers_dual_load(client: TestClient, monkeypatch):
         assert r.status_code == 202
     finally:
         monkeypatch.setattr(proxy, "backend", orig_backend)
-        monkeypatch.setattr(proxy, "backend_loading", None)
+        monkeypatch.setattr(proxy, "backend_loading", orig_loading)
         monkeypatch.setattr(threading, "Thread", _threading_mod.Thread)
 
 
 def test_play_compress_load_thread_exception(client: TestClient, monkeypatch):
     """play_compress load thread swallows exceptions and clears backend_loading."""
     import threading
+
     proxy = sys.modules["proxy"]
     orig_backend = proxy.backend
     orig_loading = proxy.backend_loading
@@ -1743,7 +1864,7 @@ def test_play_compress_load_thread_exception(client: TestClient, monkeypatch):
         assert proxy.backend_loading is None  # cleared in finally
     finally:
         monkeypatch.setattr(proxy, "backend", orig_backend)
-        monkeypatch.setattr(proxy, "backend_loading", None)
+        monkeypatch.setattr(proxy, "backend_loading", orig_loading)
         monkeypatch.setattr(threading, "Thread", _threading_mod.Thread)
 
 
@@ -1751,10 +1872,13 @@ def test_play_compress_load_thread_exception(client: TestClient, monkeypatch):
 # play_compress – compress_backend raises (lines 1135-1136)
 # ---------------------------------------------------------------------------
 
+
 def test_play_compress_backend_raises(client: TestClient, monkeypatch):
     """POST /play/compress returns 500 when compress_backend raises."""
     proxy = sys.modules["proxy"]
-    monkeypatch.setattr(proxy, "compress_backend", lambda text: (_ for _ in ()).throw(RuntimeError("boom")))
+    monkeypatch.setattr(
+        proxy, "compress_backend", lambda text: (_ for _ in ()).throw(RuntimeError("boom"))
+    )
     r = client.post("/play/compress", json={"text": "word " * 50, "model": ""})
     assert r.status_code == 500
     assert "boom" in r.json()["error"]
@@ -1764,9 +1888,11 @@ def test_play_compress_backend_raises(client: TestClient, monkeypatch):
 # set_model – dual path + load_dual thread (lines 1180-1193)
 # ---------------------------------------------------------------------------
 
+
 def test_set_model_dual(client: TestClient, monkeypatch):
     """POST /admin/set-model with model=dual triggers the load_dual thread."""
     import threading
+
     proxy = sys.modules["proxy"]
     orig_backend = proxy.backend
     orig_loading = proxy.backend_loading
@@ -1783,7 +1909,7 @@ def test_set_model_dual(client: TestClient, monkeypatch):
         assert r.json()["model"] == "dual"
     finally:
         monkeypatch.setattr(proxy, "backend", orig_backend)
-        monkeypatch.setattr(proxy, "backend_loading", None)
+        monkeypatch.setattr(proxy, "backend_loading", orig_loading)
         monkeypatch.setattr(proxy, "backend_user", orig_bu)
         monkeypatch.setattr(proxy, "backend_system", orig_bs)
         monkeypatch.setattr(threading, "Thread", _threading_mod.Thread)
@@ -1793,9 +1919,11 @@ def test_set_model_dual(client: TestClient, monkeypatch):
 # set_model – kompress path in load thread (line 1200)
 # ---------------------------------------------------------------------------
 
+
 def test_set_model_kompress_load_thread(client: TestClient, monkeypatch):
     """POST /admin/set-model with model=kompress runs _load_kompress_backend."""
     import threading
+
     proxy = sys.modules["proxy"]
     orig_backend = proxy.backend
     orig_loading = proxy.backend_loading
@@ -1809,7 +1937,7 @@ def test_set_model_kompress_load_thread(client: TestClient, monkeypatch):
         assert r.status_code == 200
     finally:
         monkeypatch.setattr(proxy, "backend", orig_backend)
-        monkeypatch.setattr(proxy, "backend_loading", None)
+        monkeypatch.setattr(proxy, "backend_loading", orig_loading)
         monkeypatch.setattr(threading, "Thread", _threading_mod.Thread)
 
 
@@ -1817,9 +1945,11 @@ def test_set_model_kompress_load_thread(client: TestClient, monkeypatch):
 # set_model – load thread exception path (lines 1204-1205)
 # ---------------------------------------------------------------------------
 
+
 def test_set_model_load_thread_exception(client: TestClient, monkeypatch):
     """set_model load thread swallows loader exceptions and clears backend_loading."""
     import threading
+
     proxy = sys.modules["proxy"]
     orig_backend = proxy.backend
     orig_loading = proxy.backend_loading
@@ -1836,13 +1966,14 @@ def test_set_model_load_thread_exception(client: TestClient, monkeypatch):
         assert proxy.backend_loading is None  # cleared in finally
     finally:
         monkeypatch.setattr(proxy, "backend", orig_backend)
-        monkeypatch.setattr(proxy, "backend_loading", None)
+        monkeypatch.setattr(proxy, "backend_loading", orig_loading)
         monkeypatch.setattr(threading, "Thread", _threading_mod.Thread)
 
 
 # ---------------------------------------------------------------------------
 # clear_compression_texts – _db_conn is None (line 1218)
 # ---------------------------------------------------------------------------
+
 
 def test_clear_compression_texts_db_not_ready(client: TestClient, monkeypatch):
     """DELETE /admin/compression-texts returns 503 when _db_conn is None."""
@@ -1859,6 +1990,7 @@ def test_clear_compression_texts_db_not_ready(client: TestClient, monkeypatch):
 # ---------------------------------------------------------------------------
 # get_session_compressions – _db_conn is None (line 1303)
 # ---------------------------------------------------------------------------
+
 
 def test_get_session_compressions_db_not_ready(client: TestClient, monkeypatch):
     """GET /session/<slug>/compressions returns 503 when _db_conn is None."""
@@ -1879,6 +2011,7 @@ def test_get_session_compressions_db_not_ready(client: TestClient, monkeypatch):
 # ---------------------------------------------------------------------------
 # get_stats – rtk_commands / rtk_saved per-session decoration (lines 1007-1008)
 # ---------------------------------------------------------------------------
+
 
 def test_stats_rtk_per_session(client: TestClient):
     """GET /stats decorates session entries with rtk_commands when both exist."""
@@ -1910,16 +2043,20 @@ def test_stats_rtk_per_session(client: TestClient):
 # set_model – dual load_dual exception path (lines 1242-1243)
 # ---------------------------------------------------------------------------
 
+
 def test_set_model_dual_load_exception(client: TestClient, monkeypatch):
     """set_model dual load_dual thread swallows _load_dual_backend exceptions."""
     import threading
+
     proxy = sys.modules["proxy"]
     orig_backend = proxy.backend
     orig_loading = proxy.backend_loading
     orig_bu = proxy.backend_user
     orig_bs = proxy.backend_system
 
-    monkeypatch.setattr(proxy, "_load_dual_backend", lambda: (_ for _ in ()).throw(RuntimeError("dual failed")))
+    monkeypatch.setattr(
+        proxy, "_load_dual_backend", lambda: (_ for _ in ()).throw(RuntimeError("dual failed"))
+    )
     monkeypatch.setattr(threading, "Thread", _sync_thread_factory("dual", []))
 
     try:
@@ -1928,7 +2065,7 @@ def test_set_model_dual_load_exception(client: TestClient, monkeypatch):
         assert proxy.backend_loading is None  # cleared in finally
     finally:
         monkeypatch.setattr(proxy, "backend", orig_backend)
-        monkeypatch.setattr(proxy, "backend_loading", None)
+        monkeypatch.setattr(proxy, "backend_loading", orig_loading)
         monkeypatch.setattr(proxy, "backend_user", orig_bu)
         monkeypatch.setattr(proxy, "backend_system", orig_bs)
         monkeypatch.setattr(threading, "Thread", _threading_mod.Thread)
@@ -1937,6 +2074,7 @@ def test_set_model_dual_load_exception(client: TestClient, monkeypatch):
 # ---------------------------------------------------------------------------
 # get_session_rtk_commands endpoint (lines 1383-1402)
 # ---------------------------------------------------------------------------
+
 
 def test_get_session_rtk_commands_db_not_ready(client: TestClient, monkeypatch):
     """GET /session/<slug>/rtk-commands returns 503 when _db_conn is None."""

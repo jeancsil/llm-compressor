@@ -16,6 +16,7 @@ class LangfuseTracer:
         self._host = os.environ.get("LANGFUSE_HOST", "https://cloud.langfuse.com")
         try:
             from langfuse import Langfuse
+
             self._client = Langfuse(
                 public_key=pub,
                 secret_key=sec,
@@ -42,15 +43,17 @@ class LangfuseTracer:
         if not self._client:
             return
         try:
-            asyncio.create_task(self._send(
-                original_messages,
-                compressed_messages,
-                original_system,
-                compressed_system,
-                response_text,
-                metadata,
-                tags or [],
-            ))
+            asyncio.create_task(
+                self._send(
+                    original_messages,
+                    compressed_messages,
+                    original_system,
+                    compressed_system,
+                    response_text,
+                    metadata,
+                    tags or [],
+                )
+            )
         except Exception as exc:
             print(f"[langfuse] failed to schedule trace: {exc}")
 

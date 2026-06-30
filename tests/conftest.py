@@ -1,8 +1,7 @@
-import sqlite3
 import sys
-from pathlib import Path
-import pytest
 from unittest.mock import MagicMock
+
+import pytest
 from starlette.testclient import TestClient
 
 # ---------------------------------------------------------------------------
@@ -20,6 +19,7 @@ MOCK_COMPRESS_RESULT = {
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def make_mock_llmlingua() -> MagicMock:
     """Return a MagicMock that mimics PromptCompressor.
@@ -40,6 +40,7 @@ def make_mock_llmlingua() -> MagicMock:
 # Patches _load_backend so the heavy model never loads.  Uses a temp SQLite
 # DB so all I/O is hermetic.
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
@@ -70,7 +71,9 @@ def client(tmp_path, monkeypatch):
 
     # Suppress JSON migration, backup recovery, and location migration so test DB is clean
     monkeypatch.setattr(proxy, "migrate_from_json", lambda conn, json_path="stats.json": None)
-    monkeypatch.setattr(proxy, "recover_stats_from_backup", lambda conn, bak_path="stats.json.bak": None)
+    monkeypatch.setattr(
+        proxy, "recover_stats_from_backup", lambda conn, bak_path="stats.json.bak": None
+    )
     monkeypatch.setattr(proxy, "_migrate_db_location", lambda: None)
 
     with TestClient(proxy.app) as c:

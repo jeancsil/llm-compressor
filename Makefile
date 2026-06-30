@@ -7,7 +7,7 @@ PID_FILE := .proxy.pid
 # Get keys at https://cloud.langfuse.com → Settings → API Keys
 LANGFUSE_HOST ?= https://cloud.langfuse.com
 
-.PHONY: install install-langfuse start restart stop dashboard stats rtk-stats check langfuse-status langfuse-test help
+.PHONY: install install-langfuse start restart stop dashboard stats rtk-stats check langfuse-status langfuse-test lint format help
 
 help:
 	@echo "Usage: make <target>"
@@ -23,6 +23,8 @@ help:
 	@echo "  check            Check proxy is reachable"
 	@echo "  langfuse-status  Check if Langfuse tracing is active on running proxy"
 	@echo "  langfuse-test    Send a test request through the proxy"
+	@echo "  lint             Run ruff check"
+	@echo "  format           Run ruff format"
 	@echo ""
 	@echo "Langfuse (optional): export LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-... then make start"
 
@@ -92,3 +94,9 @@ langfuse-test:
 	echo "$$RESP" | python3 -m json.tool 2>/dev/null || echo "$$RESP"
 	@echo ""
 	@echo "Check traces: $(LANGFUSE_HOST)"
+
+lint:
+	uv run ruff check .
+
+format:
+	uv run ruff format .

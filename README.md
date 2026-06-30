@@ -1,14 +1,17 @@
 # LLM-Compressor
 
-<img src="assets/logo.svg" width="64" alt="LLM-Compressor logo">
+![LLM-Compressor — a local proxy that compresses every Claude Code prompt before it's billed](assets/hero-banner.svg)
 
-> A local proxy that compresses every Claude Code prompt before it's billed — **no workflow changes, one env var.**
-
-![savings summary](assets/savings-hero.svg)
-
----
+- **Transparent proxy** — one env var, no workflow changes; Claude never notices.
+- **~47–52% token savings** — compresses the `system` field and `user` messages before every API call.
+- **Live dashboard** — per-session compression ratios, sparklines, cache hit rate.
+- **4 compression models** — pick a tradeoff from fast/light to aggressive/precise.
+- **Stacks with [rtk](https://github.com/rtk-ai/rtk)** — two independent savings layers: shell output + API payload.
+- **Optional Langfuse tracing** — full observability into every compressed request.
 
 If you use Claude Code daily, every request resends the full conversation history plus your entire `CLAUDE.md`. Those tokens add up fast. LLM-Compressor sits transparently between Claude Code and the Anthropic API and shrinks each payload with a local compression model before forwarding it. Claude never notices. Your invoice does.
+
+---
 
 If this saves you tokens, ⭐ star the repo — it helps others find it.
 
@@ -29,7 +32,9 @@ make rtk-stats   print rtk shell-layer savings
 
 ## By the numbers
 
-The chart below is generated from real usage data — `metrics.db` logged by this proxy across ~5 weeks of daily Claude Code sessions.
+The stats and chart below are generated from real usage data — `metrics.db` logged by this proxy across ~5 weeks of daily Claude Code sessions.
+
+![savings summary](assets/savings-hero.svg)
 
 ![daily savings timeline](assets/savings-timeline.svg)
 

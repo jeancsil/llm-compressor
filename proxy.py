@@ -1,4 +1,5 @@
 import os
+
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 import copy
 import hashlib
@@ -10,20 +11,22 @@ import secrets
 import sqlite3
 import threading
 import time
+from collections import OrderedDict, deque
+from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
 import httpx
 import uvicorn
-from collections import deque, OrderedDict
-from contextlib import asynccontextmanager
-from datetime import datetime, timezone, timedelta
-from pathlib import Path
 from fastapi import FastAPI, Request
-from fastapi.responses import StreamingResponse, JSONResponse, HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from llmlingua import PromptCompressor
+
 from langfuse_tracer import tracer as _lf_tracer
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-ANTHROPIC_BASE    = "https://api.anthropic.com"
-COST_PER_MTOK     = float(os.environ.get("COST_PER_MTOK", "3.0"))
+ANTHROPIC_BASE = "https://api.anthropic.com"
+COST_PER_MTOK = float(os.environ.get("COST_PER_MTOK", "3.0"))
 
 
 def _rtk_data_dir() -> Path:
@@ -45,23 +48,24 @@ def _default_db_path() -> Path:
 DB_PATH = Path(os.environ.get("LLM_COMPRESSOR_DB") or _default_db_path())
 
 # Module-level globals populated by lifespan
-backend          = None
-backend_loading  = None   # set to model name while async load is in progress
-_db_conn         = None
-_cache           = None   # CompressionCache, set in lifespan
-backend_user     = None   # kompress instance in dual mode
-backend_system   = None   # llmlingua2-large instance in dual mode
-dual_mode        = False
-dual_model_system = "llmlingua2-large"   # persisted in meta table
-dual_model_user   = "kompress"           # persisted in meta table
+backend = None
+backend_loading = None  # set to model name while async load is in progress
+_db_conn = None
+_cache = None  # CompressionCache, set in lifespan
+backend_user = None  # kompress instance in dual mode
+backend_system = None  # llmlingua2-large instance in dual mode
+dual_mode = False
+dual_model_system = "llmlingua2-large"  # persisted in meta table
+dual_model_user = "kompress"  # persisted in meta table
 
-KNOWN_MODELS    = ("llmlingua2", "llmlingua2-large", "kompress", "dual")
-DUAL_SUBMODELS  = ("llmlingua2", "llmlingua2-large", "kompress")
+KNOWN_MODELS = ("llmlingua2", "llmlingua2-large", "kompress", "dual")
+DUAL_SUBMODELS = ("llmlingua2", "llmlingua2-large", "kompress")
 
 
 # ---------------------------------------------------------------------------
 # Cache helpers
 # ---------------------------------------------------------------------------
+
 
 def _cache_key(text: str, model_tag: str, rate: float) -> str:
     """Exact-match cache key. Model and rate are included because the same text
@@ -150,8 +154,10 @@ class CompressionCache:
 # DB helpers
 # ---------------------------------------------------------------------------
 
+
 def init_db(path: str):
     import sqlite3 as _sqlite3
+
     conn = _sqlite3.connect(path, check_same_thread=False)
     conn.row_factory = _sqlite3.Row
     conn.execute(
@@ -168,9 +174,7 @@ def init_db(path: str):
         """
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_ts ON compressions(ts)")
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)"
-    )
+    conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS compression_texts (
@@ -239,7 +243,9 @@ def init_db(path: str):
         pass  # column already exists
     try:
         conn.execute("ALTER TABLE rtk_events ADD COLUMN project_path TEXT DEFAULT ''")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_rtk_events_project ON rtk_events(project_path)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_rtk_events_project ON rtk_events(project_path)"
+        )
     except Exception:
         pass  # column already exists
     # Mark when caching went live so hit-ratio stats can exclude the pre-feature
@@ -261,6 +267,7 @@ def migrate_from_json(conn, json_path: str = "stats.json") -> None:
         return
     try:
         import shutil
+
         data = json.loads(path.read_text())
         rows = data.get("recent_compressions", [])
         bak = path.with_suffix(".json.bak")
@@ -310,7 +317,9 @@ def recover_stats_from_backup(conn, bak_path: str = "stats.json.bak") -> None:
             remaining_orig = int(sess.get("original_tokens", 0)) - int(existing[0])
             remaining_comp = int(sess.get("compressed_tokens", 0)) - int(existing[1])
             if remaining_orig > 0:
-                ts = (sess.get("last_seen") or sess.get("first_seen") or datetime.now().isoformat())[:19]
+                ts = (
+                    sess.get("last_seen") or sess.get("first_seen") or datetime.now().isoformat()
+                )[:19]
                 conn.execute(
                     "INSERT INTO compressions (ts, session_id, model, original_tokens, compressed_tokens, latency_ms) "
                     "VALUES (?,?,'llmlingua2',?,?,0.0)",
@@ -321,10 +330,14 @@ def recover_stats_from_backup(conn, bak_path: str = "stats.json.bak") -> None:
         db_rows = conn.execute("SELECT COUNT(*) FROM compressions").fetchone()[0]
         total_requests = int(data.get("total_requests", 0))
         legacy_offset = max(0, total_requests - db_rows)
-        conn.execute("INSERT OR REPLACE INTO meta VALUES ('legacy_request_offset', ?)", (str(legacy_offset),))
+        conn.execute(
+            "INSERT OR REPLACE INTO meta VALUES ('legacy_request_offset', ?)", (str(legacy_offset),)
+        )
         conn.execute("INSERT OR REPLACE INTO meta VALUES ('backup_recovered', '1')")
         conn.commit()
-        print(f"[recovery] {rows_inserted} synthetic rows from {bak_path}. Request offset: {legacy_offset}.")
+        print(
+            f"[recovery] {rows_inserted} synthetic rows from {bak_path}. Request offset: {legacy_offset}."
+        )
     except Exception as e:
         print(f"[recovery] Failed: {e}")
 
@@ -339,7 +352,9 @@ def load_stats_from_db(conn) -> None:
         "SELECT COUNT(*), COALESCE(SUM(original_tokens),0), COALESCE(SUM(compressed_tokens),0) FROM compressions"
     ).fetchone()
     try:
-        offset_row = conn.execute("SELECT value FROM meta WHERE key='legacy_request_offset'").fetchone()
+        offset_row = conn.execute(
+            "SELECT value FROM meta WHERE key='legacy_request_offset'"
+        ).fetchone()
         legacy_offset = int(offset_row[0]) if offset_row else 0
     except Exception:
         legacy_offset = 0
@@ -351,26 +366,28 @@ def load_stats_from_db(conn) -> None:
         "SELECT session_id, COUNT(*), SUM(original_tokens), SUM(compressed_tokens), MIN(ts), MAX(ts) FROM compressions GROUP BY session_id"
     ):
         stats["sessions"][r[0]] = {
-            "requests":          r[1],
-            "original_tokens":   r[2],
+            "requests": r[1],
+            "original_tokens": r[2],
             "compressed_tokens": r[3],
-            "first_seen":        r[4],
-            "last_seen":         r[5],
-            "name":              None,
+            "first_seen": r[4],
+            "last_seen": r[5],
+            "name": None,
         }
 
     for r in conn.execute(
         "SELECT ts, session_id, original_tokens, compressed_tokens, latency_ms FROM compressions ORDER BY id DESC LIMIT 100"
     ):
         saved = r[2] - r[3]
-        stats["recent_compressions"].append({
-            "ts":         r[0][11:19],
-            "session_id": r[1][:8],
-            "original":   r[2],
-            "compressed": r[3],
-            "saved":      saved,
-            "latency_ms": r[4],
-        })
+        stats["recent_compressions"].append(
+            {
+                "ts": r[0][11:19],
+                "session_id": r[1][:8],
+                "original": r[2],
+                "compressed": r[3],
+                "saved": saved,
+                "latency_ms": r[4],
+            }
+        )
 
     print(
         f"[stats] Loaded from metrics.db: "
@@ -387,14 +404,16 @@ LLMLINGUA2_MODELS = {
 
 def _load_llmlingua2_backend(backend_key: str | None = None) -> dict:
     """Load the LLMLingua-2 PromptCompressor and return a backend dict."""
-    from llmlingua import PromptCompressor
-    import transformers as _tf
     import logging as _logging
+
+    import transformers as _tf
+
     rate = float(os.environ.get("COMPRESS_RATE", "0.5"))
     if backend_key is None:
         backend_key = os.environ.get("COMPRESSOR_MODEL", "llmlingua2")
     model_name = LLMLINGUA2_MODELS.get(backend_key, LLMLINGUA2_MODELS["llmlingua2"])
     import torch
+
     device = "mps" if torch.backends.mps.is_available() else "cpu"
     print(f"Loading LLMLingua-2 model ({backend_key}: {model_name})...")
     _tf.logging.set_verbosity_error()
@@ -423,21 +442,21 @@ def _load_kompress_backend() -> dict:
     try:
         from headroom.transforms.kompress_compressor import KompressCompressor, KompressConfig
     except ImportError:
-        raise RuntimeError(
-            "headroom-ai[ml] is not installed. Run: uv add 'headroom-ai[ml]'"
-        )
+        raise RuntimeError("headroom-ai[ml] is not installed. Run: uv add 'headroom-ai[ml]'")
     import torch
+
     device = "mps" if torch.backends.mps.is_available() else "cpu"
     threshold = float(os.environ.get("COMPRESS_THRESHOLD", "0.5"))
     print(f"Loading kompress-v2-base (device={device}, threshold={threshold})...")
     config = KompressConfig(device=device, score_threshold=threshold)
     compressor = KompressCompressor(config=config)
     import transformers as _tf
+
     _prev_level = _tf.logging.get_verbosity()
     _tf.logging.set_verbosity_error()
     compressor.preload()
     _tf.logging.set_verbosity(_prev_level)
-    print(f"kompress-v2-base ready.")
+    print("kompress-v2-base ready.")
     return {"type": "kompress", "compressor": compressor, "threshold": threshold}
 
 
@@ -460,8 +479,8 @@ def _load_dual_backend() -> dict:
     usr_m = dual_model_user
     print(f"Loading dual mode: {usr_m} (user) + {sys_m} (system)...")
     backend_system = _load_single_backend(sys_m)
-    backend_user   = _load_single_backend(usr_m)
-    dual_mode      = True
+    backend_user = _load_single_backend(usr_m)
+    dual_mode = True
     print("Dual mode ready.")
     return {"type": "dual", "model_user": usr_m, "model_system": sys_m}
 
@@ -479,13 +498,11 @@ def load_backend() -> dict:
     try:
         if _db_conn is not None:
             for key, default in (
-                ("current_model",    None),
+                ("current_model", None),
                 ("dual_model_system", None),
-                ("dual_model_user",   None),
+                ("dual_model_user", None),
             ):
-                row = _db_conn.execute(
-                    "SELECT value FROM meta WHERE key=?", (key,)
-                ).fetchone()
+                row = _db_conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
                 if row:
                     if key == "current_model":
                         model_name = row[0]
@@ -514,6 +531,7 @@ def _pick_backend(role: str) -> dict | None:
 # DB location migration (legacy ./metrics.db → RTK data dir)
 # ---------------------------------------------------------------------------
 
+
 def _migrate_db_location() -> None:
     """Copy metrics.db from the old CWD location to the RTK data directory once.
 
@@ -528,6 +546,7 @@ def _migrate_db_location() -> None:
     if new.exists() and new.stat().st_size > 65536:
         return  # new DB already has real data
     import shutil
+
     try:
         shutil.copy2(str(old), str(new))
         print(f"[db] migrated {old} → {new}")
@@ -539,6 +558,7 @@ def _migrate_db_location() -> None:
 # ---------------------------------------------------------------------------
 # Lifespan
 # ---------------------------------------------------------------------------
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -562,9 +582,11 @@ async def lifespan(app: FastAPI):
     # Release model references before process exit to avoid MPS semaphore leaks
     backend = None
     import gc
+
     gc.collect()
     try:
         import torch
+
         if torch.backends.mps.is_available():
             torch.mps.synchronize()
             torch.mps.empty_cache()
@@ -588,6 +610,7 @@ stats = {
     "sessions": {},
     "recent_compressions": deque(maxlen=100),
 }
+
 
 def record_compression(
     session_id: str,
@@ -619,24 +642,30 @@ def record_compression(
             )
         _db_conn.commit()
 
-    sess = stats["sessions"].setdefault(session_id, {
-        "first_seen": ts,
-        "requests": 0,
-        "original_tokens": 0,
-        "compressed_tokens": 0,
-    })
+    sess = stats["sessions"].setdefault(
+        session_id,
+        {
+            "first_seen": ts,
+            "requests": 0,
+            "original_tokens": 0,
+            "compressed_tokens": 0,
+        },
+    )
     sess["original_tokens"] += original
     sess["compressed_tokens"] += compressed
     sess["last_seen"] = ts
 
-    stats["recent_compressions"].appendleft({
-        "ts": datetime.now(timezone.utc).strftime("%H:%M:%S"),
-        "session_id": session_id[:8],
-        "original": original,
-        "compressed": compressed,
-        "saved": original - compressed,
-        "latency_ms": round(latency_ms, 1),
-    })
+    stats["recent_compressions"].appendleft(
+        {
+            "ts": datetime.now(timezone.utc).strftime("%H:%M:%S"),
+            "session_id": session_id[:8],
+            "original": original,
+            "compressed": compressed,
+            "saved": original - compressed,
+            "latency_ms": round(latency_ms, 1),
+        }
+    )
+
 
 def _try_link_pending_tracker(session_id: str) -> None:
     """Link the oldest pending tracker to session_id if one exists and session_id is known."""
@@ -657,13 +686,16 @@ def _try_link_pending_tracker(session_id: str) -> None:
 
 def record_request(session_id: str, session_name: str | None = None):
     stats["total_requests"] += 1
-    sess = stats["sessions"].setdefault(session_id, {
-        "first_seen": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "requests": 0,
-        "original_tokens": 0,
-        "compressed_tokens": 0,
-        "name": None,
-    })
+    sess = stats["sessions"].setdefault(
+        session_id,
+        {
+            "first_seen": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "requests": 0,
+            "original_tokens": 0,
+            "compressed_tokens": 0,
+            "name": None,
+        },
+    )
     sess["requests"] += 1
     sess["last_seen"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     if session_name:
@@ -671,12 +703,15 @@ def record_request(session_id: str, session_name: str | None = None):
 
     _try_link_pending_tracker(session_id)
 
+
 # ---------------------------------------------------------------------------
 # rtk integration (optional — gracefully absent when rtk not installed)
 # ---------------------------------------------------------------------------
 
+
 def _rtk_db_path() -> Path:
     return _rtk_data_dir() / "history.db"
+
 
 def read_rtk_stats(since: str | None = None) -> dict | None:
     db = _rtk_db_path()
@@ -688,7 +723,7 @@ def read_rtk_stats(since: str | None = None) -> dict | None:
         cur = conn.cursor()
 
         where = "WHERE timestamp >= ?" if since else ""
-        args  = (since,) if since else ()
+        args = (since,) if since else ()
 
         row = cur.execute(
             f"SELECT COUNT(*) as n, SUM(input_tokens) as inp, "
@@ -706,20 +741,25 @@ def read_rtk_stats(since: str | None = None) -> dict | None:
 
         conn.close()
         return {
-            "total_commands":      row["n"]       or 0,
-            "total_input_tokens":  row["inp"]      or 0,
-            "total_output_tokens": row["out"]      or 0,
-            "total_saved_tokens":  row["saved"]    or 0,
-            "avg_savings_pct":     round(row["avg_pct"] or 0, 1),
+            "total_commands": row["n"] or 0,
+            "total_input_tokens": row["inp"] or 0,
+            "total_output_tokens": row["out"] or 0,
+            "total_saved_tokens": row["saved"] or 0,
+            "avg_savings_pct": round(row["avg_pct"] or 0, 1),
             "top_commands": [
-                {"cmd": r["rtk_cmd"], "count": r["cnt"],
-                 "saved": r["saved"], "avg_pct": round(r["avg_pct"], 1)}
+                {
+                    "cmd": r["rtk_cmd"],
+                    "count": r["cnt"],
+                    "saved": r["saved"],
+                    "avg_pct": round(r["avg_pct"], 1),
+                }
                 for r in top
             ],
         }
     except Exception as e:
         print(f"[rtk] could not read tracking db: {e}")
         return None
+
 
 # ---------------------------------------------------------------------------
 # Chunking helpers (prevent BERT 512-token overflow in LLMLingua-2)
@@ -742,7 +782,7 @@ def _char_split(text: str) -> list[str]:
     """Split text into _CHUNK_MAX_CHARS-sized pieces (last resort for code/dense text)."""
     if len(text) <= _CHUNK_MAX_CHARS:
         return [text]
-    return [text[i:i + _CHUNK_MAX_CHARS] for i in range(0, len(text), _CHUNK_MAX_CHARS)]
+    return [text[i : i + _CHUNK_MAX_CHARS] for i in range(0, len(text), _CHUNK_MAX_CHARS)]
 
 
 def _split_into_segments(text: str) -> list[str]:
@@ -793,6 +833,7 @@ def chunk_text(text: str) -> list[str]:
 # Compression
 # ---------------------------------------------------------------------------
 
+
 def compress_text(text: str, session_id: str, role: str = "user") -> str:
     if len(text) <= 200:
         return text
@@ -808,9 +849,17 @@ def compress_text(text: str, session_id: str, role: str = "user") -> str:
         if hit is not None:
             compressed, orig, comp = hit
             print(f"[cache] hit {orig} → {comp} tokens [{session_id[:8]}] role={role}")
-            record_compression(session_id, orig, comp, latency_ms=0.0,
-                               original_text=text, compressed_text=compressed,
-                               role=role, active_backend=active, cache_hit=1)
+            record_compression(
+                session_id,
+                orig,
+                comp,
+                latency_ms=0.0,
+                original_text=text,
+                compressed_text=compressed,
+                role=role,
+                active_backend=active,
+                cache_hit=1,
+            )
             return compressed
 
     t0 = time.perf_counter()
@@ -821,8 +870,17 @@ def compress_text(text: str, session_id: str, role: str = "user") -> str:
         return text
     latency_ms = (time.perf_counter() - t0) * 1000
     print(f"[{model_tag}] {orig} → {comp} tokens [{session_id[:8]}] role={role}")
-    record_compression(session_id, orig, comp, latency_ms, text, compressed,
-                       role=role, active_backend=active, cache_hit=0)
+    record_compression(
+        session_id,
+        orig,
+        comp,
+        latency_ms,
+        text,
+        compressed,
+        role=role,
+        active_backend=active,
+        cache_hit=0,
+    )
     if _cache is not None:
         _cache.put(key, compressed, orig, comp, model_tag, rate)
     return compressed
@@ -903,7 +961,8 @@ def compress_system_field(system_val, session_id: str):
     if isinstance(system_val, list):
         return [
             {**b, "text": compress_text(b.get("text", ""), session_id, role="system")}
-            if isinstance(b, dict) and b.get("type") == "text" else b
+            if isinstance(b, dict) and b.get("type") == "text"
+            else b
             for b in system_val
         ]
     return system_val
@@ -922,7 +981,9 @@ def compress_messages(messages: list, session_id: str) -> list:
             new_blocks = []
             for block in content:
                 if isinstance(block, dict) and block.get("type") == "text":
-                    new_blocks.append({**block, "text": compress_text(block["text"], session_id, role="user")})
+                    new_blocks.append(
+                        {**block, "text": compress_text(block["text"], session_id, role="user")}
+                    )
                 else:
                     new_blocks.append(block)
             out.append({**msg, "content": new_blocks})
@@ -930,16 +991,19 @@ def compress_messages(messages: list, session_id: str) -> list:
             out.append(msg)
     return out
 
+
 # ---------------------------------------------------------------------------
 # Headers
 # ---------------------------------------------------------------------------
 
 SKIP_HEADERS = {"host", "content-length", "accept-encoding", "connection", "transfer-encoding"}
 
+
 def build_headers(request: Request) -> dict:
     headers = {k: v for k, v in request.headers.items() if k.lower() not in SKIP_HEADERS}
     headers["content-type"] = "application/json"
     return headers
+
 
 # ---------------------------------------------------------------------------
 # /stats helpers
@@ -949,24 +1013,33 @@ def build_headers(request: Request) -> dict:
 # same model/session scoping, so it is defined once in _stats_scope().
 # ---------------------------------------------------------------------------
 
+
 def _compressor_info() -> dict:
     """Describe the active (or loading) compression backend for the dashboard."""
     if backend_loading:
         return {"model": backend_loading, "param_name": "", "param_value": "", "loading": True}
     if backend and backend.get("type") == "dual":
         return {
-            "model": "dual", "loading": False, "param_name": None, "param_value": None,
-            "model_system": dual_model_system, "model_user": dual_model_user,
+            "model": "dual",
+            "loading": False,
+            "param_name": None,
+            "param_value": None,
+            "model_system": dual_model_system,
+            "model_user": dual_model_user,
         }
     if backend and backend.get("type") == "kompress":
         return {
-            "model": "kompress", "param_name": "threshold",
-            "param_value": backend.get("threshold", 0.5), "loading": False,
+            "model": "kompress",
+            "param_name": "threshold",
+            "param_value": backend.get("threshold", 0.5),
+            "loading": False,
         }
     backend_key = backend.get("backend_key", "llmlingua2") if backend else "llmlingua2"
     return {
-        "model": backend_key, "param_name": "rate",
-        "param_value": backend.get("rate", 0.5) if backend else 0.5, "loading": False,
+        "model": backend_key,
+        "param_name": "rate",
+        "param_value": backend.get("rate", 0.5) if backend else 0.5,
+        "loading": False,
     }
 
 
@@ -988,7 +1061,8 @@ def _aggregate_stats(scope: str, args: tuple, *, today: bool, with_ratio: bool) 
     date_clause = "date(ts) = date('now') AND " if today else ""
     ratio_col = (
         ", ROUND(AVG(CAST(original_tokens AS REAL) / NULLIF(compressed_tokens, 0)), 2) AS avg_ratio"
-        if with_ratio else ""
+        if with_ratio
+        else ""
     )
     row = _db_conn.execute(
         f"""
@@ -1035,8 +1109,11 @@ def _recent_compression_rows(active_model: str, session_id: str | None) -> list:
     ).fetchall()
     return [
         {
-            "ts": r[0], "session_id": r[1][:8] if r[1] else "", "model": r[2],
-            "original_tokens": r[3], "compressed_tokens": r[4],
+            "ts": r[0],
+            "session_id": r[1][:8] if r[1] else "",
+            "model": r[2],
+            "original_tokens": r[3],
+            "compressed_tokens": r[4],
             "savings_pct": r[5] or 0.0,
             "latency_ms": round(r[6], 1) if r[6] is not None else 0.0,
             "role": r[7] or "user",
@@ -1064,8 +1141,11 @@ def _rtk_stats(session_id: str | None) -> dict | None:
         args,
     ).fetchall()
     return {
-        "total_commands": row[0], "total_input_tokens": row[1], "total_output_tokens": row[2],
-        "total_saved_tokens": row[3], "avg_savings_pct": round(row[4], 1),
+        "total_commands": row[0],
+        "total_input_tokens": row[1],
+        "total_output_tokens": row[2],
+        "total_saved_tokens": row[3],
+        "avg_savings_pct": round(row[4], 1),
         "top_commands": [
             {"cmd": r[0], "count": r[1], "saved": r[2], "avg_pct": round(r[3], 1)} for r in top
         ],
@@ -1075,8 +1155,13 @@ def _rtk_stats(session_id: str | None) -> dict | None:
 def _empty_cache_stats() -> dict:
     """Zeroed cache-stats payload, used when no DB is available."""
     zero = {"hits": 0, "total": 0, "hit_ratio": 0.0}
-    return {"since_deploy": dict(zero), "last_24h": dict(zero),
-            "entries": 0, "time_saved_ms": 0, "by_role": {}}
+    return {
+        "since_deploy": dict(zero),
+        "last_24h": dict(zero),
+        "entries": 0,
+        "time_saved_ms": 0,
+        "by_role": {},
+    }
 
 
 def _cache_stats() -> dict:
@@ -1098,12 +1183,9 @@ def _cache_stats() -> dict:
             (cutoff,),
         ).fetchone()
         hits, total = int(row[0]), int(row[1])
-        return {"hits": hits, "total": total,
-                "hit_ratio": round(hits / total, 4) if total else 0.0}
+        return {"hits": hits, "total": total, "hit_ratio": round(hits / total, 4) if total else 0.0}
 
-    since_row = _db_conn.execute(
-        "SELECT value FROM meta WHERE key='cache_since'"
-    ).fetchone()
+    since_row = _db_conn.execute("SELECT value FROM meta WHERE key='cache_since'").fetchone()
     since = since_row[0] if since_row else None
     day_ago = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat(timespec="seconds")
 
@@ -1169,6 +1251,7 @@ def _merge_rtk_into_sessions(sessions_out: dict) -> None:
 # Routes
 # ---------------------------------------------------------------------------
 
+
 @app.get("/")
 @app.head("/")
 async def health():
@@ -1178,8 +1261,11 @@ async def health():
 @app.get("/stats")
 async def get_stats(session_id: str | None = None):
     saved = stats["total_original_tokens"] - stats["total_compressed_tokens"]
-    ratio = (stats["total_original_tokens"] / stats["total_compressed_tokens"]
-             if stats["total_compressed_tokens"] > 0 else 1.0)
+    ratio = (
+        stats["total_original_tokens"] / stats["total_compressed_tokens"]
+        if stats["total_compressed_tokens"] > 0
+        else 1.0
+    )
     sessions_out = {}
     for sid, s in stats["sessions"].items():
         sv = s["original_tokens"] - s["compressed_tokens"]
@@ -1189,22 +1275,32 @@ async def get_stats(session_id: str | None = None):
     if session_id:
         sessions_out = {sid: v for sid, v in sessions_out.items() if sid == session_id}
         recent = [c for c in recent if c.get("session_id", "") == session_id[:8]]
-    avg_latency = (
-        sum(c["latency_ms"] for c in recent) / len(recent) if recent else 0.0
-    )
+    avg_latency = sum(c["latency_ms"] for c in recent) / len(recent) if recent else 0.0
 
     compressor_info = _compressor_info()
 
     by_model: list = []
-    today_stats: dict = {"requests": 0, "tokens_saved": 0, "avg_savings_pct": 0.0, "avg_latency_ms": 0.0, "sessions": 0}
-    alltime_stats: dict = {"requests": 0, "tokens_saved": 0, "avg_savings_pct": 0.0, "avg_latency_ms": 0.0, "sessions": 0}
+    today_stats: dict = {
+        "requests": 0,
+        "tokens_saved": 0,
+        "avg_savings_pct": 0.0,
+        "avg_latency_ms": 0.0,
+        "sessions": 0,
+    }
+    alltime_stats: dict = {
+        "requests": 0,
+        "tokens_saved": 0,
+        "avg_savings_pct": 0.0,
+        "avg_latency_ms": 0.0,
+        "sessions": 0,
+    }
     recent_rows: list = []
     rtk_stats: dict | None = None
     tracked_stats: dict = {"sessions": 0, "tokens_saved": 0}
 
     if _db_conn is not None:
         active_model = compressor_info["model"]
-        sess_args   = (session_id,) if session_id else ()
+        sess_args = (session_id,) if session_id else ()
 
         by_model_rows = _db_conn.execute(
             f"""
@@ -1215,7 +1311,7 @@ async def get_stats(session_id: str | None = None):
                    SUM(original_tokens - compressed_tokens) AS total_saved,
                    ROUND(AVG(latency_ms), 1) AS avg_latency_ms
             FROM compressions
-            {'WHERE session_id = ?' if session_id else ''}
+            {"WHERE session_id = ?" if session_id else ""}
             GROUP BY model
             ORDER BY requests DESC
             """,
@@ -1224,10 +1320,10 @@ async def get_stats(session_id: str | None = None):
         by_model = [dict(r) for r in by_model_rows]
 
         scope, scope_args = _stats_scope(active_model, session_id)
-        today_stats   = _aggregate_stats(scope, scope_args, today=True, with_ratio=False)
+        today_stats = _aggregate_stats(scope, scope_args, today=True, with_ratio=False)
         alltime_stats = _aggregate_stats(scope, scope_args, today=False, with_ratio=True)
-        recent_rows   = _recent_compression_rows(active_model, session_id)
-        rtk_stats     = _rtk_stats(session_id)
+        recent_rows = _recent_compression_rows(active_model, session_id)
+        rtk_stats = _rtk_stats(session_id)
         tracked_stats = _tracked_stats()
         _merge_rtk_into_sessions(sessions_out)
 
@@ -1263,7 +1359,7 @@ async def get_timeseries(model: str | None = None, session_id: str | None = None
     if _db_conn is None:
         return JSONResponse([])
     sess_filter = " AND session_id = ?" if session_id else ""
-    sess_args   = (session_id,) if session_id else ()
+    sess_args = (session_id,) if session_id else ()
     if model:
         rows = _db_conn.execute(
             f"""
@@ -1332,14 +1428,13 @@ async def session_dashboard(slug: str):
     if _db_conn is None:
         return HTMLResponse("<h1>DB not ready</h1>", status_code=503)
     row = _db_conn.execute(
-        "SELECT slug, name, status, session_id, created_at, linked_at "
-        "FROM trackers WHERE slug=?",
+        "SELECT slug, name, status, session_id, created_at, linked_at FROM trackers WHERE slug=?",
         (slug,),
     ).fetchone()
     if row is None:
         return HTMLResponse(f"<h1>Tracker '{slug}' not found</h1>", status_code=404)
     tracker = dict(row)
-    bootstrap = f'<script>window.TRACKER = {json.dumps(tracker)};</script>'
+    bootstrap = f"<script>window.TRACKER = {json.dumps(tracker)};</script>"
     html = DASHBOARD_HTML.replace("</head>", bootstrap + "\n</head>", 1)
     return HTMLResponse(html)
 
@@ -1388,6 +1483,7 @@ async def play_compress(request: Request):
         backend = None
         backend_loading = model
         _target = model
+
         def _load():
             global backend, backend_loading
             try:
@@ -1402,13 +1498,16 @@ async def play_compress(request: Request):
                 print(f"[play] load {_target}: {e}")
             finally:
                 backend_loading = None
+
         threading.Thread(target=_load, daemon=True).start()
         return JSONResponse({"loading": True, "model": model}, status_code=202)
 
     if backend is None:
         if backend_loading:
             return JSONResponse({"loading": True, "model": backend_loading}, status_code=202)
-        return JSONResponse({"error": "No model loaded. Select a model to load it."}, status_code=503)
+        return JSONResponse(
+            {"error": "No model loaded. Select a model to load it."}, status_code=503
+        )
 
     t0 = time.perf_counter()
     try:
@@ -1422,15 +1521,20 @@ async def play_compress(request: Request):
     char_pct = round((1 - comp_chars / max(1, orig_chars)) * 100, 1)
     token_pct = round((1 - comp_tokens_est / orig_tokens_est) * 100, 1)
 
-    return JSONResponse({
-        "original": text, "compressed": compressed,
-        "original_chars": orig_chars, "compressed_chars": comp_chars,
-        "char_pct": char_pct,
-        "original_tokens_est": orig_tokens_est, "compressed_tokens_est": comp_tokens_est,
-        "token_pct": token_pct,
-        "model": backend.get("type") if backend else model,
-        "latency_ms": latency_ms,
-    })
+    return JSONResponse(
+        {
+            "original": text,
+            "compressed": compressed,
+            "original_chars": orig_chars,
+            "compressed_chars": comp_chars,
+            "char_pct": char_pct,
+            "original_tokens_est": orig_tokens_est,
+            "compressed_tokens_est": comp_tokens_est,
+            "token_pct": token_pct,
+            "model": backend.get("type") if backend else model,
+            "latency_ms": latency_ms,
+        }
+    )
 
 
 @app.post("/admin/set-model")
@@ -1439,7 +1543,9 @@ async def set_model(request: Request):
     body = await request.json()
     model = body.get("model")
     if model not in KNOWN_MODELS:
-        return JSONResponse({"error": f"Unknown model. Known: {sorted(KNOWN_MODELS)}"}, status_code=400)
+        return JSONResponse(
+            {"error": f"Unknown model. Known: {sorted(KNOWN_MODELS)}"}, status_code=400
+        )
     if _db_conn is not None:
         _db_conn.execute(
             "INSERT OR REPLACE INTO meta (key, value) VALUES ('current_model', ?)",
@@ -1473,6 +1579,7 @@ async def set_model(request: Request):
 
         threading.Thread(target=load_dual, daemon=True).start()
     else:
+
         def load():
             global backend, backend_loading
             try:
@@ -1501,17 +1608,29 @@ async def set_dual_models(request: Request):
     Omit a key to leave it unchanged.
     If dual mode is currently active, the affected sub-backends reload immediately.
     """
-    global dual_model_system, dual_model_user, backend, backend_loading, backend_user, backend_system
+    global \
+        dual_model_system, \
+        dual_model_user, \
+        backend, \
+        backend_loading, \
+        backend_user, \
+        backend_system
     body = await request.json()
     new_sys = body.get("system")
     new_usr = body.get("user")
 
     if not new_sys and not new_usr:
-        return JSONResponse({"error": "Provide at least one of 'system' or 'user'"}, status_code=400)
+        return JSONResponse(
+            {"error": "Provide at least one of 'system' or 'user'"}, status_code=400
+        )
     if new_sys and new_sys not in DUAL_SUBMODELS:
-        return JSONResponse({"error": f"Invalid system model. Valid: {list(DUAL_SUBMODELS)}"}, status_code=400)
+        return JSONResponse(
+            {"error": f"Invalid system model. Valid: {list(DUAL_SUBMODELS)}"}, status_code=400
+        )
     if new_usr and new_usr not in DUAL_SUBMODELS:
-        return JSONResponse({"error": f"Invalid user model. Valid: {list(DUAL_SUBMODELS)}"}, status_code=400)
+        return JSONResponse(
+            {"error": f"Invalid user model. Valid: {list(DUAL_SUBMODELS)}"}, status_code=400
+        )
 
     if new_sys:
         dual_model_system = new_sys
@@ -1521,7 +1640,8 @@ async def set_dual_models(request: Request):
     if _db_conn is not None:
         if new_sys:
             _db_conn.execute(
-                "INSERT OR REPLACE INTO meta (key, value) VALUES ('dual_model_system', ?)", (new_sys,)
+                "INSERT OR REPLACE INTO meta (key, value) VALUES ('dual_model_system', ?)",
+                (new_sys,),
             )
         if new_usr:
             _db_conn.execute(
@@ -1546,7 +1666,9 @@ async def set_dual_models(request: Request):
                 backend_loading = None
 
         threading.Thread(target=reload_dual, daemon=True).start()
-        return JSONResponse({"status": "loading", "system": dual_model_system, "user": dual_model_user})
+        return JSONResponse(
+            {"status": "loading", "system": dual_model_system, "user": dual_model_user}
+        )
 
     return JSONResponse({"status": "ok", "system": dual_model_system, "user": dual_model_user})
 
@@ -1589,7 +1711,9 @@ async def create_tracker(request: Request):
         (slug, name, ts),
     )
     _db_conn.commit()
-    return JSONResponse({"slug": slug, "name": name, "status": "pending", "session_id": None, "created_at": ts})
+    return JSONResponse(
+        {"slug": slug, "name": name, "status": "pending", "session_id": None, "created_at": ts}
+    )
 
 
 @app.get("/admin/tracker")
@@ -1623,7 +1747,9 @@ async def get_all_trackers(page: int = 1, page_size: int = 25):
     page = max(1, page)
     page_size = max(1, min(200, page_size))
     if _db_conn is None:
-        return JSONResponse({"items": [], "total": 0, "page": page, "page_size": page_size, "pages": 0})
+        return JSONResponse(
+            {"items": [], "total": 0, "page": page, "page_size": page_size, "pages": 0}
+        )
     offset = (page - 1) * page_size
 
     total = _db_conn.execute("SELECT COUNT(*) FROM trackers").fetchone()[0]
@@ -1645,14 +1771,17 @@ async def get_all_trackers(page: int = 1, page_size: int = 25):
         (page_size, offset),
     ).fetchall()
     import math
+
     pages = math.ceil(total / page_size) if page_size > 0 else 0
-    return JSONResponse({
-        "items": [dict(r) for r in rows],
-        "total": total,
-        "page": page,
-        "page_size": page_size,
-        "pages": pages,
-    })
+    return JSONResponse(
+        {
+            "items": [dict(r) for r in rows],
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "pages": pages,
+        }
+    )
 
 
 @app.get("/admin/langfuse-status")
@@ -1674,7 +1803,9 @@ async def get_session_compressions(slug: str, page: int = 1, page_size: int = 20
     page_size = max(1, min(200, page_size))
 
     if not session_id:
-        return JSONResponse({"items": [], "total": 0, "page": page, "page_size": page_size, "pages": 0})
+        return JSONResponse(
+            {"items": [], "total": 0, "page": page, "page_size": page_size, "pages": 0}
+        )
 
     offset = (page - 1) * page_size
 
@@ -1696,13 +1827,15 @@ async def get_session_compressions(slug: str, page: int = 1, page_size: int = 20
         (session_id, page_size, offset),
     ).fetchall()
     pages = math.ceil(total / page_size) if page_size > 0 else 0
-    return JSONResponse({
-        "items": [dict(r) for r in rows],
-        "total": total,
-        "page": page,
-        "page_size": page_size,
-        "pages": pages,
-    })
+    return JSONResponse(
+        {
+            "items": [dict(r) for r in rows],
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "pages": pages,
+        }
+    )
 
 
 @app.get("/session/{slug}/rtk-commands")
@@ -1716,7 +1849,9 @@ async def get_session_rtk_commands(slug: str, page: int = 1, page_size: int = 25
         return JSONResponse({"error": "not found"}, status_code=404)
     session_id = row[0]
     if not session_id:
-        return JSONResponse({"items": [], "total": 0, "page": page, "page_size": page_size, "pages": 0})
+        return JSONResponse(
+            {"items": [], "total": 0, "page": page, "page_size": page_size, "pages": 0}
+        )
     offset = (page - 1) * page_size
 
     total = _db_conn.execute(
@@ -1734,14 +1869,17 @@ async def get_session_rtk_commands(slug: str, page: int = 1, page_size: int = 25
         (session_id, page_size, offset),
     ).fetchall()
     import math
+
     pages = math.ceil(total / page_size) if page_size > 0 else 0
-    return JSONResponse({
-        "items": [dict(r) for r in rows],
-        "total": total,
-        "page": page,
-        "page_size": page_size,
-        "pages": pages,
-    })
+    return JSONResponse(
+        {
+            "items": [dict(r) for r in rows],
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "pages": pages,
+        }
+    )
 
 
 @app.get("/v1/models")
@@ -1760,11 +1898,12 @@ async def list_models(request: Request):
 async def proxy_messages(request: Request):
     session_id = request.headers.get("x-claude-code-session-id", "unknown")
     # Claude Code may send a session name — log all x-claude-code-* headers once to inspect
-    cc_headers = {k: v for k, v in request.headers.items() if "claude" in k.lower() or "session" in k.lower()}
+    cc_headers = {
+        k: v for k, v in request.headers.items() if "claude" in k.lower() or "session" in k.lower()
+    }
     print(f"[headers] {cc_headers}")
-    session_name = (
-        request.headers.get("x-claude-code-session-name")
-        or request.headers.get("x-session-name")
+    session_name = request.headers.get("x-claude-code-session-name") or request.headers.get(
+        "x-session-name"
     )
     record_request(session_id, session_name)
 
@@ -1777,16 +1916,19 @@ async def proxy_messages(request: Request):
     body["messages"] = compress_messages(body["messages"], session_id)
     _ls_compression_latency_ms = round(time.monotonic() * 1000 - _ls_start_ms, 1)
     _sess = stats["sessions"].get(session_id, {})
-    _ls_original_tokens   = _sess.get("original_tokens", 0)
+    _ls_original_tokens = _sess.get("original_tokens", 0)
     _ls_compressed_tokens = _sess.get("compressed_tokens", 0)
-    _ls_compression_ratio = round(_ls_compressed_tokens / _ls_original_tokens, 3) if _ls_original_tokens else 1.0
-    _ls_tokens_saved      = _ls_original_tokens - _ls_compressed_tokens
+    _ls_compression_ratio = (
+        round(_ls_compressed_tokens / _ls_original_tokens, 3) if _ls_original_tokens else 1.0
+    )
+    _ls_tokens_saved = _ls_original_tokens - _ls_compressed_tokens
     _ls_compression_model = (backend or {}).get("type", "unknown")
-    _ls_cache_hit         = False
+    _ls_cache_hit = False
     headers = build_headers(request)
     is_streaming = body.get("stream", False)
 
     if is_streaming:
+
         async def stream_gen():
             _chunks: list[bytes] = []
             async with httpx.AsyncClient(timeout=120) as client:
@@ -1841,6 +1983,7 @@ async def proxy_messages(request: Request):
                         },
                         run_outputs={"response": _response_text},
                     )
+
         return StreamingResponse(stream_gen(), media_type="text/event-stream")
     else:
         async with httpx.AsyncClient(timeout=120) as client:
@@ -1909,8 +2052,8 @@ def _load_template(name: str) -> str:
 
 
 DASHBOARD_HTML = _load_template("dashboard.html")
-PLAY_HTML      = _load_template("play.html")
-LIST_HTML      = _load_template("list.html")
+PLAY_HTML = _load_template("play.html")
+LIST_HTML = _load_template("list.html")
 
 
 if __name__ == "__main__":  # pragma: no cover

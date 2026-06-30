@@ -1,13 +1,11 @@
-import pytest
 from starlette.testclient import TestClient
 
 
 def test_init_db_creates_trackers_table(tmp_path):
     from proxy import init_db
+
     conn = init_db(str(tmp_path / "metrics.db"))
-    cur = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='trackers'"
-    )
+    cur = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='trackers'")
     assert cur.fetchone() is not None
     cols = [row[1] for row in conn.execute("PRAGMA table_info(trackers)")]
     for col in ("slug", "name", "status", "session_id", "created_at", "linked_at", "closed_at"):
@@ -17,6 +15,7 @@ def test_init_db_creates_trackers_table(tmp_path):
 
 def test_make_slug_basic(tmp_path):
     from proxy import init_db, make_slug
+
     conn = init_db(str(tmp_path / "metrics.db"))
     s1 = make_slug("Kompress Test 1", conn)
     assert s1.startswith("kompress-test-1-")
@@ -28,6 +27,7 @@ def test_make_slug_basic(tmp_path):
 
 def test_make_slug_no_collision(tmp_path):
     from proxy import init_db, make_slug
+
     conn = init_db(str(tmp_path / "metrics.db"))
     s1 = make_slug("my test", conn)
     s2 = make_slug("my test", conn)
@@ -37,6 +37,7 @@ def test_make_slug_no_collision(tmp_path):
 
 def test_make_slug_hex_suffix(tmp_path):
     from proxy import init_db, make_slug
+
     conn = init_db(str(tmp_path / "metrics.db"))
     slug = make_slug("My Task", conn)
     suffix = slug.split("-")[-1]
@@ -85,15 +86,14 @@ def test_get_tracker_returns_pending(client: TestClient):
 
 def test_soft_close_keeps_row(client: TestClient):
     import sys
+
     r = client.post("/admin/tracker", json={"name": "soft test"})
     slug = r.json()["slug"]
     resp = client.delete(f"/admin/tracker/{slug}")
     assert resp.status_code == 200
     assert resp.json() == {"closed": slug}
     conn = sys.modules["proxy"]._db_conn
-    row = conn.execute(
-        "SELECT status, closed_at FROM trackers WHERE slug=?", (slug,)
-    ).fetchone()
+    row = conn.execute("SELECT status, closed_at FROM trackers WHERE slug=?", (slug,)).fetchone()
     assert row is not None
     assert row[0] == "closed"
     assert row[1] is not None
@@ -115,6 +115,7 @@ def test_delete_tracker_404(client: TestClient):
 
 def test_auto_link_pending_tracker(client: TestClient):
     import sys
+
     proxy = sys.modules["proxy"]
 
     client.post("/admin/tracker", json={"name": "Auto Link Test"})
@@ -133,6 +134,7 @@ def test_auto_link_pending_tracker(client: TestClient):
 
 def test_no_tracker_record_request_is_safe(client: TestClient):
     import sys
+
     proxy = sys.modules["proxy"]
     proxy.record_request("session-xyz")
     assert client.get("/admin/tracker").json() == []
@@ -170,6 +172,7 @@ def test_stats_has_tracked_key(client: TestClient):
 
 def test_stats_session_filter(client: TestClient):
     import sys
+
     proxy = sys.modules["proxy"]
 
     proxy.record_compression("session-A", 500, 300, 50.0)
@@ -184,6 +187,7 @@ def test_stats_session_filter(client: TestClient):
 
 def test_stats_no_filter_returns_all(client: TestClient):
     import sys
+
     proxy = sys.modules["proxy"]
 
     proxy.record_compression("session-A", 500, 300, 50.0)
@@ -196,6 +200,7 @@ def test_stats_no_filter_returns_all(client: TestClient):
 
 def test_timeseries_session_filter(client: TestClient):
     import sys
+
     proxy = sys.modules["proxy"]
 
     proxy.record_compression("session-A", 500, 300, 50.0)
