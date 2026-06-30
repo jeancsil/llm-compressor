@@ -109,6 +109,23 @@ To stop compressing without stopping the proxy:
 unset ANTHROPIC_BASE_URL
 ```
 
+### Alternative: `wrap` — ephemeral daemon (no manual start/stop)
+
+Instead of running the proxy as a persistent daemon, you can let the CLI manage it automatically:
+
+```bash
+uv run llm-compressor wrap claude
+```
+
+This single command:
+1. Spawns the proxy in the background
+2. Waits until it's healthy (up to 30 s)
+3. Injects `ANTHROPIC_BASE_URL` for the child process only
+4. Runs your agent command with full TTY
+5. Kills the proxy when the agent exits
+
+Works with any agent: `claude`, `aider`, `cursor`, etc. The proxy is completely invisible — you never touch `make start` or `make stop`.
+
 ---
 
 ## Dashboard
