@@ -23,6 +23,6 @@ dev = [
     "pytest>=9.1.0",
     "pytest-cov>=7.1.0",
 ]
-langsmith = [
-    "langsmith>=0.3",
+langfuse = [
+    "langfuse>=2.0",
 ]
