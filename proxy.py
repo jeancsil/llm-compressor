@@ -248,6 +248,19 @@ def init_db(path: str):
         )
     except Exception:
         pass  # column already exists
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS sessions (
+            session_id   TEXT PRIMARY KEY,
+            project      TEXT,
+            display_name TEXT,
+            name_source  TEXT DEFAULT 'provisional',
+            first_seen   TEXT,
+            last_seen    TEXT
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_last_seen ON sessions(last_seen)")
     # Mark when caching went live so hit-ratio stats can exclude the pre-feature
     # backlog of misses. Set once, never overwritten (INSERT OR IGNORE).
     conn.execute(
