@@ -1,6 +1,7 @@
 """Session topic naming: deterministic extraction + heuristic/Haiku label."""
 
 import re
+
 import httpx
 
 _STRIP = [
@@ -41,9 +42,36 @@ def clean_signal(
 
 
 _STOPWORDS = {
-    "the", "a", "an", "to", "of", "in", "on", "for", "and", "or", "with",
-    "please", "can", "you", "help", "me", "i", "we", "so", "that", "this",
-    "my", "it", "is", "be", "add", "need", "want", "would", "like",
+    "the",
+    "a",
+    "an",
+    "to",
+    "of",
+    "in",
+    "on",
+    "for",
+    "and",
+    "or",
+    "with",
+    "please",
+    "can",
+    "you",
+    "help",
+    "me",
+    "i",
+    "we",
+    "so",
+    "that",
+    "this",
+    "my",
+    "it",
+    "is",
+    "be",
+    "add",
+    "need",
+    "want",
+    "would",
+    "like",
 }
 
 
