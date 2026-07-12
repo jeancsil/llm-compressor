@@ -37,3 +37,28 @@ def clean_signal(
         if total >= min_chars:
             break
     return " ".join(acc)[:max_send]
+
+
+_STOPWORDS = {
+    "the", "a", "an", "to", "of", "in", "on", "for", "and", "or", "with",
+    "please", "can", "you", "help", "me", "i", "we", "so", "that", "this",
+    "my", "it", "is", "be", "add", "need", "want", "would", "like",
+}
+
+
+def finalize_slug(raw: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", (raw or "").lower()).strip("-")
+    slug = re.sub(r"-{2,}", "-", slug)
+    if not slug or slug == "general":
+        return ""
+    return slug
+
+
+def heuristic_topic(signal: str) -> str:
+    """Deterministic 2-4 word kebab topic. Empty string = no clear task (defer)."""
+    first_line = (signal or "").strip().splitlines()[0] if signal.strip() else ""
+    words = re.findall(r"[A-Za-z0-9]+", first_line.lower())
+    keep = [w for w in words if w not in _STOPWORDS and len(w) > 1]
+    if not keep:
+        return ""
+    return finalize_slug("-".join(keep[:4]))

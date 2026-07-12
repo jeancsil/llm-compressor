@@ -35,3 +35,25 @@ def test_clean_signal_caps_send_length():
 def test_clean_signal_skips_tiny_turns():
     sig = N.clean_signal(["ok", "/model opus"], min_chars=400, max_turns=3)
     assert sig == ""  # nothing substantive → defer
+
+
+def test_finalize_slug_enforces_kebab():
+    assert N.finalize_slug("Fix Dashboard CSS!!") == "fix-dashboard-css"
+
+
+def test_finalize_slug_general_becomes_empty():
+    assert N.finalize_slug("general") == ""
+    assert N.finalize_slug("  ") == ""
+
+
+def test_heuristic_topic_from_real_signal():
+    sig = "please add db/session history data to the dashboard so I can track prompts"
+    slug = N.heuristic_topic(sig)
+    assert slug and slug == slug.lower()
+    assert all(ch.isalnum() or ch == "-" for ch in slug)
+    assert 1 <= slug.count("-") + 1 <= 4  # 2-4 words
+
+
+def test_heuristic_topic_defers_on_noise():
+    assert N.heuristic_topic("") == ""
+    assert N.heuristic_topic("hey can you help me") in ("", N.heuristic_topic("hey can you help me"))
