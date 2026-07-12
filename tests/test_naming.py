@@ -57,3 +57,45 @@ def test_heuristic_topic_from_real_signal():
 def test_heuristic_topic_defers_on_noise():
     assert N.heuristic_topic("") == ""
     assert N.heuristic_topic("hey can you help me") in ("", N.heuristic_topic("hey can you help me"))
+
+
+import asyncio
+from unittest.mock import patch, MagicMock
+
+
+def test_haiku_topic_builds_claude_code_shape_and_finalizes():
+    captured = {}
+
+    class _Resp:
+        status_code = 200
+        def json(self):
+            return {"content": [{"text": "Fix Dashboard CSS"}]}
+
+    class _Client:
+        def __init__(self, *a, **k): ...
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def post(self, url, headers=None, json=None, **k):
+            captured["json"] = json
+            captured["headers"] = headers
+            return _Resp()
+
+    with patch("naming.httpx.AsyncClient", _Client):
+        slug = asyncio.run(N.haiku_topic("add css fix", {"authorization": "Bearer x"}))
+    assert slug == "fix-dashboard-css"
+    # first system block is the Claude Code identity string
+    assert captured["json"]["system"][0]["text"] == \
+        "You are Claude Code, Anthropic's official CLI for Claude."
+    assert captured["json"]["model"] == "claude-haiku-4-5-20251001"
+    assert captured["headers"]["authorization"] == "Bearer x"
+
+
+def test_haiku_topic_swallows_errors_returns_empty():
+    class _Boom:
+        def __init__(self, *a, **k): ...
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def post(self, *a, **k): raise RuntimeError("401")
+
+    with patch("naming.httpx.AsyncClient", _Boom):
+        assert asyncio.run(N.haiku_topic("x", {})) == ""

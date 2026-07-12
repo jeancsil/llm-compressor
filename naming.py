@@ -1,6 +1,7 @@
 """Session topic naming: deterministic extraction + heuristic/Haiku label."""
 
 import re
+import httpx
 
 _STRIP = [
     re.compile(r"<system-reminder>.*?</system-reminder>", re.S),
@@ -62,3 +63,41 @@ def heuristic_topic(signal: str) -> str:
     if not keep:
         return ""
     return finalize_slug("-".join(keep[:4]))
+
+
+HAIKU_MODEL = "claude-haiku-4-5-20251001"
+_CLAUDE_CODE_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude."
+NAMING_SYSTEM = (
+    "You label developer coding sessions. Given the user's opening messages, "
+    "output a 2-4 word topic in kebab-case that captures the task. Only lowercase "
+    "letters, digits, and hyphens. No explanation, no quotes, no trailing period. "
+    "Prefer verb-noun (fix-dashboard-css, add-batch-endpoint, debug-cache-eviction). "
+    "If there is no clear task yet, output general."
+)
+_ANTHROPIC_MESSAGES = "https://api.anthropic.com/v1/messages"
+
+
+async def haiku_topic(signal: str, auth_headers: dict) -> str:
+    """One Claude-Code-shaped Haiku call on the forwarded OAuth token. Never raises."""
+    try:
+        headers = dict(auth_headers)
+        headers["content-type"] = "application/json"
+        body = {
+            "model": HAIKU_MODEL,
+            "max_tokens": 16,
+            "system": [
+                {"type": "text", "text": _CLAUDE_CODE_IDENTITY},
+                {"type": "text", "text": NAMING_SYSTEM},
+            ],
+            "messages": [{"role": "user", "content": signal}],
+        }
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(_ANTHROPIC_MESSAGES, headers=headers, json=body)
+        if resp.status_code >= 400:
+            print(f"[naming] haiku call {resp.status_code}")
+            return ""
+        text = (resp.json().get("content") or [{}])[0].get("text", "")
+        return finalize_slug(text)
+    except Exception as exc:  # never raise into the caller
+        print(f"[naming] haiku_topic failed: {exc}")
+        return ""
