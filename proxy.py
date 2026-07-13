@@ -1906,8 +1906,9 @@ async def list_models(request: Request):
 @app.post("/v1/messages")
 async def proxy_messages(request: Request):
     session_id = request.headers.get("x-claude-code-session-id", "unknown")
-    import sessions as _sessions  # local import ok; module is light
     import naming as _naming
+    import sessions as _sessions  # local import ok; module is light
+
     _sessions.ensure_session(_db_conn, session_id)
     record_request(session_id)
 
@@ -1917,9 +1918,15 @@ async def proxy_messages(request: Request):
         _row = _sessions.get_session(_db_conn, session_id) if _db_conn else None
         if _row and _row["name_source"] == "provisional":
             _user_turns = [
-                (m.get("content") if isinstance(m.get("content"), str)
-                 else " ".join(b.get("text", "") for b in m.get("content", []) if isinstance(b, dict)))
-                for m in body.get("messages", []) if m.get("role") == "user"
+                (
+                    m.get("content")
+                    if isinstance(m.get("content"), str)
+                    else " ".join(
+                        b.get("text", "") for b in m.get("content", []) if isinstance(b, dict)
+                    )
+                )
+                for m in body.get("messages", [])
+                if m.get("role") == "user"
             ]
             _signal = _naming.clean_signal([t for t in _user_turns if t])
             # Atomically claim the row BEFORE dispatching. Claude Code fires several
@@ -1927,8 +1934,11 @@ async def proxy_messages(request: Request):
             # dispatches, so we never start two naming tasks (spec: "exactly one call").
             if _signal and _sessions.claim_for_naming(_db_conn, session_id):
                 _use_llm = os.environ.get("LLM_COMPRESSOR_LLM_NAMING") == "1"
-                _auth = {k: v for k, v in request.headers.items()
-                         if k.lower() in ("authorization", "anthropic-version", "anthropic-beta")}
+                _auth = {
+                    k: v
+                    for k, v in request.headers.items()
+                    if k.lower() in ("authorization", "anthropic-version", "anthropic-beta")
+                }
                 _naming.schedule_naming(_db_conn, session_id, _signal, _auth, _use_llm)
     except Exception as _exc:  # naming must never break the proxy path
         print(f"[naming] trigger skipped: {_exc}")
