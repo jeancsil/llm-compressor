@@ -23,33 +23,67 @@ from llmlingua import PromptCompressor
 
 from langfuse_tracer import tracer as _lf_tracer
 
+import sys as _sys
+import types as _types
+
+import db
+
+# Plain re-exports: real function objects, never monkeypatched by name in the
+# test suite (tests call them directly), so a static import carries no
+# staleness risk. `_db_conn`/`DB_PATH`/`migrate_from_json`/
+# `recover_stats_from_backup`/`_migrate_db_location` are deliberately NOT
+# imported here — see `_ProxyModule` below.
+from db import init_db, load_stats_from_db  # re-export
+
+# ---------------------------------------------------------------------------
+# proxy.py forwarding shim (Task 13, Step 1)
+# ---------------------------------------------------------------------------
+# db.py owns `_db_conn` (mutable, reassigned by lifespan() on every request-cycle
+# reset in tests) and `DB_PATH`, plus `migrate_from_json` / `recover_stats_from_backup`
+# / `_migrate_db_location`, all three of which the test suite's autouse fixture in
+# conftest.py monkeypatches away via `monkeypatch.setattr(proxy, "<name>", ...)`.
+# Every real reader of these five names elsewhere in the codebase (lifespan(),
+# db.py's own functions) is module-qualified (`db._db_conn`, `db.DB_PATH`, ...) per
+# scratchpad/split-audit.md's Step 3 contract. This class makes `proxy.<name>` reads
+# AND `monkeypatch.setattr(proxy, "<name>", ...)` writes forward to the single
+# owning attribute on `db`, so the pre-split test idiom keeps working unmodified
+# instead of silently patching a stale, disconnected copy on proxy itself.
+_FORWARD = {
+    "_db_conn": (db, "_db_conn"),
+    "DB_PATH": (db, "DB_PATH"),
+    "migrate_from_json": (db, "migrate_from_json"),
+    "recover_stats_from_backup": (db, "recover_stats_from_backup"),
+    "_migrate_db_location": (db, "_migrate_db_location"),
+}
+
+
+class _ProxyModule(_types.ModuleType):
+    def __getattr__(self, name):
+        target = _FORWARD.get(name)
+        if target is not None:
+            module, attr = target
+            return getattr(module, attr)
+        raise AttributeError(name)
+
+    def __setattr__(self, name, value):
+        target = _FORWARD.get(name)
+        if target is not None:
+            module, attr = target
+            setattr(module, attr, value)
+            return
+        super().__setattr__(name, value)
+
+
+_sys.modules[__name__].__class__ = _ProxyModule
+
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 ANTHROPIC_BASE = "https://api.anthropic.com"
 COST_PER_MTOK = float(os.environ.get("COST_PER_MTOK", "3.0"))
 
 
-def _rtk_data_dir() -> Path:
-    """Platform-specific directory where both history.db and metrics.db live."""
-    system = platform.system()
-    if system == "Darwin":
-        return Path.home() / "Library" / "Application Support" / "rtk"
-    if system == "Windows":
-        return Path(os.environ.get("APPDATA", Path.home())) / "rtk"
-    return Path.home() / ".local" / "share" / "rtk"
-
-
-def _default_db_path() -> Path:
-    d = _rtk_data_dir()
-    d.mkdir(parents=True, exist_ok=True)
-    return d / "metrics.db"
-
-
-DB_PATH = Path(os.environ.get("LLM_COMPRESSOR_DB") or _default_db_path())
-
 # Module-level globals populated by lifespan
 backend = None
 backend_loading = None  # set to model name while async load is in progress
-_db_conn = None
 _cache = None  # CompressionCache, set in lifespan
 backend_user = None  # kompress instance in dual mode
 backend_system = None  # llmlingua2-large instance in dual mode
@@ -147,260 +181,6 @@ class CompressionCache:
                 "(SELECT key FROM compression_cache ORDER BY last_hit ASC LIMIT ?)",
                 (count - self._max_rows,),
             )
-
-
-# ---------------------------------------------------------------------------
-# DB helpers
-# ---------------------------------------------------------------------------
-
-
-def init_db(path: str):
-    import sqlite3 as _sqlite3
-
-    conn = _sqlite3.connect(path, check_same_thread=False)
-    conn.row_factory = _sqlite3.Row
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS compressions (
-            id               INTEGER PRIMARY KEY AUTOINCREMENT,
-            ts               TEXT,
-            session_id       TEXT,
-            model            TEXT,
-            original_tokens  INTEGER,
-            compressed_tokens INTEGER,
-            latency_ms       REAL
-        )
-        """
-    )
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_ts ON compressions(ts)")
-    conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS compression_texts (
-            compression_id INTEGER PRIMARY KEY REFERENCES compressions(id),
-            original_text  TEXT NOT NULL,
-            compressed_text TEXT NOT NULL
-        )
-        """
-    )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS trackers (
-            slug        TEXT PRIMARY KEY,
-            name        TEXT NOT NULL,
-            status      TEXT NOT NULL DEFAULT 'pending',
-            session_id  TEXT,
-            created_at  TEXT NOT NULL,
-            linked_at   TEXT
-        )
-        """
-    )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS rtk_events (
-            id            INTEGER PRIMARY KEY AUTOINCREMENT,
-            rtk_id        INTEGER UNIQUE,
-            ts            TEXT NOT NULL,
-            session_id    TEXT NOT NULL,
-            rtk_cmd       TEXT NOT NULL,
-            input_tokens  INTEGER NOT NULL DEFAULT 0,
-            output_tokens INTEGER NOT NULL DEFAULT 0,
-            saved_tokens  INTEGER NOT NULL DEFAULT 0,
-            savings_pct   REAL    NOT NULL DEFAULT 0.0
-        )
-        """
-    )
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_rtk_events_session ON rtk_events(session_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_rtk_events_ts      ON rtk_events(ts)")
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS compression_cache (
-            key               TEXT PRIMARY KEY,
-            model             TEXT NOT NULL,
-            rate              REAL NOT NULL,
-            compressed_text   TEXT NOT NULL,
-            original_tokens   INTEGER NOT NULL,
-            compressed_tokens INTEGER NOT NULL,
-            created_at        TEXT NOT NULL,
-            hit_count         INTEGER NOT NULL DEFAULT 0,
-            last_hit          TEXT
-        )
-        """
-    )
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_cache_last_hit ON compression_cache(last_hit)")
-    try:
-        conn.execute("ALTER TABLE trackers ADD COLUMN closed_at TEXT")
-    except Exception:
-        pass  # column already exists
-    try:
-        conn.execute("ALTER TABLE compressions ADD COLUMN role TEXT DEFAULT 'user'")
-    except Exception:
-        pass  # column already exists
-    try:
-        conn.execute("ALTER TABLE compressions ADD COLUMN cache_hit INTEGER DEFAULT 0")
-    except Exception:
-        pass  # column already exists
-    try:
-        conn.execute("ALTER TABLE rtk_events ADD COLUMN project_path TEXT DEFAULT ''")
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_rtk_events_project ON rtk_events(project_path)"
-        )
-    except Exception:
-        pass  # column already exists
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS sessions (
-            session_id   TEXT PRIMARY KEY,
-            project      TEXT,
-            display_name TEXT,
-            name_source  TEXT DEFAULT 'provisional',
-            first_seen   TEXT,
-            last_seen    TEXT
-        )
-        """
-    )
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_last_seen ON sessions(last_seen)")
-    # Mark when caching went live so hit-ratio stats can exclude the pre-feature
-    # backlog of misses. Set once, never overwritten (INSERT OR IGNORE).
-    conn.execute(
-        "INSERT OR IGNORE INTO meta (key, value) VALUES ('cache_since', ?)",
-        (datetime.now(timezone.utc).isoformat(timespec="seconds"),),
-    )
-    conn.commit()
-    return conn
-
-
-def migrate_from_json(conn, json_path: str = "stats.json") -> None:
-    path = Path(json_path)
-    if not path.exists():
-        return
-    existing = conn.execute("SELECT COUNT(*) FROM compressions").fetchone()[0]
-    if existing:
-        return
-    try:
-        import shutil
-
-        data = json.loads(path.read_text())
-        rows = data.get("recent_compressions", [])
-        bak = path.with_suffix(".json.bak")
-        shutil.copy2(path, bak)
-        print(f"[migration] Backed {path} → {bak}")
-        conn.executemany(
-            "INSERT INTO compressions (ts, session_id, model, original_tokens, compressed_tokens, latency_ms) VALUES (?,?,'llmlingua2',?,?,0.0)",
-            [
-                (
-                    datetime.now().strftime("%Y-%m-%dT%H:%M:%S") if not r.get("ts") else r["ts"],
-                    r.get("session_id", ""),
-                    r.get("original", 0),
-                    r.get("compressed", 0),
-                )
-                for r in rows
-            ],
-        )
-        conn.commit()
-        count = conn.execute("SELECT COUNT(*) FROM compressions").fetchone()[0]
-        print(f"[migration] Imported {count} rows {path} → metrics.db. Backup {bak}.")
-    except Exception as e:
-        print(f"[migration] Failed, skipping: {e}")
-
-
-def recover_stats_from_backup(conn, bak_path: str = "stats.json.bak") -> None:
-    """Import full session history from stats.json.bak.
-
-    The initial migration only captured recent_compressions (≤100 rows). This inserts
-    one residual synthetic row per session for the token delta not yet in the DB,
-    then stores a legacy_request_offset so load_stats_from_db produces the correct total.
-    """
-    path = Path(bak_path)
-    if not path.exists():
-        return
-    if conn.execute("SELECT value FROM meta WHERE key='backup_recovered'").fetchone():
-        return
-    try:
-        data = json.loads(path.read_text())
-        sessions = data.get("sessions", {})
-        rows_inserted = 0
-        for session_id, sess in sessions.items():
-            existing = conn.execute(
-                "SELECT COALESCE(SUM(original_tokens),0), COALESCE(SUM(compressed_tokens),0) "
-                "FROM compressions WHERE session_id=?",
-                (session_id,),
-            ).fetchone()
-            remaining_orig = int(sess.get("original_tokens", 0)) - int(existing[0])
-            remaining_comp = int(sess.get("compressed_tokens", 0)) - int(existing[1])
-            if remaining_orig > 0:
-                ts = (
-                    sess.get("last_seen") or sess.get("first_seen") or datetime.now().isoformat()
-                )[:19]
-                conn.execute(
-                    "INSERT INTO compressions (ts, session_id, model, original_tokens, compressed_tokens, latency_ms) "
-                    "VALUES (?,?,'llmlingua2',?,?,0.0)",
-                    (ts, session_id, remaining_orig, max(0, remaining_comp)),
-                )
-                rows_inserted += 1
-
-        db_rows = conn.execute("SELECT COUNT(*) FROM compressions").fetchone()[0]
-        total_requests = int(data.get("total_requests", 0))
-        legacy_offset = max(0, total_requests - db_rows)
-        conn.execute(
-            "INSERT OR REPLACE INTO meta VALUES ('legacy_request_offset', ?)", (str(legacy_offset),)
-        )
-        conn.execute("INSERT OR REPLACE INTO meta VALUES ('backup_recovered', '1')")
-        conn.commit()
-        print(
-            f"[recovery] {rows_inserted} synthetic rows from {bak_path}. Request offset: {legacy_offset}."
-        )
-    except Exception as e:
-        print(f"[recovery] Failed: {e}")
-
-
-def load_stats_from_db(conn) -> None:
-    row = conn.execute(
-        "SELECT COUNT(*), COALESCE(SUM(original_tokens),0), COALESCE(SUM(compressed_tokens),0) FROM compressions"
-    ).fetchone()
-    try:
-        offset_row = conn.execute(
-            "SELECT value FROM meta WHERE key='legacy_request_offset'"
-        ).fetchone()
-        legacy_offset = int(offset_row[0]) if offset_row else 0
-    except Exception:
-        legacy_offset = 0
-    stats["total_requests"] = row[0] + legacy_offset
-    stats["total_original_tokens"] = row[1]
-    stats["total_compressed_tokens"] = row[2]
-
-    for r in conn.execute(
-        "SELECT session_id, COUNT(*), SUM(original_tokens), SUM(compressed_tokens), MIN(ts), MAX(ts) FROM compressions GROUP BY session_id"
-    ):
-        stats["sessions"][r[0]] = {
-            "requests": r[1],
-            "original_tokens": r[2],
-            "compressed_tokens": r[3],
-            "first_seen": r[4],
-            "last_seen": r[5],
-            "name": None,
-        }
-
-    for r in conn.execute(
-        "SELECT ts, session_id, original_tokens, compressed_tokens, latency_ms FROM compressions ORDER BY id DESC LIMIT 100"
-    ):
-        saved = r[2] - r[3]
-        stats["recent_compressions"].append(
-            {
-                "ts": r[0][11:19],
-                "session_id": r[1][:8],
-                "original": r[2],
-                "compressed": r[3],
-                "saved": saved,
-                "latency_ms": r[4],
-            }
-        )
-
-    print(
-        f"[stats] Loaded from metrics.db: "
-        f"{stats['total_original_tokens']} original, {stats['total_compressed_tokens']} compressed, "
-        f"{len(stats['sessions'])} sessions"
-    )
 
 
 LLMLINGUA2_MODELS = {
@@ -503,13 +283,13 @@ def load_backend() -> dict:
     global dual_model_system, dual_model_user
     model_name = os.environ.get("COMPRESSOR_MODEL", "llmlingua2")
     try:
-        if _db_conn is not None:
+        if db._db_conn is not None:
             for key, default in (
                 ("current_model", None),
                 ("dual_model_system", None),
                 ("dual_model_user", None),
             ):
-                row = _db_conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+                row = db._db_conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
                 if row:
                     if key == "current_model":
                         model_name = row[0]
@@ -535,47 +315,19 @@ def _pick_backend(role: str) -> dict | None:
 
 
 # ---------------------------------------------------------------------------
-# DB location migration (legacy ./metrics.db → RTK data dir)
-# ---------------------------------------------------------------------------
-
-
-def _migrate_db_location() -> None:
-    """Copy metrics.db from the old CWD location to the RTK data directory once.
-
-    Skipped when: old doesn't exist, paths are the same, or new already has data
-    (size > 64 KiB means it was populated, not just an empty shell created by a
-    previous aborted startup).
-    """
-    old = Path("metrics.db").resolve()
-    new = DB_PATH.resolve()
-    if old == new or not old.exists():
-        return
-    if new.exists() and new.stat().st_size > 65536:
-        return  # new DB already has real data
-    import shutil
-
-    try:
-        shutil.copy2(str(old), str(new))
-        print(f"[db] migrated {old} → {new}")
-        old.rename(old.with_suffix(".db.migrated"))
-    except Exception as e:
-        print(f"[db] migration failed, using {old}: {e}")
-
-
-# ---------------------------------------------------------------------------
 # Lifespan
 # ---------------------------------------------------------------------------
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global backend, _db_conn, _cache
-    _migrate_db_location()
-    _db_conn = init_db(str(DB_PATH))
-    _cache = CompressionCache(_db_conn, max_mem=CACHE_MEM_SIZE, max_rows=CACHE_MAX_ROWS)
-    migrate_from_json(_db_conn)
-    recover_stats_from_backup(_db_conn)
-    load_stats_from_db(_db_conn)
+    global backend, _cache
+    db._migrate_db_location()
+    db._db_conn = db.init_db(str(db.DB_PATH))
+    _cache = CompressionCache(db._db_conn, max_mem=CACHE_MEM_SIZE, max_rows=CACHE_MAX_ROWS)
+    db.migrate_from_json(db._db_conn)
+    db.recover_stats_from_backup(db._db_conn)
+    db.load_stats_from_db(db._db_conn)
     backend = _load_backend()
     _lf_tracer.init()
     # print handled inside tracer.init()
@@ -599,8 +351,8 @@ async def lifespan(app: FastAPI):
             torch.mps.empty_cache()
     except Exception:
         pass
-    if _db_conn:
-        _db_conn.close()
+    if db._db_conn:
+        db._db_conn.close()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -637,17 +389,17 @@ def record_compression(
     model_name = active.get("type", "llmlingua2") if active else "llmlingua2"
     ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
-    if _db_conn:
-        cur = _db_conn.execute(
+    if db._db_conn:
+        cur = db._db_conn.execute(
             "INSERT INTO compressions (ts, session_id, model, original_tokens, compressed_tokens, latency_ms, role, cache_hit) VALUES (?,?,?,?,?,?,?,?)",
             (ts, session_id, model_name, original, compressed, latency_ms, role, cache_hit),
         )
         if original_text is not None and compressed_text is not None:
-            _db_conn.execute(
+            db._db_conn.execute(
                 "INSERT INTO compression_texts (compression_id, original_text, compressed_text) VALUES (?,?,?)",
                 (cur.lastrowid, original_text, compressed_text),
             )
-        _db_conn.commit()
+        db._db_conn.commit()
 
     sess = stats["sessions"].setdefault(
         session_id,
@@ -696,7 +448,7 @@ def record_request(session_id: str):
 
 
 def _rtk_db_path() -> Path:
-    return _rtk_data_dir() / "history.db"
+    return db._rtk_data_dir() / "history.db"
 
 
 def read_rtk_stats(since: str | None = None) -> dict | None:
@@ -1050,7 +802,7 @@ def _aggregate_stats(scope: str, args: tuple, *, today: bool, with_ratio: bool) 
         if with_ratio
         else ""
     )
-    row = _db_conn.execute(
+    row = db._db_conn.execute(
         f"""
         SELECT COUNT(*) AS requests,
                COALESCE(SUM(original_tokens - compressed_tokens), 0) AS tokens_saved,
@@ -1081,7 +833,7 @@ def _recent_compression_rows(active_model: str, session_id: str | None) -> list:
     sub-model rows rather than matching the non-existent model='dual'.
     """
     scope, args = _stats_scope(active_model, session_id)
-    rows = _db_conn.execute(
+    rows = db._db_conn.execute(
         f"""
         SELECT ts, session_id, model, original_tokens, compressed_tokens,
                ROUND((original_tokens - compressed_tokens) * 100.0 / original_tokens, 1) AS savings_pct,
@@ -1112,7 +864,7 @@ def _rtk_stats(session_id: str | None) -> dict | None:
     """Aggregate rtk shell-layer savings, with a top-commands breakdown."""
     where = "WHERE session_id = ?" if session_id else ""
     args = (session_id,) if session_id else ()
-    row = _db_conn.execute(
+    row = db._db_conn.execute(
         f"""SELECT COUNT(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),
                    COALESCE(SUM(saved_tokens),0), COALESCE(AVG(savings_pct),0)
             FROM rtk_events {where}""",
@@ -1120,7 +872,7 @@ def _rtk_stats(session_id: str | None) -> dict | None:
     ).fetchone()
     if not (row and row[0] > 0):
         return None
-    top = _db_conn.execute(
+    top = db._db_conn.execute(
         f"""SELECT rtk_cmd, COUNT(*) AS cnt, SUM(saved_tokens) AS saved, AVG(savings_pct) AS avg_pct
             FROM rtk_events {where}
             GROUP BY rtk_cmd ORDER BY saved DESC LIMIT 8""",
@@ -1158,28 +910,28 @@ def _cache_stats() -> dict:
     permanently depress the ratio. `last_24h` is a rolling window that reflects
     current behaviour.
     """
-    if _db_conn is None:
+    if db._db_conn is None:
         return _empty_cache_stats()
 
     def _window(cutoff) -> dict:
         if cutoff is None:
             return {"hits": 0, "total": 0, "hit_ratio": 0.0}
-        row = _db_conn.execute(
+        row = db._db_conn.execute(
             "SELECT COALESCE(SUM(cache_hit), 0), COUNT(*) FROM compressions WHERE ts >= ?",
             (cutoff,),
         ).fetchone()
         hits, total = int(row[0]), int(row[1])
         return {"hits": hits, "total": total, "hit_ratio": round(hits / total, 4) if total else 0.0}
 
-    since_row = _db_conn.execute("SELECT value FROM meta WHERE key='cache_since'").fetchone()
+    since_row = db._db_conn.execute("SELECT value FROM meta WHERE key='cache_since'").fetchone()
     since = since_row[0] if since_row else None
     day_ago = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat(timespec="seconds")
 
-    entries = _db_conn.execute("SELECT COUNT(*) FROM compression_cache").fetchone()[0]
+    entries = db._db_conn.execute("SELECT COUNT(*) FROM compression_cache").fetchone()[0]
 
     by_role = {}
     if since:
-        for role, hits, total, avg_miss_ms in _db_conn.execute(
+        for role, hits, total, avg_miss_ms in db._db_conn.execute(
             """SELECT role,
                       COALESCE(SUM(cache_hit), 0),
                       COUNT(*),
@@ -1210,7 +962,7 @@ def _cache_stats() -> dict:
 
 def _tracked_stats() -> dict:
     """Totals across tracked sessions (active/closed trackers joined to compressions)."""
-    row = _db_conn.execute(
+    row = db._db_conn.execute(
         """
         SELECT COUNT(DISTINCT t.slug),
                COALESCE(SUM(c.original_tokens - c.compressed_tokens), 0)
@@ -1224,7 +976,7 @@ def _tracked_stats() -> dict:
 
 def _merge_rtk_into_sessions(sessions_out: dict) -> None:
     """Decorate in-memory session entries with their rtk command counts/savings."""
-    for sid, cmds, saved in _db_conn.execute(
+    for sid, cmds, saved in db._db_conn.execute(
         """SELECT session_id, COUNT(*), COALESCE(SUM(saved_tokens), 0)
            FROM rtk_events GROUP BY session_id"""
     ).fetchall():
@@ -1284,11 +1036,11 @@ async def get_stats(session_id: str | None = None):
     rtk_stats: dict | None = None
     tracked_stats: dict = {"sessions": 0, "tokens_saved": 0}
 
-    if _db_conn is not None:
+    if db._db_conn is not None:
         active_model = compressor_info["model"]
         sess_args = (session_id,) if session_id else ()
 
-        by_model_rows = _db_conn.execute(
+        by_model_rows = db._db_conn.execute(
             f"""
             SELECT model,
                    COUNT(*) AS requests,
@@ -1342,12 +1094,12 @@ async def get_stats(session_id: str | None = None):
 
 @app.get("/stats/timeseries")
 async def get_timeseries(model: str | None = None, session_id: str | None = None):
-    if _db_conn is None:
+    if db._db_conn is None:
         return JSONResponse([])
     sess_filter = " AND session_id = ?" if session_id else ""
     sess_args = (session_id,) if session_id else ()
     if model:
-        rows = _db_conn.execute(
+        rows = db._db_conn.execute(
             f"""
             SELECT strftime('%Y-%m-%dT%H:00:00', ts) AS hour,
                    COUNT(*) AS requests,
@@ -1362,7 +1114,7 @@ async def get_timeseries(model: str | None = None, session_id: str | None = None
             (model, *sess_args),
         ).fetchall()
     else:
-        rows = _db_conn.execute(
+        rows = db._db_conn.execute(
             f"""
             SELECT strftime('%Y-%m-%dT%H:00:00', ts) AS hour,
                    COUNT(*) AS requests,
@@ -1381,12 +1133,12 @@ async def get_timeseries(model: str | None = None, session_id: str | None = None
 
 @app.post("/rtk/log")
 async def rtk_log(request: Request):
-    if _db_conn is None:
+    if db._db_conn is None:
         return JSONResponse({"error": "db not ready"}, status_code=503)
     body = await request.json()
     session_id = body.get("session_id", "unknown")
     try:
-        _db_conn.execute(
+        db._db_conn.execute(
             """INSERT OR IGNORE INTO rtk_events
                (rtk_id, ts, session_id, rtk_cmd, input_tokens, output_tokens, saved_tokens, savings_pct, project_path)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
@@ -1402,7 +1154,7 @@ async def rtk_log(request: Request):
                 body.get("project_path", ""),
             ),
         )
-        _db_conn.commit()
+        db._db_conn.commit()
         return JSONResponse({"ok": True})
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -1412,9 +1164,9 @@ async def rtk_log(request: Request):
 async def session_dashboard(session_id: str):
     import sessions as _sessions  # local import ok; module is light
 
-    if _db_conn is None:
+    if db._db_conn is None:
         return HTMLResponse("<h1>DB not ready</h1>", status_code=503)
-    session = _sessions.get_session(_db_conn, session_id)
+    session = _sessions.get_session(db._db_conn, session_id)
     if session is None:
         return HTMLResponse(f"<h1>Session '{session_id}' not found</h1>", status_code=404)
     bootstrap = f"<script>window.SESSION = {json.dumps(session)};</script>"
@@ -1458,11 +1210,11 @@ async def play_compress(request: Request):
         if backend_loading:
             return JSONResponse({"loading": True, "model": backend_loading}, status_code=202)
         # Trigger async model switch
-        if _db_conn is not None:
-            _db_conn.execute(
+        if db._db_conn is not None:
+            db._db_conn.execute(
                 "INSERT OR REPLACE INTO meta (key, value) VALUES ('current_model', ?)", (model,)
             )
-            _db_conn.commit()
+            db._db_conn.commit()
         backend = None
         backend_loading = model
         _target = model
@@ -1529,12 +1281,12 @@ async def set_model(request: Request):
         return JSONResponse(
             {"error": f"Unknown model. Known: {sorted(KNOWN_MODELS)}"}, status_code=400
         )
-    if _db_conn is not None:
-        _db_conn.execute(
+    if db._db_conn is not None:
+        db._db_conn.execute(
             "INSERT OR REPLACE INTO meta (key, value) VALUES ('current_model', ?)",
             (model,),
         )
-        _db_conn.commit()
+        db._db_conn.commit()
 
     # When switching away from dual mode, clear dual globals first
     if dual_mode and model != "dual":
@@ -1566,7 +1318,7 @@ async def set_model(request: Request):
         def load():
             global backend, backend_loading
             try:
-                # Use model from closure directly — avoids reading _db_conn cross-thread
+                # Use model from closure directly — avoids reading db._db_conn cross-thread
                 if model == "kompress":
                     new_backend = _load_kompress_backend()
                 else:
@@ -1620,17 +1372,17 @@ async def set_dual_models(request: Request):
     if new_usr:
         dual_model_user = new_usr
 
-    if _db_conn is not None:
+    if db._db_conn is not None:
         if new_sys:
-            _db_conn.execute(
+            db._db_conn.execute(
                 "INSERT OR REPLACE INTO meta (key, value) VALUES ('dual_model_system', ?)",
                 (new_sys,),
             )
         if new_usr:
-            _db_conn.execute(
+            db._db_conn.execute(
                 "INSERT OR REPLACE INTO meta (key, value) VALUES ('dual_model_user', ?)", (new_usr,)
             )
-        _db_conn.commit()
+        db._db_conn.commit()
 
     if dual_mode:
         backend = None
@@ -1659,7 +1411,7 @@ async def set_dual_models(request: Request):
 @app.delete("/admin/compression-texts")
 async def clear_compression_texts(request: Request):
     """Delete stored original/compressed texts without touching compression metrics."""
-    if _db_conn is None:
+    if db._db_conn is None:
         return JSONResponse({"error": "db not ready"}, status_code=503)
     body = {}
     try:
@@ -1668,14 +1420,14 @@ async def clear_compression_texts(request: Request):
         pass
     session_id = body.get("session_id")
     if session_id:
-        cur = _db_conn.execute(
+        cur = db._db_conn.execute(
             "DELETE FROM compression_texts WHERE compression_id IN "
             "(SELECT id FROM compressions WHERE session_id = ?)",
             (session_id,),
         )
     else:
-        cur = _db_conn.execute("DELETE FROM compression_texts")
-    _db_conn.commit()
+        cur = db._db_conn.execute("DELETE FROM compression_texts")
+    db._db_conn.commit()
     return JSONResponse({"deleted": cur.rowcount, "session_id": session_id})
 
 
@@ -1683,7 +1435,7 @@ async def clear_compression_texts(request: Request):
 async def get_sessions(page: int = 1, page_size: int = 25):
     import sessions as _sessions  # local import ok; module is light
 
-    return _sessions.list_sessions(_db_conn, page, page_size)
+    return _sessions.list_sessions(db._db_conn, page, page_size)
 
 
 @app.get("/admin/langfuse-status")
@@ -1693,7 +1445,7 @@ async def langfuse_status():
 
 @app.get("/session/{session_id}/compressions")
 async def get_session_compressions(session_id: str, page: int = 1, page_size: int = 20):
-    if _db_conn is None:
+    if db._db_conn is None:
         return JSONResponse({"error": "db not ready"}, status_code=503)
 
     # Clamp page and page_size BEFORE any early returns
@@ -1702,10 +1454,10 @@ async def get_session_compressions(session_id: str, page: int = 1, page_size: in
 
     offset = (page - 1) * page_size
 
-    total = _db_conn.execute(
+    total = db._db_conn.execute(
         "SELECT COUNT(*) FROM compressions WHERE session_id=?", (session_id,)
     ).fetchone()[0]
-    rows = _db_conn.execute(
+    rows = db._db_conn.execute(
         """
         SELECT c.id, c.ts, c.model, c.original_tokens, c.compressed_tokens,
                ROUND((c.original_tokens - c.compressed_tokens) * 100.0 / c.original_tokens, 1) AS savings_pct,
@@ -1735,14 +1487,14 @@ async def get_session_compressions(session_id: str, page: int = 1, page_size: in
 async def get_session_rtk_commands(session_id: str, page: int = 1, page_size: int = 25):
     page = max(1, page)
     page_size = max(1, min(200, page_size))
-    if _db_conn is None:
+    if db._db_conn is None:
         return JSONResponse({"error": "db not ready"}, status_code=503)
     offset = (page - 1) * page_size
 
-    total = _db_conn.execute(
+    total = db._db_conn.execute(
         "SELECT COUNT(*) FROM rtk_events WHERE session_id=?", (session_id,)
     ).fetchone()[0]
-    rows = _db_conn.execute(
+    rows = db._db_conn.execute(
         """
         SELECT id, ts, rtk_cmd, input_tokens, output_tokens, saved_tokens,
                ROUND(savings_pct, 1) AS savings_pct, project_path
@@ -1785,13 +1537,13 @@ async def proxy_messages(request: Request):
     import naming as _naming
     import sessions as _sessions  # local import ok; module is light
 
-    _sessions.ensure_session(_db_conn, session_id)
+    _sessions.ensure_session(db._db_conn, session_id)
     record_request(session_id)
 
     body = await request.json()
     try:
         # Cheap pre-check: skip all work once the session is named or already being named.
-        _row = _sessions.get_session(_db_conn, session_id) if _db_conn else None
+        _row = _sessions.get_session(db._db_conn, session_id) if db._db_conn else None
         if _row and _row["name_source"] == "provisional":
             _user_turns = [
                 (
@@ -1808,14 +1560,14 @@ async def proxy_messages(request: Request):
             # Atomically claim the row BEFORE dispatching. Claude Code fires several
             # /v1/messages per human turn; only the single winner of the claim
             # dispatches, so we never start two naming tasks (spec: "exactly one call").
-            if _signal and _sessions.claim_for_naming(_db_conn, session_id):
+            if _signal and _sessions.claim_for_naming(db._db_conn, session_id):
                 _use_llm = os.environ.get("LLM_COMPRESSOR_LLM_NAMING") == "1"
                 _auth = {
                     k: v
                     for k, v in request.headers.items()
                     if k.lower() in ("authorization", "anthropic-version", "anthropic-beta")
                 }
-                _naming.schedule_naming(_db_conn, session_id, _signal, _auth, _use_llm)
+                _naming.schedule_naming(db._db_conn, session_id, _signal, _auth, _use_llm)
     except Exception as _exc:  # naming must never break the proxy path
         print(f"[naming] trigger skipped: {_exc}")
     _ls_start_ms = time.monotonic() * 1000
