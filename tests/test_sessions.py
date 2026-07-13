@@ -141,3 +141,31 @@ def test_list_sessions_savings_combine_compressions_and_rtk(tmp_path):
     item = next(i for i in S.list_sessions(c, 1, 25)["items"] if i["session_id"] == "sidZ")
     assert item["tokens_saved"] == 65  # 40 (compression) + 25 (rtk), no fan-out
     assert item["requests"] == 1       # counts compressions only, not rtk rows
+
+
+def test_messages_registers_session_provisionally(client, monkeypatch):
+    # /v1/messages proxies to Anthropic; stub httpx so no network is hit.
+    import proxy
+
+    class _Resp:
+        status_code = 200
+        def json(self): return {"content": [{"text": "hi"}]}
+
+    class _Client:
+        def __init__(self, *a, **k): ...
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def post(self, *a, **k): return _Resp()
+
+    monkeypatch.setattr(proxy.httpx, "AsyncClient", _Client)
+    r = client.post(
+        "/v1/messages",
+        headers={"x-claude-code-session-id": "abcdef1234567890"},
+        json={"model": "m", "max_tokens": 10, "messages": [{"role": "user", "content": "hello world this is a test"}]},
+    )
+    assert r.status_code == 200
+    row = proxy._db_conn.execute(
+        "SELECT display_name, name_source FROM sessions WHERE session_id='abcdef1234567890'"
+    ).fetchone()
+    assert row is not None
+    assert row[0] == "session-abcdef12"  # provisional guaranteed synchronously

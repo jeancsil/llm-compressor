@@ -697,7 +697,7 @@ def _try_link_pending_tracker(session_id: str) -> None:
         _db_conn.commit()
 
 
-def record_request(session_id: str, session_name: str | None = None):
+def record_request(session_id: str):
     stats["total_requests"] += 1
     sess = stats["sessions"].setdefault(
         session_id,
@@ -711,10 +711,6 @@ def record_request(session_id: str, session_name: str | None = None):
     )
     sess["requests"] += 1
     sess["last_seen"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    if session_name:
-        sess["name"] = session_name
-
-    _try_link_pending_tracker(session_id)
 
 
 # ---------------------------------------------------------------------------
@@ -1910,17 +1906,32 @@ async def list_models(request: Request):
 @app.post("/v1/messages")
 async def proxy_messages(request: Request):
     session_id = request.headers.get("x-claude-code-session-id", "unknown")
-    # Claude Code may send a session name — log all x-claude-code-* headers once to inspect
-    cc_headers = {
-        k: v for k, v in request.headers.items() if "claude" in k.lower() or "session" in k.lower()
-    }
-    print(f"[headers] {cc_headers}")
-    session_name = request.headers.get("x-claude-code-session-name") or request.headers.get(
-        "x-session-name"
-    )
-    record_request(session_id, session_name)
+    import sessions as _sessions  # local import ok; module is light
+    import naming as _naming
+    _sessions.ensure_session(_db_conn, session_id)
+    record_request(session_id)
 
     body = await request.json()
+    try:
+        # Cheap pre-check: skip all work once the session is named or already being named.
+        _row = _sessions.get_session(_db_conn, session_id) if _db_conn else None
+        if _row and _row["name_source"] == "provisional":
+            _user_turns = [
+                (m.get("content") if isinstance(m.get("content"), str)
+                 else " ".join(b.get("text", "") for b in m.get("content", []) if isinstance(b, dict)))
+                for m in body.get("messages", []) if m.get("role") == "user"
+            ]
+            _signal = _naming.clean_signal([t for t in _user_turns if t])
+            # Atomically claim the row BEFORE dispatching. Claude Code fires several
+            # /v1/messages per human turn; only the single winner of the claim
+            # dispatches, so we never start two naming tasks (spec: "exactly one call").
+            if _signal and _sessions.claim_for_naming(_db_conn, session_id):
+                _use_llm = os.environ.get("LLM_COMPRESSOR_LLM_NAMING") == "1"
+                _auth = {k: v for k, v in request.headers.items()
+                         if k.lower() in ("authorization", "anthropic-version", "anthropic-beta")}
+                _naming.schedule_naming(_db_conn, session_id, _signal, _auth, _use_llm)
+    except Exception as _exc:  # naming must never break the proxy path
+        print(f"[naming] trigger skipped: {_exc}")
     _ls_start_ms = time.monotonic() * 1000
     _ls_original_messages = copy.deepcopy(body.get("messages", []))
     _ls_original_system = copy.deepcopy(body.get("system"))

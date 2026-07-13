@@ -363,22 +363,6 @@ def test_try_link_pending_tracker_early_returns(monkeypatch):
 
 
 # ===========================================================================
-# record_request – session_name stored (line 470)
-# ===========================================================================
-
-
-def test_record_request_stores_session_name(monkeypatch):
-    """record_request stores the optional session_name in stats."""
-    proxy = _fresh_proxy(monkeypatch)
-    monkeypatch.setattr(proxy, "_db_conn", None)
-    proxy.stats["sessions"] = {}
-    proxy.stats["total_requests"] = 0
-
-    proxy.record_request("sess-named", session_name="My Session")
-    assert proxy.stats["sessions"]["sess-named"]["name"] == "My Session"
-
-
-# ===========================================================================
 # _rtk_db_path – Windows / Linux branches (lines 479-484)
 # ===========================================================================
 
