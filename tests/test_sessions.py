@@ -35,6 +35,58 @@ def test_trackers_table_still_present(tmp_path):
         assert col in cols
 
 
+def test_session_dashboard_injects_tracker(client):
+    # Re-homed from tests/test_tracker.py (Task 10): create_tracker is gone
+    # (Task 10 removed the pending/link CRUD flow), so seed the trackers row
+    # directly via SQL instead of via the old POST /admin/tracker call
+    # (mirrors the seeding pattern test_coverage.py already uses for the
+    # get_session_compressions tests).
+    import proxy
+
+    slug = "dash-slug-1"
+    proxy._db_conn.execute(
+        "INSERT INTO trackers (slug, name, status, created_at) VALUES (?,?,'pending',?)",
+        (slug, "My Test", "t"),
+    )
+    proxy._db_conn.commit()
+    r = client.get(f"/dashboard/{slug}")
+    assert r.status_code == 200
+    assert "const TRACKER" in r.text
+    assert f'"slug": "{slug}"' in r.text
+    assert '"status": "pending"' in r.text
+
+
+def test_dashboard_slug_returns_html(client):
+    # Re-homed from tests/test_tracker.py (Task 10); see seeding note above.
+    import proxy
+
+    slug = "dash-slug-2"
+    proxy._db_conn.execute(
+        "INSERT INTO trackers (slug, name, status, created_at) VALUES (?,?,'pending',?)",
+        (slug, "HTML Test", "t"),
+    )
+    proxy._db_conn.commit()
+    r = client.get(f"/dashboard/{slug}")
+    assert r.headers["content-type"].startswith("text/html")
+
+
+def test_session_dashboard_accessible_after_close(client):
+    # Re-homed from tests/test_tracker.py (Task 10). The original test drove
+    # this through create_tracker + delete_tracker, both removed in Task 10;
+    # seed a 'closed' row directly to prove the dashboard still renders it.
+    import proxy
+
+    slug = "dash-slug-3"
+    proxy._db_conn.execute(
+        "INSERT INTO trackers (slug, name, status, created_at) VALUES (?,?,'closed',?)",
+        (slug, "Keep After Close", "t"),
+    )
+    proxy._db_conn.commit()
+    r = client.get(f"/dashboard/{slug}")
+    assert r.status_code == 200
+    assert '"status": "closed"' in r.text
+
+
 def test_provisional_name_is_session_hex():
     assert S.provisional_name("abcdef1234567890") == "session-abcdef12"
 
