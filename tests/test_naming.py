@@ -2,6 +2,8 @@ import asyncio
 from unittest.mock import patch
 
 import naming as N
+import proxy
+import sessions as S
 
 
 def test_clean_strips_system_reminder():
@@ -113,3 +115,39 @@ def test_haiku_topic_swallows_errors_returns_empty():
 
     with patch("naming.httpx.AsyncClient", _Boom):
         assert asyncio.run(N.haiku_topic("x", {})) == ""
+
+
+def test_generate_topic_uses_heuristic_when_llm_off():
+    slug = asyncio.run(N.generate_topic("add batch endpoint now", {}, use_llm=False))
+    assert slug == N.heuristic_topic("add batch endpoint now")
+
+
+def test_schedule_naming_applies_auto_name(tmp_path):
+    c = proxy.init_db(str(tmp_path / "m.db"))
+    S.ensure_session(c, "sessaaaabbbb")
+
+    async def run():
+        N.schedule_naming(c, "sessaaaabbbb", "fix the login bug", {}, use_llm=False)
+        await asyncio.sleep(0.05)  # let the fire-and-forget task finish
+
+    asyncio.run(run())
+    row = S.get_session(c, "sessaaaabbbb")
+    assert row["name_source"] == "auto"
+    assert row["display_name"] == N.heuristic_topic("fix the login bug")
+
+
+def test_schedule_naming_empty_topic_reverts_to_provisional(tmp_path):
+    c = proxy.init_db(str(tmp_path / "m.db"))
+    S.ensure_session(c, "sessccccdddd")
+    assert S.claim_for_naming(c, "sessccccdddd") is True  # real path: row is 'naming'
+
+    async def run():
+        # "" -> heuristic_topic returns "" (proven in test_heuristic_topic_defers_on_noise);
+        # "hi" was rejected as a fixture here since it survives the stopword filter (len > 1)
+        # and produces a non-empty slug, which would make this test assert the wrong thing.
+        N.schedule_naming(c, "sessccccdddd", "", {}, use_llm=False)
+        await asyncio.sleep(0.05)
+
+    asyncio.run(run())
+    # Empty topic must release the claim so a later turn can retry.
+    assert S.get_session(c, "sessccccdddd")["name_source"] == "provisional"

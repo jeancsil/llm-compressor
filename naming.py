@@ -1,8 +1,11 @@
 """Session topic naming: deterministic extraction + heuristic/Haiku label."""
 
+import asyncio
 import re
 
 import httpx
+
+import sessions
 
 _STRIP = [
     re.compile(r"<system-reminder>.*?</system-reminder>", re.S),
@@ -129,3 +132,37 @@ async def haiku_topic(signal: str, auth_headers: dict) -> str:
     except Exception as exc:  # never raise into the caller
         print(f"[naming] haiku_topic failed: {exc}")
         return ""
+
+
+async def generate_topic(signal: str, auth_headers: dict, use_llm: bool) -> str:
+    if use_llm:
+        slug = await haiku_topic(signal, auth_headers)
+        if slug:
+            return slug
+    return heuristic_topic(signal)
+
+
+def schedule_naming(conn, session_id, signal, auth_headers, use_llm) -> None:
+    """Fire-and-forget. Never blocks the request path, never raises.
+
+    Precondition: the caller has already won `sessions.claim_for_naming`, so the
+    row is in 'naming'. On success we set the auto name; on empty/failed naming we
+    revert to 'provisional' so a later turn can retry (otherwise the row is stuck).
+    """
+
+    async def _run():
+        try:
+            slug = await generate_topic(signal, auth_headers, use_llm)
+            if slug:
+                sessions.apply_auto_name(conn, session_id, slug)
+            else:
+                sessions.revert_naming(conn, session_id)
+        except Exception as exc:
+            print(f"[naming] schedule_naming failed: {exc}")
+            sessions.revert_naming(conn, session_id)
+
+    try:
+        asyncio.create_task(_run())
+    except RuntimeError:
+        # No running loop (e.g. sync test context) — run it inline, still swallowing errors.
+        asyncio.run(_run())
