@@ -19,7 +19,6 @@ import httpx
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
-from llmlingua import PromptCompressor
 
 from langfuse_tracer import tracer as _lf_tracer
 
@@ -27,6 +26,7 @@ import sys as _sys
 import types as _types
 
 import db
+import backends
 
 # Plain re-exports: real function objects, never monkeypatched by name in the
 # test suite (tests call them directly), so a static import carries no
@@ -36,24 +36,51 @@ import db
 from db import init_db, load_stats_from_db  # re-export
 
 # ---------------------------------------------------------------------------
-# proxy.py forwarding shim (Task 13, Step 1)
+# proxy.py forwarding shim (Task 13, Steps 1 & 4)
 # ---------------------------------------------------------------------------
 # db.py owns `_db_conn` (mutable, reassigned by lifespan() on every request-cycle
 # reset in tests) and `DB_PATH`, plus `migrate_from_json` / `recover_stats_from_backup`
-# / `_migrate_db_location`, all three of which the test suite's autouse fixture in
-# conftest.py monkeypatches away via `monkeypatch.setattr(proxy, "<name>", ...)`.
-# Every real reader of these five names elsewhere in the codebase (lifespan(),
-# db.py's own functions) is module-qualified (`db._db_conn`, `db.DB_PATH`, ...) per
-# scratchpad/split-audit.md's Step 3 contract. This class makes `proxy.<name>` reads
-# AND `monkeypatch.setattr(proxy, "<name>", ...)` writes forward to the single
-# owning attribute on `db`, so the pre-split test idiom keeps working unmodified
-# instead of silently patching a stale, disconnected copy on proxy itself.
+# / `_migrate_db_location`. backends.py owns the backend-selection globals
+# (`backend`, `backend_loading`, `backend_user`, `backend_system`, `dual_mode`,
+# `dual_model_system`, `dual_model_user`) and the loader functions (`load_backend`,
+# `_load_dual_backend`, `_load_kompress_backend`, `_load_llmlingua2_backend`,
+# `_load_single_backend`, `_pick_backend`). All of these are monkeypatched away
+# via `monkeypatch.setattr(proxy, "<name>", ...)` somewhere in the test suite
+# (conftest.py's autouse fixture, or individual tests in test_proxy.py /
+# test_coverage.py / test_cache.py). Every real reader of these names elsewhere
+# in the codebase (lifespan(), the /play and /admin route handlers, db.py's and
+# backends.py's own functions) is module-qualified (`db._db_conn`,
+# `backends.backend`, ...) per scratchpad/split-audit.md's Step 3 contract. This
+# class makes `proxy.<name>` reads AND `monkeypatch.setattr(proxy, "<name>",
+# ...)` writes forward to the single owning attribute on `db` / `backends`, so
+# the pre-split test idiom keeps working unmodified instead of silently
+# patching a stale, disconnected copy on proxy itself.
+#
+# `_load_backend` is a special case: pre-split, proxy.py had a plain alias
+# `_load_backend = load_backend`. That alias is not recreated as a real name in
+# backends.py — it only exists here as a forwarding key pointing at
+# `backends.load_backend`, so `monkeypatch.setattr(proxy, "_load_backend", ...)`
+# still works even though nothing in backends.py is ever bound to that name.
 _FORWARD = {
     "_db_conn": (db, "_db_conn"),
     "DB_PATH": (db, "DB_PATH"),
     "migrate_from_json": (db, "migrate_from_json"),
     "recover_stats_from_backup": (db, "recover_stats_from_backup"),
     "_migrate_db_location": (db, "_migrate_db_location"),
+    "backend": (backends, "backend"),
+    "backend_loading": (backends, "backend_loading"),
+    "backend_user": (backends, "backend_user"),
+    "backend_system": (backends, "backend_system"),
+    "dual_mode": (backends, "dual_mode"),
+    "dual_model_system": (backends, "dual_model_system"),
+    "dual_model_user": (backends, "dual_model_user"),
+    "_load_backend": (backends, "load_backend"),
+    "load_backend": (backends, "load_backend"),
+    "_load_dual_backend": (backends, "_load_dual_backend"),
+    "_load_kompress_backend": (backends, "_load_kompress_backend"),
+    "_load_llmlingua2_backend": (backends, "_load_llmlingua2_backend"),
+    "_load_single_backend": (backends, "_load_single_backend"),
+    "_pick_backend": (backends, "_pick_backend"),
 }
 
 
@@ -81,18 +108,12 @@ ANTHROPIC_BASE = "https://api.anthropic.com"
 COST_PER_MTOK = float(os.environ.get("COST_PER_MTOK", "3.0"))
 
 
-# Module-level globals populated by lifespan
-backend = None
-backend_loading = None  # set to model name while async load is in progress
+# Module-level globals populated by lifespan.
+# NOTE: backend/backend_loading/backend_user/backend_system/dual_mode/
+# dual_model_system/dual_model_user/KNOWN_MODELS/DUAL_SUBMODELS moved to
+# backends.py (Task 13, Step 4) — see the _FORWARD shim above for how
+# `proxy.<name>` reads/writes still reach them.
 _cache = None  # CompressionCache, set in lifespan
-backend_user = None  # kompress instance in dual mode
-backend_system = None  # llmlingua2-large instance in dual mode
-dual_mode = False
-dual_model_system = "llmlingua2-large"  # persisted in meta table
-dual_model_user = "kompress"  # persisted in meta table
-
-KNOWN_MODELS = ("llmlingua2", "llmlingua2-large", "kompress", "dual")
-DUAL_SUBMODELS = ("llmlingua2", "llmlingua2-large", "kompress")
 
 
 # ---------------------------------------------------------------------------
@@ -183,135 +204,10 @@ class CompressionCache:
             )
 
 
-LLMLINGUA2_MODELS = {
-    "llmlingua2": "microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank",
-    "llmlingua2-large": "microsoft/llmlingua-2-xlm-roberta-large-meetingbank",
-}
-
-
-def _load_llmlingua2_backend(backend_key: str | None = None) -> dict:
-    """Load the LLMLingua-2 PromptCompressor and return a backend dict."""
-    import logging as _logging
-
-    import transformers as _tf
-
-    rate = float(os.environ.get("COMPRESS_RATE", "0.5"))
-    if backend_key is None:
-        backend_key = os.environ.get("COMPRESSOR_MODEL", "llmlingua2")
-    model_name = LLMLINGUA2_MODELS.get(backend_key, LLMLINGUA2_MODELS["llmlingua2"])
-    import torch
-
-    device = "mps" if torch.backends.mps.is_available() else "cpu"
-    print(f"Loading LLMLingua-2 model ({backend_key}: {model_name})...")
-    _tf.logging.set_verbosity_error()
-    _hf_log = _logging.getLogger("huggingface_hub")
-    _prev_hf = _hf_log.level
-    _hf_log.setLevel(_logging.ERROR)
-    try:
-        c = PromptCompressor(
-            model_name=model_name,
-            use_llmlingua2=True,
-            device_map=device,
-        )
-    finally:
-        _tf.logging.set_verbosity_warning()
-        _hf_log.setLevel(_prev_hf)
-    print(f"Model ready. (device={device})")
-    return {"type": backend_key, "backend_key": backend_key, "compressor": c, "rate": rate}
-
-
-def _load_kompress_backend() -> dict:
-    """Load chopratejas/kompress-v2-base via headroom-ai[ml].
-
-    Auto mode tries ONNX CPU first (not in public HF repo, will skip) then
-    falls back to PyTorch on MPS/CPU using model.safetensors (~600 MB).
-    """
-    try:
-        from headroom.transforms.kompress_compressor import KompressCompressor, KompressConfig
-    except ImportError:
-        raise RuntimeError("headroom-ai[ml] is not installed. Run: uv add 'headroom-ai[ml]'")
-    import torch
-
-    device = "mps" if torch.backends.mps.is_available() else "cpu"
-    threshold = float(os.environ.get("COMPRESS_THRESHOLD", "0.5"))
-    print(f"Loading kompress-v2-base (device={device}, threshold={threshold})...")
-    config = KompressConfig(device=device, score_threshold=threshold)
-    compressor = KompressCompressor(config=config)
-    import transformers as _tf
-
-    _prev_level = _tf.logging.get_verbosity()
-    _tf.logging.set_verbosity_error()
-    compressor.preload()
-    _tf.logging.set_verbosity(_prev_level)
-    print("kompress-v2-base ready.")
-    return {"type": "kompress", "compressor": compressor, "threshold": threshold}
-
-
-def _load_single_backend(model_name: str) -> dict:
-    """Load any non-dual backend by name."""
-    if model_name == "kompress":
-        return _load_kompress_backend()
-    return _load_llmlingua2_backend(backend_key=model_name)
-
-
-def _load_dual_backend() -> dict:
-    """Load both sub-backends and set dual-mode globals.
-
-    Uses the module-level dual_model_system / dual_model_user which are
-    persisted in the meta table and configurable at runtime via
-    /admin/set-dual-models.
-    """
-    global backend_user, backend_system, dual_mode
-    sys_m = dual_model_system
-    usr_m = dual_model_user
-    print(f"Loading dual mode: {usr_m} (user) + {sys_m} (system)...")
-    backend_system = _load_single_backend(sys_m)
-    backend_user = _load_single_backend(usr_m)
-    dual_mode = True
-    print("Dual mode ready.")
-    return {"type": "dual", "model_user": usr_m, "model_system": sys_m}
-
-
-def load_backend() -> dict:
-    """Dispatch to the configured backend loader.
-
-    Resolution order:
-    1. DB meta table keys 'current_model', 'dual_model_system', 'dual_model_user'
-    2. COMPRESSOR_MODEL environment variable
-    3. Defaults: llmlingua2 / llmlingua2-large / kompress
-    """
-    global dual_model_system, dual_model_user
-    model_name = os.environ.get("COMPRESSOR_MODEL", "llmlingua2")
-    try:
-        if db._db_conn is not None:
-            for key, default in (
-                ("current_model", None),
-                ("dual_model_system", None),
-                ("dual_model_user", None),
-            ):
-                row = db._db_conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
-                if row:
-                    if key == "current_model":
-                        model_name = row[0]
-                    elif key == "dual_model_system":
-                        dual_model_system = row[0]
-                    elif key == "dual_model_user":
-                        dual_model_user = row[0]
-    except Exception:
-        pass  # DB not available; fall back to env var / module defaults
-    if model_name == "dual":
-        return _load_dual_backend()
-    return _load_single_backend(model_name)
-
-
-# Keep the private alias so existing call-sites (lifespan, tests) still work.
-_load_backend = load_backend
-
-
-def _pick_backend(role: str) -> dict | None:
-    if dual_mode and backend_user is not None and backend_system is not None:
-        return backend_system if role == "system" else backend_user
-    return backend
+# NOTE: LLMLINGUA2_MODELS, _load_llmlingua2_backend, _load_kompress_backend,
+# _load_single_backend, _load_dual_backend, load_backend, and _pick_backend
+# moved to backends.py (Task 13, Step 4) — see the _FORWARD shim above for how
+# `proxy.<name>` reads/writes/calls still reach them.
 
 
 # ---------------------------------------------------------------------------
@@ -321,14 +217,14 @@ def _pick_backend(role: str) -> dict | None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global backend, _cache
+    global _cache
     db._migrate_db_location()
     db._db_conn = db.init_db(str(db.DB_PATH))
     _cache = CompressionCache(db._db_conn, max_mem=CACHE_MEM_SIZE, max_rows=CACHE_MAX_ROWS)
     db.migrate_from_json(db._db_conn)
     db.recover_stats_from_backup(db._db_conn)
     db.load_stats_from_db(db._db_conn)
-    backend = _load_backend()
+    backends.backend = backends.load_backend()
     _lf_tracer.init()
     # print handled inside tracer.init()
     yield
@@ -339,7 +235,7 @@ async def lifespan(app: FastAPI):
         except Exception:
             pass
     # Release model references before process exit to avoid MPS semaphore leaks
-    backend = None
+    backends.backend = None
     import gc
 
     gc.collect()
@@ -385,7 +281,7 @@ def record_compression(
     stats["total_original_tokens"] += original
     stats["total_compressed_tokens"] += compressed
 
-    active = active_backend if active_backend is not None else backend
+    active = active_backend if active_backend is not None else backends.backend
     model_name = active.get("type", "llmlingua2") if active else "llmlingua2"
     ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -509,7 +405,7 @@ _CHUNK_MAX_CHARS = 1400  # ~400 BERT tokens for mixed code/prose
 
 def _count_tokens(text: str) -> int:
     """Count tokens using the backend tokenizer (falls back to whitespace split)."""
-    active = backend or backend_user or backend_system
+    active = backends.backend or backends.backend_user or backends.backend_system
     try:
         return len(active["compressor"].tokenizer.tokenize(text))
     except Exception:
@@ -575,7 +471,7 @@ def chunk_text(text: str) -> list[str]:
 def compress_text(text: str, session_id: str, role: str = "user") -> str:
     if len(text) <= 200:
         return text
-    active = _pick_backend(role)
+    active = backends._pick_backend(role)
     if active is None:
         return text
     model_tag = active.get("type", "compressor")
@@ -637,9 +533,9 @@ def _compress_with(active: dict, text: str):
 # Keep old name as alias so /play/compress endpoint still works without changes.
 def compress_backend(text: str):
     """Legacy wrapper — dispatches via the global backend. Use _compress_with() for new code."""
-    if backend is None:
+    if backends.backend is None:
         raise RuntimeError("No backend loaded")
-    return _compress_with(backend, text)
+    return _compress_with(backends.backend, text)
 
 
 def _extract_text_from_sse(raw: bytes) -> str:
@@ -754,29 +650,36 @@ def build_headers(request: Request) -> dict:
 
 def _compressor_info() -> dict:
     """Describe the active (or loading) compression backend for the dashboard."""
-    if backend_loading:
-        return {"model": backend_loading, "param_name": "", "param_value": "", "loading": True}
-    if backend and backend.get("type") == "dual":
+    if backends.backend_loading:
+        return {
+            "model": backends.backend_loading,
+            "param_name": "",
+            "param_value": "",
+            "loading": True,
+        }
+    if backends.backend and backends.backend.get("type") == "dual":
         return {
             "model": "dual",
             "loading": False,
             "param_name": None,
             "param_value": None,
-            "model_system": dual_model_system,
-            "model_user": dual_model_user,
+            "model_system": backends.dual_model_system,
+            "model_user": backends.dual_model_user,
         }
-    if backend and backend.get("type") == "kompress":
+    if backends.backend and backends.backend.get("type") == "kompress":
         return {
             "model": "kompress",
             "param_name": "threshold",
-            "param_value": backend.get("threshold", 0.5),
+            "param_value": backends.backend.get("threshold", 0.5),
             "loading": False,
         }
-    backend_key = backend.get("backend_key", "llmlingua2") if backend else "llmlingua2"
+    backend_key = (
+        backends.backend.get("backend_key", "llmlingua2") if backends.backend else "llmlingua2"
+    )
     return {
         "model": backend_key,
         "param_name": "rate",
-        "param_value": backend.get("rate", 0.5) if backend else 0.5,
+        "param_value": backends.backend.get("rate", 0.5) if backends.backend else 0.5,
         "loading": False,
     }
 
@@ -790,7 +693,7 @@ def _stats_scope(active_model: str, session_id: str | None) -> tuple[str, tuple]
     if session_id:
         return "session_id = ?", (session_id,)
     if active_model == "dual":
-        return f"model IN ({', '.join('?' * len(DUAL_SUBMODELS))})", DUAL_SUBMODELS
+        return f"model IN ({', '.join('?' * len(backends.DUAL_SUBMODELS))})", backends.DUAL_SUBMODELS
     return "model = ?", (active_model,)
 
 
@@ -1086,9 +989,9 @@ async def get_stats(session_id: str | None = None):
         "recent": recent_rows,
         "tracked": tracked_stats,
         "cache": cache_stats,
-        "dual_mode": dual_mode,
-        "model_user": backend_user.get("type") if backend_user else None,
-        "model_system": backend_system.get("type") if backend_system else None,
+        "dual_mode": backends.dual_mode,
+        "model_user": backends.backend_user.get("type") if backends.backend_user else None,
+        "model_system": backends.backend_system.get("type") if backends.backend_system else None,
     }
 
 
@@ -1191,55 +1094,53 @@ async def play_list():
 
 @app.post("/play/compress")
 async def play_compress(request: Request):
-    global backend, backend_loading
     body = await request.json()
     text = body.get("text", "")
     model = body.get("model", "")
 
-    if model and model not in KNOWN_MODELS:
+    if model and model not in backends.KNOWN_MODELS:
         return JSONResponse({"error": f"Unknown model: {model}"}, status_code=400)
 
     orig_chars = len(text)
     orig_tokens_est = max(1, orig_chars // 4)
 
-    active_type = backend.get("type") if backend else None
+    active_type = backends.backend.get("type") if backends.backend else None
 
     if model and model != active_type:
-        if backend_loading == model:
+        if backends.backend_loading == model:
             return JSONResponse({"loading": True, "model": model}, status_code=202)
-        if backend_loading:
-            return JSONResponse({"loading": True, "model": backend_loading}, status_code=202)
+        if backends.backend_loading:
+            return JSONResponse({"loading": True, "model": backends.backend_loading}, status_code=202)
         # Trigger async model switch
         if db._db_conn is not None:
             db._db_conn.execute(
                 "INSERT OR REPLACE INTO meta (key, value) VALUES ('current_model', ?)", (model,)
             )
             db._db_conn.commit()
-        backend = None
-        backend_loading = model
+        backends.backend = None
+        backends.backend_loading = model
         _target = model
 
         def _load():
-            global backend, backend_loading
             try:
                 if _target == "kompress":
-                    new_backend = _load_kompress_backend()
+                    new_backend = backends._load_kompress_backend()
                 elif _target == "dual":
-                    new_backend = _load_dual_backend()
+                    new_backend = backends._load_dual_backend()
                 else:
-                    new_backend = _load_llmlingua2_backend(backend_key=_target)
-                backend = new_backend
+                    new_backend = backends._load_llmlingua2_backend(backend_key=_target)
+                backends.backend = new_backend
             except Exception as e:
                 print(f"[play] load {_target}: {e}")
             finally:
-                backend_loading = None
+                backends.backend_loading = None
 
         threading.Thread(target=_load, daemon=True).start()
         return JSONResponse({"loading": True, "model": model}, status_code=202)
 
-    if backend is None:
-        if backend_loading:
-            return JSONResponse({"loading": True, "model": backend_loading}, status_code=202)
+    if backends.backend is None:
+        if backends.backend_loading:
+            return JSONResponse({"loading": True, "model": backends.backend_loading}, status_code=202)
         return JSONResponse(
             {"error": "No model loaded. Select a model to load it."}, status_code=503
         )
@@ -1266,7 +1167,7 @@ async def play_compress(request: Request):
             "original_tokens_est": orig_tokens_est,
             "compressed_tokens_est": comp_tokens_est,
             "token_pct": token_pct,
-            "model": backend.get("type") if backend else model,
+            "model": backends.backend.get("type") if backends.backend else model,
             "latency_ms": latency_ms,
         }
     )
@@ -1274,12 +1175,11 @@ async def play_compress(request: Request):
 
 @app.post("/admin/set-model")
 async def set_model(request: Request):
-    global backend, backend_loading, backend_user, backend_system, dual_mode
     body = await request.json()
     model = body.get("model")
-    if model not in KNOWN_MODELS:
+    if model not in backends.KNOWN_MODELS:
         return JSONResponse(
-            {"error": f"Unknown model. Known: {sorted(KNOWN_MODELS)}"}, status_code=400
+            {"error": f"Unknown model. Known: {sorted(backends.KNOWN_MODELS)}"}, status_code=400
         )
     if db._db_conn is not None:
         db._db_conn.execute(
@@ -1289,45 +1189,43 @@ async def set_model(request: Request):
         db._db_conn.commit()
 
     # When switching away from dual mode, clear dual globals first
-    if dual_mode and model != "dual":
-        dual_mode = False
-        backend_user = None
-        backend_system = None
+    if backends.dual_mode and model != "dual":
+        backends.dual_mode = False
+        backends.backend_user = None
+        backends.backend_system = None
 
-    backend = None
-    backend_loading = model
+    backends.backend = None
+    backends.backend_loading = model
 
     if model == "dual":
         # Clear any previously loaded single backend globals
-        backend_user = None
-        backend_system = None
+        backends.backend_user = None
+        backends.backend_system = None
 
         def load_dual():
-            global backend, backend_loading
             try:
-                new_backend = _load_dual_backend()
-                backend = new_backend
+                new_backend = backends._load_dual_backend()
+                backends.backend = new_backend
             except Exception as e:
                 print(f"[set-model] failed to load dual: {e}")
             finally:
-                backend_loading = None
+                backends.backend_loading = None
 
         threading.Thread(target=load_dual, daemon=True).start()
     else:
 
         def load():
-            global backend, backend_loading
             try:
                 # Use model from closure directly — avoids reading db._db_conn cross-thread
                 if model == "kompress":
-                    new_backend = _load_kompress_backend()
+                    new_backend = backends._load_kompress_backend()
                 else:
-                    new_backend = _load_llmlingua2_backend(backend_key=model)
-                backend = new_backend
+                    new_backend = backends._load_llmlingua2_backend(backend_key=model)
+                backends.backend = new_backend
             except Exception as e:
                 print(f"[set-model] failed to load {model}: {e}")
             finally:
-                backend_loading = None
+                backends.backend_loading = None
 
         threading.Thread(target=load, daemon=True).start()
 
@@ -1343,13 +1241,6 @@ async def set_dual_models(request: Request):
     Omit a key to leave it unchanged.
     If dual mode is currently active, the affected sub-backends reload immediately.
     """
-    global \
-        dual_model_system, \
-        dual_model_user, \
-        backend, \
-        backend_loading, \
-        backend_user, \
-        backend_system
     body = await request.json()
     new_sys = body.get("system")
     new_usr = body.get("user")
@@ -1358,19 +1249,21 @@ async def set_dual_models(request: Request):
         return JSONResponse(
             {"error": "Provide at least one of 'system' or 'user'"}, status_code=400
         )
-    if new_sys and new_sys not in DUAL_SUBMODELS:
+    if new_sys and new_sys not in backends.DUAL_SUBMODELS:
         return JSONResponse(
-            {"error": f"Invalid system model. Valid: {list(DUAL_SUBMODELS)}"}, status_code=400
+            {"error": f"Invalid system model. Valid: {list(backends.DUAL_SUBMODELS)}"},
+            status_code=400,
         )
-    if new_usr and new_usr not in DUAL_SUBMODELS:
+    if new_usr and new_usr not in backends.DUAL_SUBMODELS:
         return JSONResponse(
-            {"error": f"Invalid user model. Valid: {list(DUAL_SUBMODELS)}"}, status_code=400
+            {"error": f"Invalid user model. Valid: {list(backends.DUAL_SUBMODELS)}"},
+            status_code=400,
         )
 
     if new_sys:
-        dual_model_system = new_sys
+        backends.dual_model_system = new_sys
     if new_usr:
-        dual_model_user = new_usr
+        backends.dual_model_user = new_usr
 
     if db._db_conn is not None:
         if new_sys:
@@ -1384,28 +1277,33 @@ async def set_dual_models(request: Request):
             )
         db._db_conn.commit()
 
-    if dual_mode:
-        backend = None
-        backend_loading = "dual"
-        backend_user = None
-        backend_system = None
+    if backends.dual_mode:
+        backends.backend = None
+        backends.backend_loading = "dual"
+        backends.backend_user = None
+        backends.backend_system = None
 
         def reload_dual():
-            global backend, backend_loading
             try:
-                new_backend = _load_dual_backend()
-                backend = new_backend
+                new_backend = backends._load_dual_backend()
+                backends.backend = new_backend
             except Exception as e:
                 print(f"[set-dual-models] failed: {e}")
             finally:
-                backend_loading = None
+                backends.backend_loading = None
 
         threading.Thread(target=reload_dual, daemon=True).start()
         return JSONResponse(
-            {"status": "loading", "system": dual_model_system, "user": dual_model_user}
+            {
+                "status": "loading",
+                "system": backends.dual_model_system,
+                "user": backends.dual_model_user,
+            }
         )
 
-    return JSONResponse({"status": "ok", "system": dual_model_system, "user": dual_model_user})
+    return JSONResponse(
+        {"status": "ok", "system": backends.dual_model_system, "user": backends.dual_model_user}
+    )
 
 
 @app.delete("/admin/compression-texts")
@@ -1584,7 +1482,7 @@ async def proxy_messages(request: Request):
         round(_ls_compressed_tokens / _ls_original_tokens, 3) if _ls_original_tokens else 1.0
     )
     _ls_tokens_saved = _ls_original_tokens - _ls_compressed_tokens
-    _ls_compression_model = (backend or {}).get("type", "unknown")
+    _ls_compression_model = (backends.backend or {}).get("type", "unknown")
     _ls_cache_hit = False
     headers = build_headers(request)
     is_streaming = body.get("stream", False)
