@@ -23,6 +23,18 @@ def test_init_db_creates_sessions_table(tmp_path):
     assert row[0] == "provisional"
 
 
+def test_trackers_table_still_present(tmp_path):
+    # Re-homed from tests/test_tracker.py (Task 10): the `trackers` table and its
+    # columns still exist (read by /stats' tracked totals) even though nothing
+    # writes to it via the deleted pending/link CRUD flow anymore.
+    conn = proxy.init_db(str(tmp_path / "m.db"))
+    cur = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='trackers'")
+    assert cur.fetchone() is not None
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(trackers)")]
+    for col in ("slug", "name", "status", "session_id", "created_at", "linked_at", "closed_at"):
+        assert col in cols
+
+
 def test_provisional_name_is_session_hex():
     assert S.provisional_name("abcdef1234567890") == "session-abcdef12"
 

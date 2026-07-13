@@ -7,7 +7,6 @@ import json
 import math
 import platform
 import re
-import secrets
 import sqlite3
 import threading
 import time
@@ -355,11 +354,6 @@ def recover_stats_from_backup(conn, bak_path: str = "stats.json.bak") -> None:
         print(f"[recovery] Failed: {e}")
 
 
-def make_slug(name: str, conn) -> str:
-    base = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "tracker"
-    return f"{base}-{secrets.token_hex(2)}"
-
-
 def load_stats_from_db(conn) -> None:
     row = conn.execute(
         "SELECT COUNT(*), COALESCE(SUM(original_tokens),0), COALESCE(SUM(compressed_tokens),0) FROM compressions"
@@ -678,23 +672,6 @@ def record_compression(
             "latency_ms": round(latency_ms, 1),
         }
     )
-
-
-def _try_link_pending_tracker(session_id: str) -> None:
-    """Link the oldest pending tracker to session_id if one exists and session_id is known."""
-    if _db_conn is None or not session_id or session_id == "unknown":
-        return
-    ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    result = _db_conn.execute(
-        """UPDATE trackers SET status='active', session_id=?, linked_at=?
-           WHERE slug = (
-             SELECT slug FROM trackers WHERE status='pending'
-             ORDER BY created_at ASC LIMIT 1
-           )""",
-        (session_id, ts),
-    )
-    if result.rowcount > 0:
-        _db_conn.commit()
 
 
 def record_request(session_id: str):
@@ -1426,7 +1403,6 @@ async def rtk_log(request: Request):
             ),
         )
         _db_conn.commit()
-        _try_link_pending_tracker(session_id)
         return JSONResponse({"ok": True})
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -1703,52 +1679,6 @@ async def clear_compression_texts(request: Request):
         cur = _db_conn.execute("DELETE FROM compression_texts")
     _db_conn.commit()
     return JSONResponse({"deleted": cur.rowcount, "session_id": session_id})
-
-
-@app.post("/admin/tracker")
-async def create_tracker(request: Request):
-    body = await request.json()
-    name = (body.get("name") or "").strip()
-    if not name:
-        return JSONResponse({"error": "name required"}, status_code=400)
-    if _db_conn is None:
-        return JSONResponse({"error": "db not ready"}, status_code=503)
-    slug = make_slug(name, _db_conn)
-    ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    _db_conn.execute(
-        "INSERT INTO trackers (slug, name, status, created_at) VALUES (?,?,'pending',?)",
-        (slug, name, ts),
-    )
-    _db_conn.commit()
-    return JSONResponse(
-        {"slug": slug, "name": name, "status": "pending", "session_id": None, "created_at": ts}
-    )
-
-
-@app.get("/admin/tracker")
-async def get_tracker():
-    if _db_conn is None:
-        return JSONResponse([])
-    rows = _db_conn.execute(
-        "SELECT slug, name, status, session_id, created_at, linked_at "
-        "FROM trackers WHERE status IN ('pending','active') ORDER BY created_at DESC"
-    ).fetchall()
-    return JSONResponse([dict(r) for r in rows])
-
-
-@app.delete("/admin/tracker/{slug}")
-async def delete_tracker(slug: str):
-    if _db_conn is None:
-        return JSONResponse({"error": "db not ready"}, status_code=503)
-    ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    result = _db_conn.execute(
-        "UPDATE trackers SET status='closed', closed_at=? WHERE slug=?",
-        (ts, slug),
-    )
-    _db_conn.commit()
-    if result.rowcount == 0:
-        return JSONResponse({"error": "not found"}, status_code=404)
-    return JSONResponse({"closed": slug})
 
 
 @app.get("/admin/tracker/all")

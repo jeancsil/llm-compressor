@@ -703,3 +703,65 @@ def test_session_rtk_commands_pagination(client):
     data = r.json()
     assert data["page"] == 2
     assert len(data["items"]) == 5
+
+
+# Re-homed from tests/test_tracker.py (Task 10): general /stats + /play/list
+# behavior that lived there by accident, unrelated to the deleted pending
+# tracker CRUD flow.
+
+
+def test_stats_session_filter(client: TestClient):
+    import sys
+
+    proxy = sys.modules["proxy"]
+
+    proxy.record_compression("session-A", 500, 300, 50.0)
+    proxy.record_compression("session-B", 400, 200, 40.0)
+
+    r = client.get("/stats?session_id=session-A")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["alltime"]["requests"] == 1
+    assert data["alltime"]["tokens_saved"] == 200
+
+
+def test_stats_no_filter_returns_all(client: TestClient):
+    import sys
+
+    proxy = sys.modules["proxy"]
+
+    proxy.record_compression("session-A", 500, 300, 50.0)
+    proxy.record_compression("session-B", 400, 200, 40.0)
+
+    r = client.get("/stats")
+    data = r.json()
+    assert data["alltime"]["requests"] == 2
+
+
+def test_timeseries_session_filter(client: TestClient):
+    import sys
+
+    proxy = sys.modules["proxy"]
+
+    proxy.record_compression("session-A", 500, 300, 50.0)
+    proxy.record_compression("session-B", 400, 200, 40.0)
+
+    r = client.get("/stats/timeseries?session_id=session-A")
+    assert r.status_code == 200
+    buckets = r.json()
+    total_reqs = sum(b["requests"] for b in buckets)
+    assert total_reqs == 1
+
+
+def test_stats_has_tracked_key(client: TestClient):
+    data = client.get("/stats").json()
+    assert "tracked" in data
+    assert "sessions" in data["tracked"]
+    assert "tokens_saved" in data["tracked"]
+
+
+def test_play_list_returns_html(client: TestClient):
+    r = client.get("/play/list")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/html")
+    assert "Session History" in r.text
