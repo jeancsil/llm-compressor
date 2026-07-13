@@ -8,8 +8,10 @@ import math
 import platform
 import re
 import sqlite3
+import sys as _sys
 import threading
 import time
+import types as _types
 from collections import OrderedDict, deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
@@ -20,13 +22,8 @@ import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
-from langfuse_tracer import tracer as _lf_tracer
-
-import sys as _sys
-import types as _types
-
-import db
 import backends
+import db
 
 # Plain re-exports: real function objects, never monkeypatched by name in the
 # test suite (tests call them directly), so a static import carries no
@@ -34,6 +31,7 @@ import backends
 # `recover_stats_from_backup`/`_migrate_db_location` are deliberately NOT
 # imported here — see `_ProxyModule` below.
 from db import init_db, load_stats_from_db  # re-export
+from langfuse_tracer import tracer as _lf_tracer
 
 # ---------------------------------------------------------------------------
 # proxy.py forwarding shim (Task 13, Steps 1 & 4)
@@ -693,7 +691,10 @@ def _stats_scope(active_model: str, session_id: str | None) -> tuple[str, tuple]
     if session_id:
         return "session_id = ?", (session_id,)
     if active_model == "dual":
-        return f"model IN ({', '.join('?' * len(backends.DUAL_SUBMODELS))})", backends.DUAL_SUBMODELS
+        return (
+            f"model IN ({', '.join('?' * len(backends.DUAL_SUBMODELS))})",
+            backends.DUAL_SUBMODELS,
+        )
     return "model = ?", (active_model,)
 
 
@@ -1110,7 +1111,9 @@ async def play_compress(request: Request):
         if backends.backend_loading == model:
             return JSONResponse({"loading": True, "model": model}, status_code=202)
         if backends.backend_loading:
-            return JSONResponse({"loading": True, "model": backends.backend_loading}, status_code=202)
+            return JSONResponse(
+                {"loading": True, "model": backends.backend_loading}, status_code=202
+            )
         # Trigger async model switch
         if db._db_conn is not None:
             db._db_conn.execute(
@@ -1140,7 +1143,9 @@ async def play_compress(request: Request):
 
     if backends.backend is None:
         if backends.backend_loading:
-            return JSONResponse({"loading": True, "model": backends.backend_loading}, status_code=202)
+            return JSONResponse(
+                {"loading": True, "model": backends.backend_loading}, status_code=202
+            )
         return JSONResponse(
             {"error": "No model loaded. Select a model to load it."}, status_code=503
         )
