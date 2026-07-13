@@ -57,8 +57,8 @@ Coverage gaps addressed (by proxy.py line range):
   1084-144 play_compress endpoint (all branches)
   1158-211 set_model endpoint (all branches)
   1217-234 clear_compression_texts endpoint
-  1284     get_all_trackers – db not ready
-  1302-324 get_session_compressions endpoint
+  1284     get_sessions (Task 11, replaces get_all_trackers) – db not ready
+  1302-324 get_session_compressions endpoint (Task 11: keyed by session_id)
   1329-336 list_models endpoint
   1341-386 proxy_messages endpoint (streaming + non-streaming + errors)
 """
@@ -973,7 +973,7 @@ def test_rtk_log_db_error(client: TestClient, monkeypatch):
 
 
 def test_session_dashboard_db_not_ready(client: TestClient, monkeypatch):
-    """GET /dashboard/<slug> returns 503 when _db_conn is None."""
+    """GET /dashboard/<session_id> returns 503 when _db_conn is None."""
     proxy = sys.modules["proxy"]
     orig = proxy._db_conn
     monkeypatch.setattr(proxy, "_db_conn", None)
@@ -1295,16 +1295,16 @@ def test_clear_compression_texts_by_session(client: TestClient):
 
 
 # ===========================================================================
-# Tracker endpoints – db not ready paths (line 1284)
+# get_sessions endpoint (Task 11 replacement for get_all_trackers)
 # ===========================================================================
 
 
-def test_get_all_trackers_db_not_ready(client: TestClient, monkeypatch):
+def test_get_sessions_db_not_ready(client: TestClient, monkeypatch):
     proxy = sys.modules["proxy"]
     orig = proxy._db_conn
     monkeypatch.setattr(proxy, "_db_conn", None)
     try:
-        r = client.get("/admin/tracker/all")
+        r = client.get("/admin/sessions")
         assert r.status_code == 200
         assert r.json() == {"items": [], "total": 0, "page": 1, "page_size": 25, "pages": 0}
     finally:
@@ -1312,47 +1312,24 @@ def test_get_all_trackers_db_not_ready(client: TestClient, monkeypatch):
 
 
 # ===========================================================================
-# get_session_compressions endpoint (lines 1302-1324)
+# get_session_compressions endpoint (Task 11: keyed directly by session_id)
 # ===========================================================================
 
 
-def test_get_session_compressions_not_found(client: TestClient):
-    """GET /session/<slug>/compressions returns 404 for unknown slug."""
+def test_get_session_compressions_unknown_session_is_empty(client: TestClient):
+    """GET /session/<session_id>/compressions returns an empty envelope (not 404) for an unknown id."""
     r = client.get("/session/nonexistent/compressions")
-    assert r.status_code == 404
-
-
-def test_get_session_compressions_no_linked_session(client: TestClient):
-    """GET /session/<slug>/compressions returns empty paginated response when tracker has no session_id."""
-    proxy = sys.modules["proxy"]
-    slug = "unlinked-slug"
-    ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    proxy._db_conn.execute(
-        "INSERT INTO trackers (slug, name, status, created_at) VALUES (?,?,'pending',?)",
-        (slug, "unlinked", ts),
-    )
-    proxy._db_conn.commit()
-
-    r = client.get(f"/session/{slug}/compressions")
     assert r.status_code == 200
     assert r.json() == {"items": [], "total": 0, "page": 1, "page_size": 20, "pages": 0}
 
 
 def test_get_session_compressions_with_data(client: TestClient):
-    """GET /session/<slug>/compressions returns compression rows for linked session."""
+    """GET /session/<session_id>/compressions returns compression rows for that session."""
     proxy = sys.modules["proxy"]
 
-    slug = "linked-slug"
-    ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    proxy._db_conn.execute(
-        "INSERT INTO trackers (slug, name, status, session_id, created_at, linked_at) "
-        "VALUES (?,?,'active','sess-comps',?,?)",
-        (slug, "linked", ts, ts),
-    )
-    proxy._db_conn.commit()
     proxy.record_compression("sess-comps", 200, 120, 50.0)
 
-    r = client.get(f"/session/{slug}/compressions")
+    r = client.get("/session/sess-comps/compressions")
     assert r.status_code == 200
     data = r.json()
     assert len(data["items"]) >= 1
@@ -1931,7 +1908,7 @@ def test_clear_compression_texts_db_not_ready(client: TestClient, monkeypatch):
 
 
 def test_get_session_compressions_db_not_ready(client: TestClient, monkeypatch):
-    """GET /session/<slug>/compressions returns 503 when _db_conn is None."""
+    """GET /session/<session_id>/compressions returns 503 when _db_conn is None."""
     proxy = sys.modules["proxy"]
     orig = proxy._db_conn
     monkeypatch.setattr(proxy, "_db_conn", None)
@@ -2015,7 +1992,7 @@ def test_set_model_dual_load_exception(client: TestClient, monkeypatch):
 
 
 def test_get_session_rtk_commands_db_not_ready(client: TestClient, monkeypatch):
-    """GET /session/<slug>/rtk-commands returns 503 when _db_conn is None."""
+    """GET /session/<session_id>/rtk-commands returns 503 when _db_conn is None."""
     proxy = sys.modules["proxy"]
     orig = proxy._db_conn
     monkeypatch.setattr(proxy, "_db_conn", None)
@@ -2026,39 +2003,18 @@ def test_get_session_rtk_commands_db_not_ready(client: TestClient, monkeypatch):
         monkeypatch.setattr(proxy, "_db_conn", orig)
 
 
-def test_get_session_rtk_commands_not_found(client: TestClient):
-    """GET /session/<slug>/rtk-commands returns 404 for unknown slug."""
-    r = client.get("/session/nonexistent-slug/rtk-commands")
-    assert r.status_code == 404
-
-
-def test_get_session_rtk_commands_no_linked_session(client: TestClient):
-    """GET /session/<slug>/rtk-commands returns empty paginated response when tracker has no session_id."""
-    proxy = sys.modules["proxy"]
-    slug = "rtkcmds-unlinked-slug"
-    ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    proxy._db_conn.execute(
-        "INSERT INTO trackers (slug, name, status, created_at) VALUES (?,?,'pending',?)",
-        (slug, "rtkcmds-unlinked", ts),
-    )
-    proxy._db_conn.commit()
-
-    r = client.get(f"/session/{slug}/rtk-commands")
+def test_get_session_rtk_commands_unknown_session_is_empty(client: TestClient):
+    """GET /session/<session_id>/rtk-commands returns an empty envelope (not 404) for an unknown id."""
+    r = client.get("/session/nonexistent-session/rtk-commands")
     assert r.status_code == 200
     assert r.json() == {"items": [], "total": 0, "page": 1, "page_size": 25, "pages": 0}
 
 
 def test_get_session_rtk_commands_with_data(client: TestClient):
-    """GET /session/<slug>/rtk-commands returns rtk rows for linked session."""
+    """GET /session/<session_id>/rtk-commands returns rtk rows for that session."""
     proxy = sys.modules["proxy"]
 
-    slug = "rtkcmds-linked-slug"
     ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    proxy._db_conn.execute(
-        "INSERT INTO trackers (slug, name, status, session_id, created_at, linked_at) "
-        "VALUES (?,?,'active','sess-rtk-cmds',?,?)",
-        (slug, "rtkcmds-linked", ts, ts),
-    )
     proxy._db_conn.execute(
         "INSERT INTO rtk_events "
         "(rtk_id, ts, session_id, rtk_cmd, input_tokens, output_tokens, saved_tokens, savings_pct, project_path) "
@@ -2067,7 +2023,7 @@ def test_get_session_rtk_commands_with_data(client: TestClient):
     )
     proxy._db_conn.commit()
 
-    r = client.get(f"/session/{slug}/rtk-commands")
+    r = client.get("/session/sess-rtk-cmds/rtk-commands")
     assert r.status_code == 200
     data = r.json()
     assert len(data["items"]) == 1

@@ -550,9 +550,9 @@ def test_load_backend_llmlingua2_large(monkeypatch):
     assert b["rate"] == 0.45
 
 
-def test_tracker_all_pagination(client):
-    """Task 1: GET /admin/tracker/all?page=1&page_size=10 returns paginated envelope."""
-    r = client.get("/admin/tracker/all?page=1&page_size=10")
+def test_admin_sessions_pagination(client):
+    """Task 11: GET /admin/sessions?page=1&page_size=10 returns paginated envelope."""
+    r = client.get("/admin/sessions?page=1&page_size=10")
     assert r.status_code == 200
     data = r.json()
     assert "items" in data
@@ -563,22 +563,16 @@ def test_tracker_all_pagination(client):
 
 
 def test_session_compressions_pagination(client):
-    """Task 2: GET /session/{slug}/compressions?page=1&page_size=5 returns paginated envelope."""
-    # Non-existent slug should 404
-    r = client.get("/session/nosuchslug/compressions?page=1&page_size=5")
-    assert r.status_code == 404
+    """Task 11: GET /session/{session_id}/compressions?page=1&page_size=5 returns paginated envelope."""
+    # Unknown session_id returns an empty (not 404) paginated envelope now that
+    # the endpoint is keyed directly by session_id (no trackers indirection).
+    r = client.get("/session/nosuchsession/compressions?page=1&page_size=5")
+    assert r.status_code == 200
+    assert r.json()["total"] == 0
 
-    # Create a tracker with session_id to test with real data
     from proxy import _db_conn
 
-    tracker_slug = "test-slug-123"
-    tracker_name = "Test Tracker"
     session_id = "session-123"
-
-    _db_conn.execute(
-        "INSERT INTO trackers (slug, name, status, session_id, created_at) VALUES (?, ?, ?, ?, datetime('now'))",
-        (tracker_slug, tracker_name, "active", session_id),
-    )
 
     # Insert 10 test compressions
     for i in range(10):
@@ -589,7 +583,7 @@ def test_session_compressions_pagination(client):
     _db_conn.commit()
 
     # Test pagination with page_size=5
-    r = client.get(f"/session/{tracker_slug}/compressions?page=1&page_size=5")
+    r = client.get(f"/session/{session_id}/compressions?page=1&page_size=5")
     assert r.status_code == 200
     data = r.json()
 
@@ -608,7 +602,7 @@ def test_session_compressions_pagination(client):
     assert len(data["items"]) == 5
 
     # Test page 2
-    r = client.get(f"/session/{tracker_slug}/compressions?page=2&page_size=5")
+    r = client.get(f"/session/{session_id}/compressions?page=2&page_size=5")
     assert r.status_code == 200
     data = r.json()
     assert data["page"] == 2
@@ -644,22 +638,16 @@ def test_langfuse_status_enabled(client, monkeypatch):
 
 
 def test_session_rtk_commands_pagination(client):
-    """Task 3: GET /session/{slug}/rtk-commands?page=1&page_size=5 returns paginated envelope."""
-    # Non-existent slug should 404
-    r = client.get("/session/nosuchslug/rtk-commands?page=1&page_size=5")
-    assert r.status_code == 404
+    """Task 11: GET /session/{session_id}/rtk-commands?page=1&page_size=5 returns paginated envelope."""
+    # Unknown session_id returns an empty (not 404) paginated envelope now that
+    # the endpoint is keyed directly by session_id (no trackers indirection).
+    r = client.get("/session/nosuchsession/rtk-commands?page=1&page_size=5")
+    assert r.status_code == 200
+    assert r.json()["total"] == 0
 
-    # Create a tracker with session_id to test with real data
     from proxy import _db_conn
 
-    tracker_slug = "test-rtk-slug-123"
-    tracker_name = "Test RTK Tracker"
     session_id = "rtk-session-123"
-
-    _db_conn.execute(
-        "INSERT INTO trackers (slug, name, status, session_id, created_at) VALUES (?, ?, ?, ?, datetime('now'))",
-        (tracker_slug, tracker_name, "active", session_id),
-    )
 
     # Insert 10 test rtk_events
     for i in range(10):
@@ -679,7 +667,7 @@ def test_session_rtk_commands_pagination(client):
     _db_conn.commit()
 
     # Test pagination with page_size=5
-    r = client.get(f"/session/{tracker_slug}/rtk-commands?page=1&page_size=5")
+    r = client.get(f"/session/{session_id}/rtk-commands?page=1&page_size=5")
     assert r.status_code == 200
     data = r.json()
 
@@ -698,7 +686,7 @@ def test_session_rtk_commands_pagination(client):
     assert len(data["items"]) == 5
 
     # Test page 2
-    r = client.get(f"/session/{tracker_slug}/rtk-commands?page=2&page_size=5")
+    r = client.get(f"/session/{session_id}/rtk-commands?page=2&page_size=5")
     assert r.status_code == 200
     data = r.json()
     assert data["page"] == 2

@@ -1408,18 +1408,16 @@ async def rtk_log(request: Request):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
-@app.get("/dashboard/{slug}", response_class=HTMLResponse)
-async def session_dashboard(slug: str):
+@app.get("/dashboard/{session_id}", response_class=HTMLResponse)
+async def session_dashboard(session_id: str):
+    import sessions as _sessions  # local import ok; module is light
+
     if _db_conn is None:
         return HTMLResponse("<h1>DB not ready</h1>", status_code=503)
-    row = _db_conn.execute(
-        "SELECT slug, name, status, session_id, created_at, linked_at FROM trackers WHERE slug=?",
-        (slug,),
-    ).fetchone()
-    if row is None:
-        return HTMLResponse(f"<h1>Tracker '{slug}' not found</h1>", status_code=404)
-    tracker = dict(row)
-    bootstrap = f"<script>window.TRACKER = {json.dumps(tracker)};</script>"
+    session = _sessions.get_session(_db_conn, session_id)
+    if session is None:
+        return HTMLResponse(f"<h1>Session '{session_id}' not found</h1>", status_code=404)
+    bootstrap = f"<script>window.SESSION = {json.dumps(session)};</script>"
     html = DASHBOARD_HTML.replace("</head>", bootstrap + "\n</head>", 1)
     return HTMLResponse(html)
 
@@ -1681,46 +1679,11 @@ async def clear_compression_texts(request: Request):
     return JSONResponse({"deleted": cur.rowcount, "session_id": session_id})
 
 
-@app.get("/admin/tracker/all")
-async def get_all_trackers(page: int = 1, page_size: int = 25):
-    page = max(1, page)
-    page_size = max(1, min(200, page_size))
-    if _db_conn is None:
-        return JSONResponse(
-            {"items": [], "total": 0, "page": page, "page_size": page_size, "pages": 0}
-        )
-    offset = (page - 1) * page_size
+@app.get("/admin/sessions")
+async def get_sessions(page: int = 1, page_size: int = 25):
+    import sessions as _sessions  # local import ok; module is light
 
-    total = _db_conn.execute("SELECT COUNT(*) FROM trackers").fetchone()[0]
-    rows = _db_conn.execute(
-        """
-        SELECT t.slug, t.name, t.status, t.session_id,
-               t.created_at, t.linked_at, t.closed_at,
-               COALESCE(SUM(c.original_tokens - c.compressed_tokens), 0) AS tokens_saved,
-               COUNT(c.id) AS requests,
-               COALESCE(SUM(r.saved_tokens), 0) AS rtk_saved,
-               COUNT(r.id) AS rtk_commands
-        FROM trackers t
-        LEFT JOIN compressions c ON c.session_id = t.session_id
-        LEFT JOIN rtk_events   r ON r.session_id = t.session_id
-        GROUP BY t.slug
-        ORDER BY t.created_at DESC
-        LIMIT ? OFFSET ?
-        """,
-        (page_size, offset),
-    ).fetchall()
-    import math
-
-    pages = math.ceil(total / page_size) if page_size > 0 else 0
-    return JSONResponse(
-        {
-            "items": [dict(r) for r in rows],
-            "total": total,
-            "page": page,
-            "page_size": page_size,
-            "pages": pages,
-        }
-    )
+    return _sessions.list_sessions(_db_conn, page, page_size)
 
 
 @app.get("/admin/langfuse-status")
@@ -1728,23 +1691,14 @@ async def langfuse_status():
     return JSONResponse(content=_lf_tracer.status())
 
 
-@app.get("/session/{slug}/compressions")
-async def get_session_compressions(slug: str, page: int = 1, page_size: int = 20):
+@app.get("/session/{session_id}/compressions")
+async def get_session_compressions(session_id: str, page: int = 1, page_size: int = 20):
     if _db_conn is None:
         return JSONResponse({"error": "db not ready"}, status_code=503)
-    row = _db_conn.execute("SELECT session_id FROM trackers WHERE slug=?", (slug,)).fetchone()
-    if row is None:
-        return JSONResponse({"error": "not found"}, status_code=404)
-    session_id = row[0]
 
     # Clamp page and page_size BEFORE any early returns
     page = max(1, page)
     page_size = max(1, min(200, page_size))
-
-    if not session_id:
-        return JSONResponse(
-            {"items": [], "total": 0, "page": page, "page_size": page_size, "pages": 0}
-        )
 
     offset = (page - 1) * page_size
 
@@ -1777,20 +1731,12 @@ async def get_session_compressions(slug: str, page: int = 1, page_size: int = 20
     )
 
 
-@app.get("/session/{slug}/rtk-commands")
-async def get_session_rtk_commands(slug: str, page: int = 1, page_size: int = 25):
+@app.get("/session/{session_id}/rtk-commands")
+async def get_session_rtk_commands(session_id: str, page: int = 1, page_size: int = 25):
     page = max(1, page)
     page_size = max(1, min(200, page_size))
     if _db_conn is None:
         return JSONResponse({"error": "db not ready"}, status_code=503)
-    row = _db_conn.execute("SELECT session_id FROM trackers WHERE slug=?", (slug,)).fetchone()
-    if row is None:
-        return JSONResponse({"error": "not found"}, status_code=404)
-    session_id = row[0]
-    if not session_id:
-        return JSONResponse(
-            {"items": [], "total": 0, "page": page, "page_size": page_size, "pages": 0}
-        )
     offset = (page - 1) * page_size
 
     total = _db_conn.execute(

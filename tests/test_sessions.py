@@ -35,56 +35,34 @@ def test_trackers_table_still_present(tmp_path):
         assert col in cols
 
 
-def test_session_dashboard_injects_tracker(client):
-    # Re-homed from tests/test_tracker.py (Task 10): create_tracker is gone
-    # (Task 10 removed the pending/link CRUD flow), so seed the trackers row
-    # directly via SQL instead of via the old POST /admin/tracker call
-    # (mirrors the seeding pattern test_coverage.py already uses for the
-    # get_session_compressions tests).
+def test_session_dashboard_injects_session(client):
+    # Task 11: session_dashboard now looks up `sessions` by session_id directly
+    # (trackers/slug indirection removed) and injects window.SESSION.
     import proxy
 
-    slug = "dash-slug-1"
     proxy._db_conn.execute(
-        "INSERT INTO trackers (slug, name, status, created_at) VALUES (?,?,'pending',?)",
-        (slug, "My Test", "t"),
+        "INSERT INTO sessions (session_id, display_name, name_source, first_seen, last_seen)"
+        " VALUES ('dash-sess-1', 'My Test', 'auto', 't', 't')"
     )
     proxy._db_conn.commit()
-    r = client.get(f"/dashboard/{slug}")
+    r = client.get("/dashboard/dash-sess-1")
     assert r.status_code == 200
-    assert "const TRACKER" in r.text
-    assert f'"slug": "{slug}"' in r.text
-    assert '"status": "pending"' in r.text
+    assert "window.SESSION" in r.text
+    assert '"session_id": "dash-sess-1"' in r.text
+    assert '"display_name": "My Test"' in r.text
 
 
-def test_dashboard_slug_returns_html(client):
-    # Re-homed from tests/test_tracker.py (Task 10); see seeding note above.
+def test_dashboard_session_id_returns_html(client):
     import proxy
 
-    slug = "dash-slug-2"
     proxy._db_conn.execute(
-        "INSERT INTO trackers (slug, name, status, created_at) VALUES (?,?,'pending',?)",
-        (slug, "HTML Test", "t"),
+        "INSERT INTO sessions (session_id, display_name, name_source, first_seen, last_seen)"
+        " VALUES ('dash-sess-2', 'HTML Test', 'auto', 't', 't')"
     )
     proxy._db_conn.commit()
-    r = client.get(f"/dashboard/{slug}")
+    r = client.get("/dashboard/dash-sess-2")
+    assert r.status_code == 200
     assert r.headers["content-type"].startswith("text/html")
-
-
-def test_session_dashboard_accessible_after_close(client):
-    # Re-homed from tests/test_tracker.py (Task 10). The original test drove
-    # this through create_tracker + delete_tracker, both removed in Task 10;
-    # seed a 'closed' row directly to prove the dashboard still renders it.
-    import proxy
-
-    slug = "dash-slug-3"
-    proxy._db_conn.execute(
-        "INSERT INTO trackers (slug, name, status, created_at) VALUES (?,?,'closed',?)",
-        (slug, "Keep After Close", "t"),
-    )
-    proxy._db_conn.commit()
-    r = client.get(f"/dashboard/{slug}")
-    assert r.status_code == 200
-    assert '"status": "closed"' in r.text
 
 
 def test_provisional_name_is_session_hex():
@@ -245,3 +223,41 @@ def test_messages_registers_session_provisionally(client, monkeypatch):
     ).fetchone()
     assert row is not None
     assert row[0] == "session-abcdef12"  # provisional guaranteed synchronously
+
+
+def test_session_compressions_keyed_by_session_id(client):
+    import proxy
+
+    proxy._db_conn.execute(
+        "INSERT INTO sessions (session_id, display_name, name_source, first_seen, last_seen)"
+        " VALUES ('sid123', 'fix-thing', 'auto', 't', 't')"
+    )
+    proxy._db_conn.execute(
+        "INSERT INTO compressions (ts, session_id, model, original_tokens, compressed_tokens, latency_ms)"
+        " VALUES ('t','sid123','llmlingua2',100,60,1.0)"
+    )
+    proxy._db_conn.commit()
+    r = client.get("/session/sid123/compressions")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total"] == 1 and body["items"][0]["original_tokens"] == 100
+
+
+def test_admin_sessions_lists_named_sessions(client):
+    import proxy
+
+    proxy._db_conn.execute(
+        "INSERT INTO sessions (session_id, display_name, name_source, first_seen, last_seen)"
+        " VALUES ('sidA', 'add-endpoint', 'auto', 't', 't')"
+    )
+    proxy._db_conn.commit()
+    r = client.get("/admin/sessions")
+    assert r.status_code == 200
+    names = [i["display_name"] for i in r.json()["items"]]
+    assert "add-endpoint" in names
+
+
+def test_dashboard_404_on_missing_session(client):
+    # Re-homes the 404 assertion the deleted tracker test used to cover.
+    r = client.get("/dashboard/no-such-session-id")
+    assert r.status_code == 404
