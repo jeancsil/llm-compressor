@@ -5,14 +5,12 @@ import copy
 import json
 import math
 import platform
-import sqlite3
 import sys as _sys
 import threading
 import time
 import types as _types
-from collections import deque
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
@@ -23,6 +21,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 import backends
 import compression
 import db
+import stats as _stats
 from compression import (  # re-export
     _CHUNK_MAX_CHARS,
     CACHE_MAX_ROWS,
@@ -44,22 +43,31 @@ from compression import (  # re-export
 # Plain re-exports: real function objects, never monkeypatched by name in the
 # test suite (tests call them directly), so a static import carries no
 # staleness risk. `_db_conn`/`DB_PATH`/`migrate_from_json`/
-# `recover_stats_from_backup`/`_migrate_db_location` (db.py) and `_cache`/
-# `_compress_with`/`compress_backend` (compression.py) are deliberately NOT
-# imported here — see `_ProxyModule` below. `compress_backend` is monkeypatched
-# via `proxy.compress_backend` in test_coverage.py::test_play_compress_backend_raises
-# (a multi-line `monkeypatch.setattr(...)` call easy to miss by grep), so it
-# must forward through the shim like `_cache`/`_compress_with` rather than be a
+# `recover_stats_from_backup`/`_migrate_db_location` (db.py), `_cache`/
+# `_compress_with`/`compress_backend` (compression.py), and `_rtk_db_path`
+# (stats.py) are deliberately NOT imported here — see `_ProxyModule` below.
+# `compress_backend` is monkeypatched via `proxy.compress_backend` in
+# test_coverage.py::test_play_compress_backend_raises (a multi-line
+# `monkeypatch.setattr(...)` call easy to miss by grep), and `_rtk_db_path` is
+# monkeypatched the same way in test_coverage.py's rtk tests, so both must
+# forward through the shim like `_cache`/`_compress_with` rather than be a
 # plain static re-export.
 from db import init_db, load_stats_from_db  # re-export
 from langfuse_tracer import tracer as _lf_tracer
+from stats import _cache_stats, read_rtk_stats, stats  # re-export
 
-# Declares the compression.py re-exports above as intentional public surface so
-# ruff's F401 (unused-import) doesn't flag them: nothing in proxy.py itself
-# calls these by bare name (real callers use `compression.<name>`), but tests
-# call them directly as `proxy.<name>`, so the static import must stay. This
-# does not cover the pre-existing `db.init_db`/`db.load_stats_from_db`
-# re-exports (Task 13, Step 1), which are left as-is out of scope for this step.
+# Declares the compression.py/stats.py re-exports above as intentional public
+# surface so ruff's F401 (unused-import) doesn't flag them: nothing in
+# proxy.py itself calls `read_rtk_stats`/`_cache_stats` by bare name (real
+# caller of `_cache_stats` is `get_stats()`, which now reads it as
+# `_stats._cache_stats()`; `read_rtk_stats` has no internal caller at all,
+# only `proxy.read_rtk_stats(...)` in tests), but tests call them directly as
+# `proxy.<name>`, so the static import must stay. `stats` (the dict) is *not*
+# listed here — it's exempt from F401 because `record_compression()`,
+# `record_request()`, and `get_stats()` still reference it by the bare name
+# `stats` below. This does not cover the pre-existing
+# `db.init_db`/`db.load_stats_from_db` re-exports (Task 13, Step 1), which are
+# left as-is out of scope for this step.
 __all__ = [
     "CHUNK_MAX_TOKENS",
     "_CHUNK_MAX_CHARS",
@@ -74,6 +82,8 @@ __all__ = [
     "compress_messages",
     "compress_system_field",
     "compress_text",
+    "_cache_stats",
+    "read_rtk_stats",
 ]
 
 # ---------------------------------------------------------------------------
@@ -87,18 +97,21 @@ __all__ = [
 # `_load_dual_backend`, `_load_kompress_backend`, `_load_llmlingua2_backend`,
 # `_load_single_backend`, `_pick_backend`). compression.py owns the
 # runtime-reassigned cache global `_cache` and the compressor-dispatch function
-# `_compress_with`. All of these are monkeypatched away via
-# `monkeypatch.setattr(proxy, "<name>", ...)` somewhere in the test suite
+# `_compress_with`/`compress_backend`. stats.py owns `_rtk_db_path` (its only
+# same-module caller, `read_rtk_stats`, reads it as `stats._rtk_db_path()` so
+# the reassignment is visible there too). All of these are monkeypatched away
+# via `monkeypatch.setattr(proxy, "<name>", ...)` somewhere in the test suite
 # (conftest.py's autouse fixture, or individual tests in test_proxy.py /
 # test_coverage.py / test_cache.py). Every real reader of these names elsewhere
 # in the codebase (lifespan(), the /play and /admin route handlers, db.py's,
-# backends.py's, and compression.py's own functions) is module-qualified
-# (`db._db_conn`, `backends.backend`, `compression._cache`, ...) per
-# scratchpad/split-audit.md's Step 3 contract. This class makes `proxy.<name>`
-# reads AND `monkeypatch.setattr(proxy, "<name>", ...)` writes forward to the
-# single owning attribute on `db` / `backends` / `compression`, so the
-# pre-split test idiom keeps working unmodified instead of silently patching a
-# stale, disconnected copy on proxy itself.
+# backends.py's, compression.py's, and stats.py's own functions) is
+# module-qualified (`db._db_conn`, `backends.backend`, `compression._cache`,
+# `stats._rtk_db_path`, ...) per scratchpad/split-audit.md's Step 3 contract.
+# This class makes `proxy.<name>` reads AND `monkeypatch.setattr(proxy,
+# "<name>", ...)` writes forward to the single owning attribute on `db` /
+# `backends` / `compression` / `stats`, so the pre-split test idiom keeps
+# working unmodified instead of silently patching a stale, disconnected copy
+# on proxy itself.
 #
 # `_load_backend` is a special case: pre-split, proxy.py had a plain alias
 # `_load_backend = load_backend`. That alias is not recreated as a real name in
@@ -128,6 +141,7 @@ _FORWARD = {
     "_cache": (compression, "_cache"),
     "_compress_with": (compression, "_compress_with"),
     "compress_backend": (compression, "compress_backend"),
+    "_rtk_db_path": (_stats, "_rtk_db_path"),
 }
 
 
@@ -216,14 +230,12 @@ app = FastAPI(lifespan=lifespan)
 # Stats
 # ---------------------------------------------------------------------------
 
-stats = {
-    "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-    "total_requests": 0,
-    "total_original_tokens": 0,
-    "total_compressed_tokens": 0,
-    "sessions": {},
-    "recent_compressions": deque(maxlen=100),
-}
+# NOTE: the in-memory `stats` aggregate dict moved to stats.py (Task 13, Step
+# 6) — see the `from stats import ... stats` re-export above. It is mutated
+# in place here (never reassigned), so the plain re-export stays valid.
+# `record_compression`/`record_request` stay here until Task 13 Step 7, when
+# they move to sessions.py and start writing `stats.stats[...]` (qualified)
+# instead of the bare `stats[...]` below.
 
 
 def record_compression(
@@ -297,61 +309,11 @@ def record_request(session_id: str):
     sess["last_seen"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-# ---------------------------------------------------------------------------
-# rtk integration (optional — gracefully absent when rtk not installed)
-# ---------------------------------------------------------------------------
-
-
-def _rtk_db_path() -> Path:
-    return db._rtk_data_dir() / "history.db"
-
-
-def read_rtk_stats(since: str | None = None) -> dict | None:
-    db = _rtk_db_path()
-    if not db.exists():
-        return None
-    try:
-        conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
-        conn.row_factory = sqlite3.Row
-        cur = conn.cursor()
-
-        where = "WHERE timestamp >= ?" if since else ""
-        args = (since,) if since else ()
-
-        row = cur.execute(
-            f"SELECT COUNT(*) as n, SUM(input_tokens) as inp, "
-            f"SUM(output_tokens) as out, SUM(saved_tokens) as saved, "
-            f"AVG(savings_pct) as avg_pct FROM commands {where}",
-            args,
-        ).fetchone()
-
-        top = cur.execute(
-            f"SELECT rtk_cmd, COUNT(*) as cnt, SUM(saved_tokens) as saved, "
-            f"AVG(savings_pct) as avg_pct FROM commands {where} "
-            f"GROUP BY rtk_cmd ORDER BY saved DESC LIMIT 8",
-            args,
-        ).fetchall()
-
-        conn.close()
-        return {
-            "total_commands": row["n"] or 0,
-            "total_input_tokens": row["inp"] or 0,
-            "total_output_tokens": row["out"] or 0,
-            "total_saved_tokens": row["saved"] or 0,
-            "avg_savings_pct": round(row["avg_pct"] or 0, 1),
-            "top_commands": [
-                {
-                    "cmd": r["rtk_cmd"],
-                    "count": r["cnt"],
-                    "saved": r["saved"],
-                    "avg_pct": round(r["avg_pct"], 1),
-                }
-                for r in top
-            ],
-        }
-    except Exception as e:
-        print(f"[rtk] could not read tracking db: {e}")
-        return None
+# NOTE: rtk integration (_rtk_db_path, read_rtk_stats) moved to stats.py
+# (Task 13, Step 6) — see the `from stats import ... read_rtk_stats`
+# re-export above and the _FORWARD shim (for `_rtk_db_path`, which is
+# monkeypatched in test_coverage.py) for how `proxy.<name>` reads/calls still
+# reach them.
 
 
 # NOTE: Chunking helpers (CHUNK_MAX_TOKENS, _CHUNK_MAX_CHARS, _count_tokens,
@@ -378,256 +340,14 @@ def build_headers(request: Request) -> dict:
     return headers
 
 
-# ---------------------------------------------------------------------------
-# /stats helpers
-#
-# get_stats() is an orchestrator; these pull the per-section logic out so each
-# query lives in one place. In particular, today/alltime/recent all share the
-# same model/session scoping, so it is defined once in _stats_scope().
-# ---------------------------------------------------------------------------
-
-
-def _compressor_info() -> dict:
-    """Describe the active (or loading) compression backend for the dashboard."""
-    if backends.backend_loading:
-        return {
-            "model": backends.backend_loading,
-            "param_name": "",
-            "param_value": "",
-            "loading": True,
-        }
-    if backends.backend and backends.backend.get("type") == "dual":
-        return {
-            "model": "dual",
-            "loading": False,
-            "param_name": None,
-            "param_value": None,
-            "model_system": backends.dual_model_system,
-            "model_user": backends.dual_model_user,
-        }
-    if backends.backend and backends.backend.get("type") == "kompress":
-        return {
-            "model": "kompress",
-            "param_name": "threshold",
-            "param_value": backends.backend.get("threshold", 0.5),
-            "loading": False,
-        }
-    backend_key = (
-        backends.backend.get("backend_key", "llmlingua2") if backends.backend else "llmlingua2"
-    )
-    return {
-        "model": backend_key,
-        "param_name": "rate",
-        "param_value": backends.backend.get("rate", 0.5) if backends.backend else 0.5,
-        "loading": False,
-    }
-
-
-def _stats_scope(active_model: str, session_id: str | None) -> tuple[str, tuple]:
-    """WHERE fragment + args selecting compression rows for the active scope.
-
-    A session filter wins; otherwise dual mode spans all sub-model names while a
-    single model matches just itself.
-    """
-    if session_id:
-        return "session_id = ?", (session_id,)
-    if active_model == "dual":
-        return (
-            f"model IN ({', '.join('?' * len(backends.DUAL_SUBMODELS))})",
-            backends.DUAL_SUBMODELS,
-        )
-    return "model = ?", (active_model,)
-
-
-def _aggregate_stats(scope: str, args: tuple, *, today: bool, with_ratio: bool) -> dict:
-    """Aggregate request/savings/latency metrics for a scope, optionally today-only."""
-    date_clause = "date(ts) = date('now') AND " if today else ""
-    ratio_col = (
-        ", ROUND(AVG(CAST(original_tokens AS REAL) / NULLIF(compressed_tokens, 0)), 2) AS avg_ratio"
-        if with_ratio
-        else ""
-    )
-    row = db._db_conn.execute(
-        f"""
-        SELECT COUNT(*) AS requests,
-               COALESCE(SUM(original_tokens - compressed_tokens), 0) AS tokens_saved,
-               ROUND(AVG((original_tokens - compressed_tokens) * 100.0 / original_tokens), 1) AS avg_savings_pct,
-               ROUND(AVG(latency_ms), 1) AS avg_latency_ms,
-               COUNT(DISTINCT session_id) AS sessions{ratio_col}
-        FROM compressions
-        WHERE {date_clause}{scope}
-        """,
-        args,
-    ).fetchone()
-    out = {
-        "requests": (row[0] if row else 0) or 0,
-        "tokens_saved": (row[1] if row else 0) or 0,
-        "avg_savings_pct": (row[2] if row else 0.0) or 0.0,
-        "avg_latency_ms": (row[3] if row else 0.0) or 0.0,
-        "sessions": (row[4] if row else 0) or 0,
-    }
-    if with_ratio:
-        out["avg_ratio"] = (row[5] if row else 0.0) or 0.0
-    return out
-
-
-def _recent_compression_rows(active_model: str, session_id: str | None) -> list:
-    """Most recent 20 compression rows for the active scope.
-
-    Uses the same scoping as the today/alltime panels, so dual mode spans all
-    sub-model rows rather than matching the non-existent model='dual'.
-    """
-    scope, args = _stats_scope(active_model, session_id)
-    rows = db._db_conn.execute(
-        f"""
-        SELECT ts, session_id, model, original_tokens, compressed_tokens,
-               ROUND((original_tokens - compressed_tokens) * 100.0 / original_tokens, 1) AS savings_pct,
-               latency_ms, role
-        FROM compressions
-        WHERE {scope}
-        ORDER BY id DESC
-        LIMIT 20
-        """,
-        args,
-    ).fetchall()
-    return [
-        {
-            "ts": r[0],
-            "session_id": r[1][:8] if r[1] else "",
-            "model": r[2],
-            "original_tokens": r[3],
-            "compressed_tokens": r[4],
-            "savings_pct": r[5] or 0.0,
-            "latency_ms": round(r[6], 1) if r[6] is not None else 0.0,
-            "role": r[7] or "user",
-        }
-        for r in rows
-    ]
-
-
-def _rtk_stats(session_id: str | None) -> dict | None:
-    """Aggregate rtk shell-layer savings, with a top-commands breakdown."""
-    where = "WHERE session_id = ?" if session_id else ""
-    args = (session_id,) if session_id else ()
-    row = db._db_conn.execute(
-        f"""SELECT COUNT(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),
-                   COALESCE(SUM(saved_tokens),0), COALESCE(AVG(savings_pct),0)
-            FROM rtk_events {where}""",
-        args,
-    ).fetchone()
-    if not (row and row[0] > 0):
-        return None
-    top = db._db_conn.execute(
-        f"""SELECT rtk_cmd, COUNT(*) AS cnt, SUM(saved_tokens) AS saved, AVG(savings_pct) AS avg_pct
-            FROM rtk_events {where}
-            GROUP BY rtk_cmd ORDER BY saved DESC LIMIT 8""",
-        args,
-    ).fetchall()
-    return {
-        "total_commands": row[0],
-        "total_input_tokens": row[1],
-        "total_output_tokens": row[2],
-        "total_saved_tokens": row[3],
-        "avg_savings_pct": round(row[4], 1),
-        "top_commands": [
-            {"cmd": r[0], "count": r[1], "saved": r[2], "avg_pct": round(r[3], 1)} for r in top
-        ],
-    }
-
-
-def _empty_cache_stats() -> dict:
-    """Zeroed cache-stats payload, used when no DB is available."""
-    zero = {"hits": 0, "total": 0, "hit_ratio": 0.0}
-    return {
-        "since_deploy": dict(zero),
-        "last_24h": dict(zero),
-        "entries": 0,
-        "time_saved_ms": 0,
-        "by_role": {},
-    }
-
-
-def _cache_stats() -> dict:
-    """Cache-hit summary from compressions.cache_hit, windowed to avoid dilution.
-
-    `since_deploy` counts only rows recorded after caching went live (the
-    `cache_since` meta marker), so the pre-feature backlog of misses cannot
-    permanently depress the ratio. `last_24h` is a rolling window that reflects
-    current behaviour.
-    """
-    if db._db_conn is None:
-        return _empty_cache_stats()
-
-    def _window(cutoff) -> dict:
-        if cutoff is None:
-            return {"hits": 0, "total": 0, "hit_ratio": 0.0}
-        row = db._db_conn.execute(
-            "SELECT COALESCE(SUM(cache_hit), 0), COUNT(*) FROM compressions WHERE ts >= ?",
-            (cutoff,),
-        ).fetchone()
-        hits, total = int(row[0]), int(row[1])
-        return {"hits": hits, "total": total, "hit_ratio": round(hits / total, 4) if total else 0.0}
-
-    since_row = db._db_conn.execute("SELECT value FROM meta WHERE key='cache_since'").fetchone()
-    since = since_row[0] if since_row else None
-    day_ago = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat(timespec="seconds")
-
-    entries = db._db_conn.execute("SELECT COUNT(*) FROM compression_cache").fetchone()[0]
-
-    by_role = {}
-    if since:
-        for role, hits, total, avg_miss_ms in db._db_conn.execute(
-            """SELECT role,
-                      COALESCE(SUM(cache_hit), 0),
-                      COUNT(*),
-                      AVG(CASE WHEN cache_hit = 0 THEN latency_ms END)
-               FROM compressions WHERE ts >= ? GROUP BY role""",
-            (since,),
-        ).fetchall():
-            h, t = int(hits), int(total)
-            by_role[role] = {
-                "hits": h,
-                "total": t,
-                "hit_ratio": round(h / t, 4) if t else 0.0,
-                "avg_miss_latency_ms": round(avg_miss_ms, 1) if avg_miss_ms else 0.0,
-                "time_saved_ms": round(h * (avg_miss_ms or 0.0)),
-            }
-
-    sd = _window(since)
-    total_time_saved_ms = sum(v["time_saved_ms"] for v in by_role.values())
-
-    return {
-        "since_deploy": sd,
-        "last_24h": _window(day_ago),
-        "entries": int(entries),
-        "time_saved_ms": total_time_saved_ms,
-        "by_role": by_role,
-    }
-
-
-def _tracked_stats() -> dict:
-    """Totals across tracked sessions (active/closed trackers joined to compressions)."""
-    row = db._db_conn.execute(
-        """
-        SELECT COUNT(DISTINCT t.slug),
-               COALESCE(SUM(c.original_tokens - c.compressed_tokens), 0)
-        FROM trackers t
-        JOIN compressions c ON c.session_id = t.session_id
-        WHERE t.status IN ('active', 'closed') AND t.session_id IS NOT NULL
-        """
-    ).fetchone()
-    return {"sessions": (row[0] if row else 0) or 0, "tokens_saved": (row[1] if row else 0) or 0}
-
-
-def _merge_rtk_into_sessions(sessions_out: dict) -> None:
-    """Decorate in-memory session entries with their rtk command counts/savings."""
-    for sid, cmds, saved in db._db_conn.execute(
-        """SELECT session_id, COUNT(*), COALESCE(SUM(saved_tokens), 0)
-           FROM rtk_events GROUP BY session_id"""
-    ).fetchall():
-        if sid in sessions_out:
-            sessions_out[sid]["rtk_commands"] = cmds
-            sessions_out[sid]["rtk_saved"] = saved
+# NOTE: The /stats helper functions (_compressor_info, _stats_scope,
+# _aggregate_stats, _recent_compression_rows, _rtk_stats, _empty_cache_stats,
+# _cache_stats, _tracked_stats, _merge_rtk_into_sessions) moved to stats.py
+# (Task 13, Step 6). get_stats() below calls them module-qualified
+# (`_stats.<name>(...)`) since none of them is monkeypatched by name in the
+# test suite -- only `_cache_stats` and `read_rtk_stats` are ever called
+# directly as `proxy.<name>` from tests, and those two stay plain re-exports
+# (see the `from stats import ...` line above).
 
 
 # ---------------------------------------------------------------------------
@@ -660,7 +380,7 @@ async def get_stats(session_id: str | None = None):
         recent = [c for c in recent if c.get("session_id", "") == session_id[:8]]
     avg_latency = sum(c["latency_ms"] for c in recent) / len(recent) if recent else 0.0
 
-    compressor_info = _compressor_info()
+    compressor_info = _stats._compressor_info()
 
     by_model: list = []
     today_stats: dict = {
@@ -702,13 +422,13 @@ async def get_stats(session_id: str | None = None):
         ).fetchall()
         by_model = [dict(r) for r in by_model_rows]
 
-        scope, scope_args = _stats_scope(active_model, session_id)
-        today_stats = _aggregate_stats(scope, scope_args, today=True, with_ratio=False)
-        alltime_stats = _aggregate_stats(scope, scope_args, today=False, with_ratio=True)
-        recent_rows = _recent_compression_rows(active_model, session_id)
-        rtk_stats = _rtk_stats(session_id)
-        tracked_stats = _tracked_stats()
-        _merge_rtk_into_sessions(sessions_out)
+        scope, scope_args = _stats._stats_scope(active_model, session_id)
+        today_stats = _stats._aggregate_stats(scope, scope_args, today=True, with_ratio=False)
+        alltime_stats = _stats._aggregate_stats(scope, scope_args, today=False, with_ratio=True)
+        recent_rows = _stats._recent_compression_rows(active_model, session_id)
+        rtk_stats = _stats._rtk_stats(session_id)
+        tracked_stats = _stats._tracked_stats()
+        _stats._merge_rtk_into_sessions(sessions_out)
 
     cache_stats = _cache_stats()
 
