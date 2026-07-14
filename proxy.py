@@ -4,7 +4,6 @@ os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 import copy
 import json
 import math
-import platform
 import sys as _sys
 import threading
 import time
@@ -68,9 +67,12 @@ from stats import _cache_stats, read_rtk_stats, stats  # re-export
 # listed for consistency and because tests call them directly as
 # `proxy.<name>`, so the static import must stay either way. `stats` (the
 # dict) is *not* listed here — it's exempt from F401 because `get_stats()`
-# still references it by the bare name `stats` below. This does not cover
-# the pre-existing `db.init_db`/`db.load_stats_from_db` re-exports (Task 13,
-# Step 1), which are left as-is out of scope for this step.
+# still references it by the bare name `stats` below. The pre-existing
+# `db.init_db`/`db.load_stats_from_db` re-exports (Task 13, Step 1) are also
+# listed below: neither is referenced by its bare name inside proxy.py, but
+# tests call them via `proxy.init_db(...)`/`proxy.load_stats_from_db(...)`
+# (see e.g. tests/test_sessions.py, tests/test_proxy.py), so the static
+# import must stay and needs the same `__all__` treatment as the others.
 __all__ = [
     "CHUNK_MAX_TOKENS",
     "_CHUNK_MAX_CHARS",
@@ -89,6 +91,8 @@ __all__ = [
     "read_rtk_stats",
     "record_compression",
     "record_request",
+    "init_db",
+    "load_stats_from_db",
 ]
 
 # ---------------------------------------------------------------------------
