@@ -10,6 +10,7 @@ suite) keeps working unchanged. Neither name is ever monkeypatched by the
 test suite, so `proxy.py`'s `from sessions import record_request,
 record_compression` re-export carries no staleness risk.
 """
+
 import math
 import os
 from datetime import datetime, timezone
@@ -93,8 +94,7 @@ def revert_naming(conn, session_id: str) -> None:
     if conn is None or not session_id:
         return
     conn.execute(
-        "UPDATE sessions SET name_source='provisional' "
-        "WHERE session_id=? AND name_source='naming'",
+        "UPDATE sessions SET name_source='provisional' WHERE session_id=? AND name_source='naming'",
         (session_id,),
     )
     conn.commit()
@@ -147,8 +147,13 @@ def list_sessions(conn, page: int = 1, page_size: int = 25) -> dict:
         (page_size, offset),
     ).fetchall()
     pages = math.ceil(total / page_size) if page_size else 0
-    return {"items": [dict(r) for r in rows], "total": total,
-            "page": page, "page_size": page_size, "pages": pages}
+    return {
+        "items": [dict(r) for r in rows],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "pages": pages,
+    }
 
 
 # ---------------------------------------------------------------------------

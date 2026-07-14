@@ -222,7 +222,17 @@ def test_messages_registers_session_provisionally(client, monkeypatch):
         "SELECT display_name, name_source FROM sessions WHERE session_id='abcdef1234567890'"
     ).fetchone()
     assert row is not None
-    assert row[0] == "session-abcdef12"  # provisional guaranteed synchronously
+    # claim_for_naming() flips name_source: 'provisional' -> 'naming' synchronously
+    # in the request path, before the fire-and-forget naming task (apply_auto_name)
+    # ever runs. That background task races the test's synchronous read on
+    # TestClient's separate event-loop thread, so exactly two outcomes are legit:
+    #   - task hasn't applied yet: still 'naming' / the provisional slug
+    #   - task already applied:    'auto' / the deterministic heuristic slug
+    assert row[1] in ("naming", "auto")
+    if row[1] == "naming":
+        assert row[0] == "session-abcdef12"
+    else:
+        assert row[0] == "hello-world-test"
 
 
 def test_session_compressions_keyed_by_session_id(client):
