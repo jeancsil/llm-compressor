@@ -513,6 +513,19 @@ async def langfuse_status():
     return JSONResponse(content=langfuse_tracer.tracer.status())
 
 
+@app.patch("/session/{session_id}/name")
+async def rename_session_endpoint(session_id: str, request: Request):
+    body = await request.json()
+    name = (body.get("name") or "").strip()
+    if not name:
+        return JSONResponse({"error": "name required"}, status_code=400)
+    import sessions
+    ok = sessions.rename_session(db._db_conn, session_id, name)
+    if not ok:
+        return JSONResponse({"error": "session not found"}, status_code=404)
+    return JSONResponse({"ok": True, "display_name": name, "name_source": "manual"})
+
+
 @app.get("/session/{session_id}/compressions")
 async def get_session_compressions(session_id: str, page: int = 1, page_size: int = 20):
     if db._db_conn is None:

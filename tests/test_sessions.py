@@ -261,3 +261,31 @@ def test_dashboard_404_on_missing_session(client):
     # Re-homes the 404 assertion the deleted tracker test used to cover.
     r = client.get("/dashboard/no-such-session-id")
     assert r.status_code == 404
+
+
+def test_rename_endpoint_sets_manual(client):
+    import proxy
+    proxy._db_conn.execute(
+        "INSERT INTO sessions (session_id, display_name, name_source, first_seen, last_seen)"
+        " VALUES ('sidR', 'session-sidR', 'provisional', 't', 't')"
+    )
+    proxy._db_conn.commit()
+    r = client.patch("/session/sidR/name", json={"name": "my custom name"})
+    assert r.status_code == 200
+    row = proxy._db_conn.execute(
+        "SELECT display_name, name_source FROM sessions WHERE session_id='sidR'"
+    ).fetchone()
+    assert row[0] == "my custom name" and row[1] == "manual"
+
+
+def test_rename_endpoint_rejects_empty(client):
+    import proxy
+    proxy._db_conn.execute(
+        "INSERT INTO sessions (session_id, first_seen, last_seen) VALUES ('sidE','t','t')"
+    )
+    proxy._db_conn.commit()
+    assert client.patch("/session/sidE/name", json={"name": "  "}).status_code == 400
+
+
+def test_rename_endpoint_404_missing(client):
+    assert client.patch("/session/nope/name", json={"name": "x"}).status_code == 404
