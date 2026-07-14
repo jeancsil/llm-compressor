@@ -520,6 +520,7 @@ async def rename_session_endpoint(session_id: str, request: Request):
     if not name:
         return JSONResponse({"error": "name required"}, status_code=400)
     import sessions
+
     ok = sessions.rename_session(db._db_conn, session_id, name)
     if not ok:
         return JSONResponse({"error": "session not found"}, status_code=404)

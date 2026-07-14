@@ -265,6 +265,7 @@ def test_dashboard_404_on_missing_session(client):
 
 def test_rename_endpoint_sets_manual(client):
     import proxy
+
     proxy._db_conn.execute(
         "INSERT INTO sessions (session_id, display_name, name_source, first_seen, last_seen)"
         " VALUES ('sidR', 'session-sidR', 'provisional', 't', 't')"
@@ -280,6 +281,7 @@ def test_rename_endpoint_sets_manual(client):
 
 def test_rename_endpoint_rejects_empty(client):
     import proxy
+
     proxy._db_conn.execute(
         "INSERT INTO sessions (session_id, first_seen, last_seen) VALUES ('sidE','t','t')"
     )
