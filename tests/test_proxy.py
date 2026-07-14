@@ -246,6 +246,10 @@ def test_compress_text_records_latency(tmp_path, monkeypatch):
         "compressor": make_mock_llmlingua(),
         "rate": 0.5,
     }
+    # compression._cache isn't reset by reimporting "proxy" alone (it now lives
+    # in a separate module); a prior test's client fixture may have left it
+    # pointing at an already-closed connection, so reset it explicitly.
+    proxy._cache = None
 
     proxy.compress_text("word " * 50, "sess-test")  # 250 chars → triggers compression
 

@@ -563,6 +563,7 @@ def test_compress_text_error_returns_original(monkeypatch):
     monkeypatch.setattr(proxy, "backend_user", None)
     monkeypatch.setattr(proxy, "backend_system", None)
     monkeypatch.setattr(proxy, "_db_conn", None)
+    monkeypatch.setattr(proxy, "_cache", None)
 
     long_text = "word " * 50
     assert proxy.compress_text(long_text, "sess") == long_text
@@ -655,6 +656,7 @@ def test_compress_system_field_string(monkeypatch):
     monkeypatch.setattr(proxy, "backend_user", None)
     monkeypatch.setattr(proxy, "backend_system", None)
     monkeypatch.setattr(proxy, "_db_conn", None)
+    monkeypatch.setattr(proxy, "_cache", None)
 
     result = proxy.compress_system_field("system instruction " * 20, "sess")
     assert isinstance(result, str)
@@ -672,6 +674,7 @@ def test_compress_system_field_list_with_text_and_non_text(monkeypatch):
     monkeypatch.setattr(proxy, "backend_user", None)
     monkeypatch.setattr(proxy, "backend_system", None)
     monkeypatch.setattr(proxy, "_db_conn", None)
+    monkeypatch.setattr(proxy, "_cache", None)
 
     system_list = [
         {"type": "text", "text": "instruction " * 20},
@@ -716,6 +719,7 @@ def test_compress_messages_list_content(monkeypatch):
     monkeypatch.setattr(proxy, "backend_user", None)
     monkeypatch.setattr(proxy, "backend_system", None)
     monkeypatch.setattr(proxy, "_db_conn", None)
+    monkeypatch.setattr(proxy, "_cache", None)
 
     msgs = [
         {
