@@ -1,7 +1,22 @@
-"""Session state: provisional + auto + manual names. All fns take an explicit conn."""
+"""Session state: provisional + auto + manual names. All fns take an explicit conn.
+
+`record_compression` / `record_request` are the two exceptions (Task 13, Step
+7): they read/write the process-wide `stats.stats` dict and `db._db_conn`
+directly rather than taking a `conn` parameter, mirroring their original shape
+in proxy.py so every existing call site (`compression.py`'s deferred
+`sessions.record_compression(...)`, `proxy.py`'s `proxy_messages` route, and
+`proxy.record_compression`/`proxy.record_request` direct calls in the test
+suite) keeps working unchanged. Neither name is ever monkeypatched by the
+test suite, so `proxy.py`'s `from sessions import record_request,
+record_compression` re-export carries no staleness risk.
+"""
 import math
 import os
 from datetime import datetime, timezone
+
+import backends
+import db
+import stats as _stats
 
 
 def _now() -> str:
@@ -134,3 +149,79 @@ def list_sessions(conn, page: int = 1, page_size: int = 25) -> dict:
     pages = math.ceil(total / page_size) if page_size else 0
     return {"items": [dict(r) for r in rows], "total": total,
             "page": page, "page_size": page_size, "pages": pages}
+
+
+# ---------------------------------------------------------------------------
+# Stats recorders (Task 13, Step 7 -- moved from proxy.py)
+# ---------------------------------------------------------------------------
+
+
+def record_compression(
+    session_id: str,
+    original: int,
+    compressed: int,
+    latency_ms: float = 0.0,
+    original_text: str | None = None,
+    compressed_text: str | None = None,
+    role: str = "user",
+    active_backend: dict | None = None,
+    cache_hit: int = 0,
+):
+    _stats.stats["total_original_tokens"] += original
+    _stats.stats["total_compressed_tokens"] += compressed
+
+    active = active_backend if active_backend is not None else backends.backend
+    model_name = active.get("type", "llmlingua2") if active else "llmlingua2"
+    ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+    if db._db_conn:
+        cur = db._db_conn.execute(
+            "INSERT INTO compressions (ts, session_id, model, original_tokens, compressed_tokens, latency_ms, role, cache_hit) VALUES (?,?,?,?,?,?,?,?)",
+            (ts, session_id, model_name, original, compressed, latency_ms, role, cache_hit),
+        )
+        if original_text is not None and compressed_text is not None:
+            db._db_conn.execute(
+                "INSERT INTO compression_texts (compression_id, original_text, compressed_text) VALUES (?,?,?)",
+                (cur.lastrowid, original_text, compressed_text),
+            )
+        db._db_conn.commit()
+
+    sess = _stats.stats["sessions"].setdefault(
+        session_id,
+        {
+            "first_seen": ts,
+            "requests": 0,
+            "original_tokens": 0,
+            "compressed_tokens": 0,
+        },
+    )
+    sess["original_tokens"] += original
+    sess["compressed_tokens"] += compressed
+    sess["last_seen"] = ts
+
+    _stats.stats["recent_compressions"].appendleft(
+        {
+            "ts": datetime.now(timezone.utc).strftime("%H:%M:%S"),
+            "session_id": session_id[:8],
+            "original": original,
+            "compressed": compressed,
+            "saved": original - compressed,
+            "latency_ms": round(latency_ms, 1),
+        }
+    )
+
+
+def record_request(session_id: str):
+    _stats.stats["total_requests"] += 1
+    sess = _stats.stats["sessions"].setdefault(
+        session_id,
+        {
+            "first_seen": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "requests": 0,
+            "original_tokens": 0,
+            "compressed_tokens": 0,
+            "name": None,
+        },
+    )
+    sess["requests"] += 1
+    sess["last_seen"] = datetime.now(timezone.utc).isoformat(timespec="seconds")

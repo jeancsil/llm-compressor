@@ -14,10 +14,10 @@ table in proxy.py for the mechanism that keeps `monkeypatch.setattr(proxy,
 pre-split test idiom) working without every test needing to be rewritten to
 target `compression.` directly.
 
-`compress_text` calls back into `proxy.record_compression` via a deferred,
-call-time `import proxy` (avoids a circular top-level import, since proxy.py
-imports this module) -- `record_compression` itself moves to sessions.py in
-Task 13 Step 7, at which point this becomes `import sessions`.
+`compress_text` calls back into `sessions.record_compression` via a deferred,
+call-time `import sessions` (avoids a circular top-level import, since
+sessions.py imports this module's sibling `stats`/`backends`/`db`, and
+proxy.py imports both compression.py and sessions.py at top level).
 """
 
 import hashlib
@@ -200,16 +200,21 @@ def compress_text(text: str, session_id: str, role: str = "user") -> str:
     rate = active.get("rate", 0.5)
     key = _cache_key(text, model_tag, rate)
 
-    # record_compression still lives in proxy.py until Task 13 Step 7 moves it
-    # to sessions.py; deferred import avoids a circular top-level import.
-    import proxy as _proxy
+    # Deferred import: sessions.py itself imports compression's sibling
+    # modules (db/backends/stats), and proxy.py imports both compression.py
+    # and sessions.py at top level, so this could likely be promoted to a
+    # top-level `import sessions` without an actual cycle -- kept deferred to
+    # match the established local-import convention for sessions.py used
+    # elsewhere in this codebase (proxy.py's proxy_messages/session_dashboard
+    # routes) and to avoid re-litigating import-order safety here.
+    import sessions
 
     if _cache is not None:
         hit = _cache.get(key)
         if hit is not None:
             compressed, orig, comp = hit
             print(f"[cache] hit {orig} → {comp} tokens [{session_id[:8]}] role={role}")
-            _proxy.record_compression(
+            sessions.record_compression(
                 session_id,
                 orig,
                 comp,
@@ -230,7 +235,7 @@ def compress_text(text: str, session_id: str, role: str = "user") -> str:
         return text
     latency_ms = (time.perf_counter() - t0) * 1000
     print(f"[{model_tag}] {orig} → {comp} tokens [{session_id[:8]}] role={role}")
-    _proxy.record_compression(
+    sessions.record_compression(
         session_id,
         orig,
         comp,

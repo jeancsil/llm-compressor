@@ -54,20 +54,23 @@ from compression import (  # re-export
 # plain static re-export.
 from db import init_db, load_stats_from_db  # re-export
 from langfuse_tracer import tracer as _lf_tracer
+from sessions import record_compression, record_request  # re-export
 from stats import _cache_stats, read_rtk_stats, stats  # re-export
 
-# Declares the compression.py/stats.py re-exports above as intentional public
-# surface so ruff's F401 (unused-import) doesn't flag them: nothing in
-# proxy.py itself calls `read_rtk_stats`/`_cache_stats` by bare name (real
-# caller of `_cache_stats` is `get_stats()`, which now reads it as
-# `_stats._cache_stats()`; `read_rtk_stats` has no internal caller at all,
-# only `proxy.read_rtk_stats(...)` in tests), but tests call them directly as
-# `proxy.<name>`, so the static import must stay. `stats` (the dict) is *not*
-# listed here — it's exempt from F401 because `record_compression()`,
-# `record_request()`, and `get_stats()` still reference it by the bare name
-# `stats` below. This does not cover the pre-existing
-# `db.init_db`/`db.load_stats_from_db` re-exports (Task 13, Step 1), which are
-# left as-is out of scope for this step.
+# Declares the compression.py/sessions.py/stats.py re-exports above as
+# intentional public surface so ruff's F401 (unused-import) doesn't flag
+# them: `read_rtk_stats` and `record_compression` have no internal caller in
+# proxy.py at all (only `proxy.read_rtk_stats(...)`/`proxy.record_compression(...)`
+# in tests), but `get_stats()` does still call `_cache_stats()` bare, and
+# `proxy_messages()` still calls `record_request()` bare (the re-exported
+# names, since neither is ever reassigned/monkeypatched) so those two are
+# genuinely used and wouldn't need `__all__` on their own -- all four are
+# listed for consistency and because tests call them directly as
+# `proxy.<name>`, so the static import must stay either way. `stats` (the
+# dict) is *not* listed here — it's exempt from F401 because `get_stats()`
+# still references it by the bare name `stats` below. This does not cover
+# the pre-existing `db.init_db`/`db.load_stats_from_db` re-exports (Task 13,
+# Step 1), which are left as-is out of scope for this step.
 __all__ = [
     "CHUNK_MAX_TOKENS",
     "_CHUNK_MAX_CHARS",
@@ -84,6 +87,8 @@ __all__ = [
     "compress_text",
     "_cache_stats",
     "read_rtk_stats",
+    "record_compression",
+    "record_request",
 ]
 
 # ---------------------------------------------------------------------------
@@ -233,80 +238,11 @@ app = FastAPI(lifespan=lifespan)
 # NOTE: the in-memory `stats` aggregate dict moved to stats.py (Task 13, Step
 # 6) — see the `from stats import ... stats` re-export above. It is mutated
 # in place here (never reassigned), so the plain re-export stays valid.
-# `record_compression`/`record_request` stay here until Task 13 Step 7, when
-# they move to sessions.py and start writing `stats.stats[...]` (qualified)
-# instead of the bare `stats[...]` below.
-
-
-def record_compression(
-    session_id: str,
-    original: int,
-    compressed: int,
-    latency_ms: float = 0.0,
-    original_text: str | None = None,
-    compressed_text: str | None = None,
-    role: str = "user",
-    active_backend: dict | None = None,
-    cache_hit: int = 0,
-):
-    stats["total_original_tokens"] += original
-    stats["total_compressed_tokens"] += compressed
-
-    active = active_backend if active_backend is not None else backends.backend
-    model_name = active.get("type", "llmlingua2") if active else "llmlingua2"
-    ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-    if db._db_conn:
-        cur = db._db_conn.execute(
-            "INSERT INTO compressions (ts, session_id, model, original_tokens, compressed_tokens, latency_ms, role, cache_hit) VALUES (?,?,?,?,?,?,?,?)",
-            (ts, session_id, model_name, original, compressed, latency_ms, role, cache_hit),
-        )
-        if original_text is not None and compressed_text is not None:
-            db._db_conn.execute(
-                "INSERT INTO compression_texts (compression_id, original_text, compressed_text) VALUES (?,?,?)",
-                (cur.lastrowid, original_text, compressed_text),
-            )
-        db._db_conn.commit()
-
-    sess = stats["sessions"].setdefault(
-        session_id,
-        {
-            "first_seen": ts,
-            "requests": 0,
-            "original_tokens": 0,
-            "compressed_tokens": 0,
-        },
-    )
-    sess["original_tokens"] += original
-    sess["compressed_tokens"] += compressed
-    sess["last_seen"] = ts
-
-    stats["recent_compressions"].appendleft(
-        {
-            "ts": datetime.now(timezone.utc).strftime("%H:%M:%S"),
-            "session_id": session_id[:8],
-            "original": original,
-            "compressed": compressed,
-            "saved": original - compressed,
-            "latency_ms": round(latency_ms, 1),
-        }
-    )
-
-
-def record_request(session_id: str):
-    stats["total_requests"] += 1
-    sess = stats["sessions"].setdefault(
-        session_id,
-        {
-            "first_seen": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "requests": 0,
-            "original_tokens": 0,
-            "compressed_tokens": 0,
-            "name": None,
-        },
-    )
-    sess["requests"] += 1
-    sess["last_seen"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+# `record_compression`/`record_request` moved to sessions.py (Task 13, Step
+# 7) — see the `from sessions import record_request, record_compression`
+# re-export below. Neither is monkeypatched by name in the test suite (tests
+# call them directly as `proxy.record_compression`/`proxy.record_request`),
+# so the plain re-export carries no staleness risk.
 
 
 # NOTE: rtk integration (_rtk_db_path, read_rtk_stats) moved to stats.py
