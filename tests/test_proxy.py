@@ -756,4 +756,5 @@ def test_play_list_returns_html(client: TestClient):
     r = client.get("/play/list")
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("text/html")
-    assert "Session History" in r.text
+    assert "Sessions" in r.text
+    assert "Session History" not in r.text
