@@ -13,7 +13,7 @@ TOKENS_CSS = """<style>
   --border: #22303f;
   --text: #e7edf5;
   --text-muted: #8b9bb0;
-  --accent-active: #e8a33d;
+  --accent-active: #58a6ff;
   --accent-savings: #4cbb6c;
   --accent-cache: #3fc9b0;
   --accent-warn: #e0625a;
@@ -26,7 +26,7 @@ TOKENS_CSS = """<style>
     --border: #d8dfe8;
     --text: #16202e;
     --text-muted: #5c6b80;
-    --accent-active: #b6791b;
+    --accent-active: #1f6feb;
     --accent-savings: #24955a;
     --accent-cache: #128f80;
     --accent-warn: #c1453c;
@@ -39,7 +39,7 @@ TOKENS_CSS = """<style>
   --border: #d8dfe8;
   --text: #16202e;
   --text-muted: #5c6b80;
-  --accent-active: #b6791b;
+  --accent-active: #1f6feb;
   --accent-savings: #24955a;
   --accent-cache: #128f80;
   --accent-warn: #c1453c;
@@ -51,7 +51,7 @@ TOKENS_CSS = """<style>
   --border: #22303f;
   --text: #e7edf5;
   --text-muted: #8b9bb0;
-  --accent-active: #e8a33d;
+  --accent-active: #58a6ff;
   --accent-savings: #4cbb6c;
   --accent-cache: #3fc9b0;
   --accent-warn: #e0625a;
