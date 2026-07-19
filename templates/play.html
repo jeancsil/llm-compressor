@@ -4,62 +4,63 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Playground — LLMLingua</title>
+<!--TOKENS-->
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: 'SF Mono', 'Fira Code', monospace; background: #0d1117; color: #c9d1d9;
-         display: flex; flex-direction: column; height: 100vh; padding: 20px 48px; gap: 12px; }
+  body { display: flex; flex-direction: column; height: 100vh; padding: 20px 48px; gap: 12px; }
 
   .header { display: flex; align-items: center; justify-content: space-between; padding-bottom: 12px;
-             border-bottom: 1px solid #21262d; flex-shrink: 0; }
+             border-bottom: 1px solid var(--border); flex-shrink: 0; }
   .header-left { display: flex; align-items: center; gap: 10px; }
-  .header-right { display: flex; align-items: center; gap: 16px; font-size: 11px; color: #8b949e; }
-  .title { color: #58a6ff; font-size: 14px; font-weight: 700; letter-spacing: .04em; }
-  .sep { color: #30363d; }
+  .header-right { display: flex; align-items: center; gap: 16px; font-size: 11px; color: var(--text-muted); }
+  .title { color: var(--accent-active); font-size: 14px; font-weight: 700; letter-spacing: .04em; }
+  .sep { color: var(--border); }
 
   .controls { display: flex; align-items: center; gap: 10px; flex: 1; }
-  .model-select { font-size: 12px; background: #161b22; color: #58a6ff; padding: 4px 10px;
-                   border-radius: 6px; border: 1px solid #30363d; cursor: pointer;
+  .model-select { font-size: 12px; background: var(--surface-raised); color: var(--accent-active); padding: 4px 10px;
+                   border-radius: 6px; border: 1px solid var(--border); cursor: pointer;
                    font-family: inherit; outline: none; }
-  .model-select:hover:not(:disabled) { border-color: #58a6ff; }
+  .model-select:hover:not(:disabled) { border-color: var(--accent-active); }
   .model-select:disabled { opacity: 0.5; cursor: wait; }
-  .model-loading { font-size: 10px; color: #d29922; display: none; }
+  .model-loading { font-size: 10px; color: var(--accent-active); display: none; }
 
-  .compress-btn { font-size: 12px; background: #0d1a35; color: #58a6ff; border: 1px solid #1e2f50;
+  .compress-btn { font-size: 12px; background: var(--surface-raised); color: var(--accent-active); border: 1px solid var(--border);
                    border-radius: 6px; padding: 5px 14px; cursor: pointer; font-family: inherit; }
-  .compress-btn:hover:not(:disabled) { border-color: #58a6ff; }
+  .compress-btn:hover:not(:disabled) { border-color: var(--accent-active); }
   .compress-btn:disabled { opacity: 0.5; cursor: wait; }
 
   .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; flex: 1; min-height: 0; }
   .panel { display: flex; flex-direction: column; gap: 6px; min-height: 0; }
-  .panel-label { font-size: 9px; color: #8b949e; text-transform: uppercase; letter-spacing: .1em;
+  .panel-label { font-size: 9px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .1em;
                   display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
-  textarea { flex: 1; width: 100%; background: #161b22; color: #c9d1d9; border: 1px solid #30363d;
-              border-radius: 8px; padding: 14px; font-family: inherit; font-size: 12px;
+  textarea { flex: 1; width: 100%; background: var(--surface); color: var(--text); border: 1px solid var(--border);
+              border-radius: 8px; padding: 14px; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px;
               resize: none; outline: none; line-height: 1.6; min-height: 0; }
-  textarea.compressed     { border-color: #1e3a2a; background: #0f1e14; color: #aed6ae; }
-  textarea.compressed.dim { border-color: #2a2a30; background: #13131a; color: #6a7a6a; }
-  textarea.unchanged      { color: #8b949e; }
-  .copy-btn { font-size: 10px; background: none; border: none; color: #8b949e;
+  textarea.compressed     { border-color: var(--accent-savings); background: color-mix(in srgb, var(--accent-savings) 12%, var(--surface)); color: var(--text); }
+  textarea.compressed.dim { border-color: var(--border); background: var(--surface); color: var(--text-muted); }
+  textarea.unchanged      { color: var(--text-muted); }
+  .copy-btn { font-size: 10px; background: none; border: none; color: var(--text-muted);
                cursor: pointer; font-family: inherit; padding: 0; }
-  .copy-btn:hover { color: #c9d1d9; }
+  .copy-btn:hover { color: var(--text); }
 
   .stats-bar { flex-shrink: 0; display: flex; align-items: center; gap: 20px; font-size: 11px;
-                background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+                background: var(--surface-raised); border: 1px solid var(--border); border-radius: 8px;
                 padding: 10px 16px; }
   .stats-bar.hidden { visibility: hidden; }
-  .stat-label { color: #8b949e; font-size: 10px; margin-right: 4px; }
-  .stat-nums  { color: #c9d1d9; }
+  .stat-label { color: var(--text-muted); font-size: 10px; margin-right: 4px; }
+  .stat-nums  { color: var(--text); }
   .stat-pct   { font-weight: 700; margin-left: 6px; }
-  .green { color: #3fb950; }
-  .dim   { color: #484f58; }
-  .stat-latency { color: #484f58; font-size: 10px; margin-left: auto; }
+  .green { color: var(--accent-savings); }
+  .dim   { color: var(--text-muted); }
+  .stat-latency { color: var(--text-muted); font-size: 10px; margin-left: auto; }
 
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
   .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%;
-          background: #d29922; animation: pulse 1s infinite; vertical-align: middle; margin-right: 4px; }
+          background: var(--accent-active); animation: pulse 1s infinite; vertical-align: middle; margin-right: 4px; }
 
   @media (max-width: 700px) { .panels { grid-template-columns: 1fr; } }
 </style>
+<!--THEME_SCRIPT-->
 </head>
 <body>
 
@@ -79,8 +80,9 @@
     </div>
   </div>
   <div class="header-right">
-    <a href="/dashboard" style="color:#8b949e;text-decoration:none;letter-spacing:.02em">← dashboard</a>
-    <a href="/play/list" style="color:#8b949e;text-decoration:none;letter-spacing:.02em">▶ history</a>
+    <a href="/dashboard" style="color:var(--text-muted);text-decoration:none;letter-spacing:.02em">← dashboard</a>
+    <a href="/play/list" style="color:var(--text-muted);text-decoration:none;letter-spacing:.02em">▶ history</a>
+    <button class="theme-toggle" onclick="toggleTheme()">◐ theme</button>
   </div>
 </div>
 
@@ -88,7 +90,7 @@
   <div class="panel">
     <div class="panel-label">
       <span>Input</span>
-      <span id="input_meta" style="color:#484f58;font-size:10px"></span>
+      <span id="input_meta" class="mono" style="color:var(--text-muted);font-size:10px"></span>
     </div>
     <textarea id="input_text" placeholder="Paste text to compress…" oninput="onInput()"></textarea>
   </div>
@@ -97,7 +99,7 @@
     <div class="panel-label">
       <span>Compressed</span>
       <div style="display:flex;align-items:center;gap:8px">
-        <span id="output_meta" style="color:#484f58;font-size:10px"></span>
+        <span id="output_meta" class="mono" style="color:var(--text-muted);font-size:10px"></span>
         <button class="copy-btn" id="copy_btn" onclick="copyOutput()" style="display:none">Copy</button>
       </div>
     </div>
@@ -108,15 +110,15 @@
 <div class="stats-bar hidden" id="stats_bar">
   <div>
     <span class="stat-label">Chars</span>
-    <span class="stat-nums" id="s_chars"></span>
-    <span class="stat-pct" id="s_chars_pct"></span>
+    <span class="stat-nums mono" id="s_chars"></span>
+    <span class="stat-pct mono" id="s_chars_pct"></span>
   </div>
   <div>
     <span class="stat-label">~Claude tokens</span>
-    <span class="stat-nums" id="s_toks"></span>
-    <span class="stat-pct" id="s_toks_pct"></span>
+    <span class="stat-nums mono" id="s_toks"></span>
+    <span class="stat-pct mono" id="s_toks_pct"></span>
   </div>
-  <span class="stat-latency" id="s_lat"></span>
+  <span class="stat-latency mono" id="s_lat"></span>
 </div>
 
 <script>
@@ -191,12 +193,12 @@ function renderStats(d) {
   document.getElementById('s_chars').textContent = fmt(d.original_chars) + ' → ' + fmt(d.compressed_chars);
   const cpEl = document.getElementById('s_chars_pct');
   cpEl.textContent = d.char_pct > 0 ? '-' + d.char_pct + '%' : '0%';
-  cpEl.className = 'stat-pct ' + (d.char_pct > 0 ? 'green' : 'dim');
+  cpEl.className = 'stat-pct mono ' + (d.char_pct > 0 ? 'green' : 'dim');
 
   document.getElementById('s_toks').textContent = fmt(d.original_tokens_est) + ' → ' + fmt(d.compressed_tokens_est);
   const tpEl = document.getElementById('s_toks_pct');
   tpEl.textContent = d.token_pct > 0 ? '-' + d.token_pct + '%' : '0%';
-  tpEl.className = 'stat-pct ' + (d.token_pct > 0 ? 'green' : 'dim');
+  tpEl.className = 'stat-pct mono ' + (d.token_pct > 0 ? 'green' : 'dim');
 
   document.getElementById('s_lat').textContent = d.latency_ms > 0 ? d.latency_ms + 'ms' : '';
 }
