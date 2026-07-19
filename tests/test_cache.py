@@ -175,3 +175,79 @@ def test_cache_stats_windows_exclude_pre_deploy_and_old_rows(tmp_path, monkeypat
     assert stats["since_deploy"] == {"hits": 3, "total": 4, "hit_ratio": round(3 / 4, 4)}
     assert stats["last_24h"] == {"hits": 2, "total": 3, "hit_ratio": round(2 / 3, 4)}
     conn.close()
+
+
+def test_cache_stats_session_id_scopes_windows_and_by_role(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    proxy = _import_proxy(monkeypatch)
+    conn = proxy.init_db(str(tmp_path / "m.db"))
+    monkeypatch.setattr(proxy, "_db_conn", conn)
+
+    now = datetime.now(timezone.utc)
+    conn.execute(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES ('cache_since', ?)",
+        ((now - timedelta(days=5)).isoformat(timespec="seconds"),),
+    )
+
+    def ins(session_id, ts, cache_hit, role="user"):
+        conn.execute(
+            "INSERT INTO compressions (ts, session_id, model, original_tokens, "
+            "compressed_tokens, latency_ms, role, cache_hit) VALUES (?,?,?,?,?,?,?,?)",
+            (ts.isoformat(timespec="seconds"), session_id, "kompress", 100, 50, 5, role, cache_hit),
+        )
+
+    recent = now - timedelta(hours=1)
+    # Session "a": 2 hits, 1 miss within last 24h.
+    ins("a", recent, 1)
+    ins("a", recent, 1)
+    ins("a", recent, 0)
+    # Session "b": 1 hit within last 24h -- must not leak into "a"'s scoped stats.
+    ins("b", recent, 1)
+    conn.commit()
+
+    import stats as stats_mod
+
+    scoped = stats_mod._cache_stats("a")
+    assert scoped["last_24h"] == {"hits": 2, "total": 3, "hit_ratio": round(2 / 3, 4)}
+    assert scoped["since_deploy"] == {"hits": 2, "total": 3, "hit_ratio": round(2 / 3, 4)}
+    assert set(scoped["by_role"]) == {"user"}
+    assert scoped["by_role"]["user"]["total"] == 3
+
+    unscoped = stats_mod._cache_stats()
+    assert unscoped["last_24h"] == {"hits": 3, "total": 4, "hit_ratio": round(3 / 4, 4)}
+
+    conn.close()
+
+
+def test_cache_stats_entries_stays_global_when_session_scoped(tmp_path, monkeypatch):
+    proxy = _import_proxy(monkeypatch)
+    conn = proxy.init_db(str(tmp_path / "m.db"))
+    monkeypatch.setattr(proxy, "_db_conn", conn)
+    conn.execute(
+        "INSERT INTO compression_cache (key, model, rate, compressed_text, "
+        "original_tokens, compressed_tokens, created_at, hit_count, last_hit) "
+        "VALUES ('k1','kompress',0.5,'x',10,5,'2026-01-01T00:00:00','1','2026-01-01T00:00:00')"
+    )
+    conn.commit()
+
+    import stats as stats_mod
+
+    scoped = stats_mod._cache_stats("some-session-with-no-rows")
+    assert scoped["entries"] == 1  # global cache size, unaffected by session_id
+    conn.close()
+
+
+def test_stats_endpoint_passes_session_id_to_cache_stats(client, monkeypatch):
+    import routes
+
+    captured = {}
+    real_cache_stats = routes._cache_stats
+
+    def spy(session_id=None):
+        captured["session_id"] = session_id
+        return real_cache_stats(session_id)
+
+    monkeypatch.setattr(routes, "_cache_stats", spy)
+    client.get("/stats?session_id=abc123")
+    assert captured["session_id"] == "abc123"

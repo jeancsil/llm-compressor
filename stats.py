@@ -284,23 +284,30 @@ def _empty_cache_stats() -> dict:
     }
 
 
-def _cache_stats() -> dict:
+def _cache_stats(session_id: str | None = None) -> dict:
     """Cache-hit summary from compressions.cache_hit, windowed to avoid dilution.
 
     `since_deploy` counts only rows recorded after caching went live (the
     `cache_since` meta marker), so the pre-feature backlog of misses cannot
     permanently depress the ratio. `last_24h` is a rolling window that reflects
-    current behaviour.
+    current behaviour. When `session_id` is given, the windows and `by_role`
+    breakdown are scoped to that session; `entries` (compression_cache size)
+    stays global always -- the dedup cache is content-addressed, not
+    session-addressed, so it has no session_id column to scope by.
     """
     if db._db_conn is None:
         return _empty_cache_stats()
+
+    sess_clause = " AND session_id = ?" if session_id else ""
+    sess_args = (session_id,) if session_id else ()
 
     def _window(cutoff) -> dict:
         if cutoff is None:
             return {"hits": 0, "total": 0, "hit_ratio": 0.0}
         row = db._db_conn.execute(
-            "SELECT COALESCE(SUM(cache_hit), 0), COUNT(*) FROM compressions WHERE ts >= ?",
-            (cutoff,),
+            f"SELECT COALESCE(SUM(cache_hit), 0), COUNT(*) FROM compressions "
+            f"WHERE ts >= ?{sess_clause}",
+            (cutoff, *sess_args),
         ).fetchone()
         hits, total = int(row[0]), int(row[1])
         return {"hits": hits, "total": total, "hit_ratio": round(hits / total, 4) if total else 0.0}
@@ -314,12 +321,12 @@ def _cache_stats() -> dict:
     by_role = {}
     if since:
         for role, hits, total, avg_miss_ms in db._db_conn.execute(
-            """SELECT role,
-                      COALESCE(SUM(cache_hit), 0),
-                      COUNT(*),
-                      AVG(CASE WHEN cache_hit = 0 THEN latency_ms END)
-               FROM compressions WHERE ts >= ? GROUP BY role""",
-            (since,),
+            f"""SELECT role,
+                        COALESCE(SUM(cache_hit), 0),
+                        COUNT(*),
+                        AVG(CASE WHEN cache_hit = 0 THEN latency_ms END)
+                 FROM compressions WHERE ts >= ?{sess_clause} GROUP BY role""",
+            (since, *sess_args),
         ).fetchall():
             h, t = int(hits), int(total)
             by_role[role] = {
@@ -340,6 +347,7 @@ def _cache_stats() -> dict:
         "time_saved_ms": total_time_saved_ms,
         "by_role": by_role,
     }
+
 
 
 def _tracked_stats() -> dict:

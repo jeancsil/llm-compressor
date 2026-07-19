@@ -134,7 +134,7 @@ async def get_stats(session_id: str | None = None):
         tracked_stats = _stats._tracked_stats()
         _stats._merge_rtk_into_sessions(sessions_out)
 
-    cache_stats = _cache_stats()
+    cache_stats = _cache_stats(session_id)
 
     return {
         "started_at": stats["started_at"],
