@@ -6,12 +6,17 @@ the /dashboard, /dashboard/{session_id}, /play, and /play/list endpoints).
 
 from pathlib import Path
 
+from tokens import TOKENS_CSS, THEME_TOGGLE_SCRIPT
+
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 
 
 def _load_template(name: str) -> str:
     """Read a UI template shipped alongside the app (see templates/)."""
-    return (TEMPLATES_DIR / name).read_text(encoding="utf-8")
+    html = (TEMPLATES_DIR / name).read_text(encoding="utf-8")
+    html = html.replace("<!--TOKENS-->", TOKENS_CSS)
+    html = html.replace("<!--THEME_SCRIPT-->", THEME_TOGGLE_SCRIPT)
+    return html
 
 
 DASHBOARD_HTML = _load_template("dashboard.html")
