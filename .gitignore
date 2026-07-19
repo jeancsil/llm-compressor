@@ -28,3 +28,6 @@ docs/superpowers/
 
 # Local scratch screenshots (dashboard/blog captures — not part of the repo)
 docs/screenshots/
+
+# Spike/scratch working files may contain live tokens — never commit
+scratchpad/

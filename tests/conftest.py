@@ -51,13 +51,18 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("COST_PER_MTOK", "3.0")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
 
+    # Ensure Langfuse reports disabled regardless of the developer's real env.
+    for _k in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "LANGFUSE_HOST"):
+        monkeypatch.delenv(_k, raising=False)
+
     # Stub heavy transitive dependencies so importing the proxy is safe.
     for dep in ("llmlingua", "torch", "transformers"):
         if dep not in sys.modules:
             monkeypatch.setitem(sys.modules, dep, MagicMock())
 
-    # Remove a cached module so reload picks up the patched deps.
-    monkeypatch.delitem(sys.modules, "proxy", raising=False)
+    # Remove cached modules so reload picks up the patched deps and fresh env.
+    for module_name in ("proxy", "langfuse_tracer"):
+        monkeypatch.delitem(sys.modules, module_name, raising=False)
 
     import proxy  # noqa: PLC0415
 

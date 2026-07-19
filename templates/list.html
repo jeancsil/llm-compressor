@@ -56,15 +56,10 @@
     <thead>
       <tr>
         <th>Name</th>
-        <th>Status</th>
-        <th>API Tokens Saved</th>
-        <th>API Requests</th>
-        <th>RTK Tokens Saved</th>
-        <th>RTK Commands</th>
-        <th>Total Saved</th>
+        <th>Tokens Saved</th>
+        <th>Requests</th>
         <th>Created</th>
-        <th>Linked</th>
-        <th>Closed</th>
+        <th>Last Seen</th>
       </tr>
     </thead>
     <tbody id="rows"></tbody>
@@ -99,44 +94,33 @@ function fmtDate(s) {
 function escapeHtml(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
-let _trackerPage = 1;
-const TRACKER_PAGE_SIZE = 25;
+let _sessionPage = 1;
+const SESSION_PAGE_SIZE = 25;
 async function load(page) {
-  page = page || _trackerPage;
-  _trackerPage = page;
-  const data = await fetch('/admin/tracker/all?page=' + page + '&page_size=' + TRACKER_PAGE_SIZE).then(r => r.json());
+  page = page || _sessionPage;
+  _sessionPage = page;
+  const data = await fetch('/admin/sessions?page=' + page + '&page_size=' + SESSION_PAGE_SIZE).then(r => r.json());
   const items = data.items || [];
-  const totalApiSaved = items.reduce((a, t) => a + (t.tokens_saved || 0), 0);
-  const totalRtkSaved = items.reduce((a, t) => a + (t.rtk_saved   || 0), 0);
-  const linked = items.filter(t => t.session_id);
+  const totalSaved = items.reduce((a, s) => a + (s.tokens_saved || 0), 0);
   document.getElementById('summary').innerHTML =
     '<span><b>' + data.total + '</b> sessions total</span>' +
-    '<span><b>' + linked.length + '</b> linked to Claude (this page)</span>' +
-    '<span><b>' + fmt(totalApiSaved) + '</b> API tokens saved (this page)</span>' +
-    '<span><b>' + fmt(totalRtkSaved) + '</b> RTK tokens saved (this page)</span>' +
-    '<span><b>' + fmt(totalApiSaved + totalRtkSaved) + '</b> total saved (this page)</span>';
+    '<span><b>' + items.length + '</b> sessions (this page)</span>' +
+    '<span><b>' + fmt(totalSaved) + '</b> tokens saved (this page)</span>';
   const tbody = document.getElementById('rows');
   if (!items.length) {
-    tbody.innerHTML = '<tr><td colspan="10" class="empty">No tracked sessions yet.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="5" class="empty">No sessions yet.</td></tr>';
     document.getElementById('pager').innerHTML = '';
     return;
   }
-  tbody.innerHTML = items.map(t => {
-    const slug  = encodeURIComponent(t.slug);
-    const badge = '<span class="badge badge-' + escapeHtml(t.status) + '">' + escapeHtml(t.status) + '</span>';
-    const total = (t.tokens_saved || 0) + (t.rtk_saved || 0);
+  tbody.innerHTML = items.map(s => {
+    const sessionId = encodeURIComponent(s.session_id);
+    const displayName = s.display_name || ('session-' + s.session_id.slice(0, 8));
     return '<tr>'
-      + '<td><a href="/dashboard/' + slug + '">' + escapeHtml(t.name) + '</a>'
-      + '<div class="slug-hint">' + escapeHtml(t.slug) + '</div></td>'
-      + '<td>' + badge + '</td>'
-      + '<td style="color:#3fb950;font-weight:600">' + fmt(t.tokens_saved) + '</td>'
-      + '<td style="color:#8b949e">' + (t.requests || '—') + '</td>'
-      + '<td style="color:#58a6ff;font-weight:600">' + fmt(t.rtk_saved) + '</td>'
-      + '<td style="color:#8b949e">' + (t.rtk_commands || '—') + '</td>'
-      + '<td style="color:#3fb950;font-weight:700">' + fmt(total) + '</td>'
-      + '<td style="color:#484f58">' + fmtDate(t.created_at) + '</td>'
-      + '<td style="color:#484f58">' + fmtDate(t.linked_at) + '</td>'
-      + '<td style="color:#484f58">' + fmtDate(t.closed_at) + '</td>'
+      + '<td><a href="/dashboard/' + sessionId + '">' + escapeHtml(displayName) + '</a></td>'
+      + '<td style="color:#3fb950;font-weight:600">' + fmt(s.tokens_saved) + '</td>'
+      + '<td style="color:#8b949e">' + (s.requests || '—') + '</td>'
+      + '<td style="color:#484f58">' + fmtDate(s.first_seen) + '</td>'
+      + '<td style="color:#484f58">' + fmtDate(s.last_seen) + '</td>'
       + '</tr>';
   }).join('');
   buildPager('pager', data.page, data.pages, data.total, load);

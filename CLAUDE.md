@@ -77,6 +77,10 @@ curl -s -X POST http://127.0.0.1:9099/admin/set-model \
   -H 'Content-Type: application/json' -d '{"model": "dual"}'
 ```
 
+## Environment flags
+
+- `LLM_COMPRESSOR_LLM_NAMING=1` — opt-in, default off. When set, auto-naming sessions calls Haiku (`claude-haiku-4-5-20251001`) using the caller's forwarded OAuth bearer token (never a standalone `ANTHROPIC_API_KEY`), reusing the user's subscription out-of-band. Off by default; falls back to a deterministic heuristic slug.
+
 ## Config
 
 ```bash

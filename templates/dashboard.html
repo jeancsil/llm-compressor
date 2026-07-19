@@ -91,13 +91,24 @@
 
   /* ── Metric cards ── */
   .cards { display: grid; gap: 10px; }
-  .cards.compression-cards { grid-template-columns: repeat(7, 1fr); }
-  .cards.cache-cards        { grid-template-columns: repeat(3, 1fr); max-width: calc((3/7) * 100% + (3/7 - 1) * 10px); }
+  .cards.compression-cards { grid-template-columns: repeat(6, 1fr); }
+  .cards.cache-cards        { grid-template-columns: repeat(2, 1fr); max-width: calc((2/6) * 100% + (2/6 - 1) * 10px); }
+  .cards.session-cards     { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
   .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 14px 16px; }
   .card-label { font-size: 10px; color: #8b949e; text-transform: uppercase; letter-spacing: .08em; margin-bottom: 6px; }
   .card-value { font-size: 22px; font-weight: 700; color: #f0f6fc; }
   .card-value.blue  { color: #58a6ff; }
   .card-value.green { color: #3fb950; }
+
+  /* ── Session cards ── */
+  .session-card { cursor: pointer; transition: transform .15s, box-shadow .15s; }
+  .session-card:hover { transform: translateY(-2px); box-shadow: 0 4px 16px rgba(0,0,0,.4); }
+  .session-card-name-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+  .session-card-name { font-size: 14px; font-weight: 700; color: #f0f6fc; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .session-card-pencil { background: none; border: none; color: #8b949e; cursor: pointer; opacity: 0; transition: opacity .15s; font-size: 12px; padding: 2px 4px; flex-shrink: 0; }
+  .session-card:hover .session-card-pencil { opacity: 1; }
+  .session-card-stats { display: flex; gap: 12px; margin-top: 8px; font-size: 11px; }
+  .session-card-meta { font-size: 9px; color: #484f58; margin-top: 6px; }
 
   /* ── Shared section ── */
   .section { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px 18px; margin-bottom: 14px; }
@@ -188,17 +199,9 @@
   .tracker-name { color: #f0f6fc; font-weight: 700; }
   .tracker-status-active { color: #3fb950; }
   .tracker-status-pending { color: #d29922; }
-  /* ── Track button / chip ── */
-  .track-btn { font-size: 11px; background: #161b22; color: #58a6ff; border: 1px solid #30363d; border-radius: 6px; padding: 4px 10px; cursor: pointer; font-family: inherit; }
-  .track-btn:hover { border-color: #58a6ff; }
-  .track-form { display: none; align-items: center; gap: 6px; }
+  /* ── Inline rename input (Step 3 reuses this for session-card rename) ── */
   .track-input { font-size: 11px; background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; border-radius: 5px; padding: 3px 8px; font-family: inherit; outline: none; width: 160px; }
   .track-input:focus { border-color: #58a6ff; }
-  .track-start { font-size: 11px; background: #0d1a35; color: #58a6ff; border: 1px solid #1e2f50; border-radius: 5px; padding: 3px 8px; cursor: pointer; font-family: inherit; }
-  .track-chip { display: none; align-items: center; gap: 6px; font-size: 11px; }
-  .track-chip a { color: #58a6ff; text-decoration: none; }
-  .track-chip a:hover { text-decoration: underline; }
-  .track-cancel { background: none; color: #8b949e; border: none; cursor: pointer; font-size: 14px; padding: 0 2px; line-height: 1; }
 
   /* ── Prompt history (session dashboards only) ── */
   .prompt-row { background: #161b22; border: 1px solid #30363d; border-radius: 6px; margin-bottom: 8px; overflow: hidden; }
@@ -226,7 +229,7 @@
 </head>
 <body>
 
-<!-- Session tracker banner (populated by JS when TRACKER is defined) -->
+<!-- Session banner (populated by JS when window.SESSION is defined) -->
 <div class="tracker-banner" id="tracker_banner">
   <a href="/dashboard">← global</a>
   <span class="tracker-sep">|</span>
@@ -245,14 +248,6 @@
       <option value="dual">dual (configurable)</option>
     </select>
     <span class="model-loading" id="model_loading">loading…</span>
-    <!-- Track new session controls -->
-    <div id="track_chips"></div>
-    <button class="track-btn" id="track_btn" onclick="openTrackForm()">Track new session</button>
-    <div class="track-form" id="track_form">
-      <input class="track-input" id="track_name" type="text" placeholder="session name" onkeydown="if(event.key==='Enter')submitTracker()" />
-      <button class="track-start" onclick="submitTracker()">Start</button>
-      <button class="track-cancel" onclick="closeTrackForm()">✕</button>
-    </div>
   </div>
   <div class="header-right">
     <a href="/play" style="color:#8b949e;font-size:11px;text-decoration:none;letter-spacing:.02em">▶ play</a>
@@ -320,6 +315,9 @@
       <div class="layer-stat"><span class="layer-stat-k">requests</span><span class="layer-stat-v" id="api_reqs_layers">—</span></div>
       <div class="layer-stat"><span class="layer-stat-k">tokens saved</span><span class="layer-stat-v" id="api_saved_layers">—</span></div>
       <div class="layer-stat"><span class="layer-stat-k">ratio</span><span class="layer-stat-v" id="api_ratio_layers">—</span></div>
+      <div class="layer-stat"><span class="layer-stat-k">est. $ saved</span><span class="layer-stat-v" id="api_cost_layers">—</span></div>
+      <div class="layer-stat"><span class="layer-stat-k">avg latency</span><span class="layer-stat-v" id="api_latency_layers">—</span></div>
+      <div class="layer-stat"><span class="layer-stat-k">cache hit rate</span><span class="layer-stat-v" id="api_hit_rate_layers">—</span></div>
     </div>
   </div>
 </div>
@@ -338,6 +336,9 @@
     <div class="term-line"><span class="term-key">compressed tokens</span><span class="term-val" id="t_compressed">—</span></div>
     <div class="term-line"><span class="term-key">tokens saved</span><span class="term-val green" id="t_saved">—</span></div>
     <div class="term-line"><span class="term-key">compression ratio</span><span class="term-val green" id="t_ratio">—</span></div>
+    <div class="term-line"><span class="term-key">est. $ saved</span><span class="term-val green" id="t_cost">—</span></div>
+    <div class="term-line"><span class="term-key">avg latency</span><span class="term-val" id="t_latency">—</span></div>
+    <div class="term-line"><span class="term-key">cache hit rate</span><span class="term-val green" id="t_hit_rate">—</span></div>
     <div class="term-line"><span class="term-key">active sessions</span><span class="term-val blue" id="t_sessions">—</span></div>
   </div>
 </div>
@@ -380,7 +381,6 @@
     <div class="card"><div class="card-label">Sessions</div><div class="card-value blue" id="card_sessions">—</div></div>
     <div class="card"><div class="card-label">Avg Ratio</div><div class="card-value green" id="card_ratio">—</div></div>
     <div class="card"><div class="card-label">Uptime</div><div class="card-value" id="card_uptime">—</div></div>
-    <div class="card"><div class="card-label">Avg Latency</div><div class="card-value" id="card_latency">—</div></div>
     <div class="card">
       <div class="card-label">Est. $ Saved</div>
       <div class="card-value green" id="card_cost">—</div>
@@ -393,11 +393,6 @@
 <div class="card-group">
   <div class="card-group-label s-cache">Cache</div>
   <div class="cards cache-cards">
-    <div class="card">
-      <div class="card-label">Hit Rate</div>
-      <div class="card-value green" id="card_cache_ratio">—</div>
-      <div style="font-size:9px;color:#484f58;margin-top:4px" id="card_cache_sub">since deploy</div>
-    </div>
     <div class="card">
       <div class="card-label">Inferences Skipped</div>
       <div class="card-value blue" id="card_cache_hits">—</div>
@@ -472,13 +467,10 @@
   <div id="sess_bars" class="sess-bars"><span class="spark-empty">No sessions yet</span></div>
 </div>
 
-<!-- Session detail table -->
+<!-- Named-session cards (driven by /admin/sessions) -->
 <div class="section">
-  <div class="section-title s-sessions">Session detail</div>
-  <table>
-    <thead><tr><th>Session</th><th>Name</th><th>API Req</th><th>API Saved</th><th>Ratio</th><th>RTK Cmds</th><th>RTK Saved</th><th>Last seen</th></tr></thead>
-    <tbody id="sessions_body"></tbody>
-  </table>
+  <div class="section-title s-sessions">Sessions</div>
+  <div id="session_cards" class="cards session-cards"><span class="spark-empty">No sessions yet</span></div>
   <div id="sessions_pager"></div>
 </div>
 
@@ -508,8 +500,8 @@
 <div class="footer">All data from metrics.db &amp; history.db in <code>~/Library/Application Support/rtk/</code> &nbsp;·&nbsp; updated every 2s</div>
 
 <script>
-const TRACKER = (typeof window !== 'undefined' && window.TRACKER) ? window.TRACKER : null;
-let FILTER_SESSION = TRACKER ? TRACKER.session_id : null;
+const SESSION = (typeof window !== 'undefined' && window.SESSION) ? window.SESSION : null;
+let FILTER_SESSION = SESSION ? SESSION.session_id : null;
 
 function buildPager(containerId, page, pages, total, onPage) {
   const el = document.getElementById(containerId);
@@ -562,121 +554,114 @@ function renderRecentPage(page) {
   buildPager('recent_pager', _recentPage, pages, _recentAll.length, renderRecentPage);
 }
 
-let _sessionsPage = 1;
-const SESSIONS_PAGE_SIZE = 10;
-let _sessionsAll = [];
-
-function renderSessionsPage(page) {
-  _sessionsPage = page;
-  const start = (page - 1) * SESSIONS_PAGE_SIZE;
-  const rows = _sessionsAll.slice(start, start + SESSIONS_PAGE_SIZE);
-  document.getElementById('sessions_body').innerHTML = rows.map(function([id, s]) {
-    const sPct = s.original_tokens > 0
-      ? Math.round((1 - s.compressed_tokens / s.original_tokens) * 100) : 0;
-    const ratio = s.compressed_tokens > 0
-      ? (s.original_tokens / s.compressed_tokens).toFixed(2) : null;
-    const nameCell = s.name
-      ? '<span class="name-tag">' + s.name + '</span>'
-      : '<span class="muted">—</span>';
-    const ratioCell = ratio
-      ? '<span class="ratio-badge" style="' + ratioBadgeStyle(parseFloat(ratio)) + '">' + ratio + '×</span>'
-      : '<span class="muted">—</span>';
-    const rtkCmds  = s.rtk_commands != null ? s.rtk_commands : '—';
-    const rtkSaved = s.rtk_saved    != null ? '<span class="green">' + fmt(s.rtk_saved) + '</span>' : '<span class="muted">—</span>';
-    return '<tr>'
-      + '<td><span class="badge">' + id.slice(0, 8) + '</span></td>'
-      + '<td>' + nameCell + '</td>'
-      + '<td>' + s.requests + '</td>'
-      + '<td class="green">' + fmt(s.saved_tokens) + ' <span class="muted">(' + sPct + '%)</span></td>'
-      + '<td>' + ratioCell + '</td>'
-      + '<td class="muted">' + rtkCmds + '</td>'
-      + '<td>' + rtkSaved + '</td>'
-      + '<td class="muted">' + (s.last_seen ? new Date(s.last_seen).toLocaleTimeString() : '—') + '</td>'
-      + '</tr>';
-  }).join('');
-  const pages = Math.ceil(_sessionsAll.length / SESSIONS_PAGE_SIZE);
-  buildPager('sessions_pager', _sessionsPage, pages, _sessionsAll.length, renderSessionsPage);
-}
-
-function updateBanner() {
-  if (!TRACKER) return;
-  const bannerEl = document.getElementById('tracker_banner');
-  bannerEl.style.display = 'flex';
-  document.getElementById('tracker_banner_name').textContent = TRACKER.name;
-  const statusEl = document.getElementById('tracker_banner_status');
-  if (TRACKER.status === 'active') {
-    const sid = (TRACKER.session_id || '').slice(0, 8);
-    statusEl.className = 'tracker-status-active';
-    statusEl.textContent = 'active · ' + sid;
-  } else {
-    statusEl.className = 'tracker-status-pending';
-    statusEl.innerHTML = '<span class="live-dot" style="background:#d29922;margin-right:4px"></span>waiting for next session…';
-  }
-}
-
-function openTrackForm() {
-  document.getElementById('track_btn').style.display = 'none';
-  document.getElementById('track_form').style.display = 'flex';
-  document.getElementById('track_name').focus();
-}
-
-function closeTrackForm() {
-  document.getElementById('track_form').style.display = 'none';
-  document.getElementById('track_btn').style.display = '';
-  document.getElementById('track_name').value = '';
-}
-
-async function submitTracker() {
-  const name = (document.getElementById('track_name').value || '').trim();
-  if (!name) return;
-  try {
-    const r = await fetch('/admin/tracker', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name }),
-    });
-    const data = await r.json();
-    if (r.ok) {
-      window.location.href = '/dashboard/' + data.slug;
-    } else {
-      alert(data.error || 'Error creating tracker');
-      closeTrackForm();
-    }
-  } catch(e) { console.error(e); }
-}
-
-async function cancelTracker(slug) {
-  try { await fetch('/admin/tracker/' + encodeURIComponent(slug), { method: 'DELETE' }); } catch(e) {}
-  try {
-    const trackers = await fetch('/admin/tracker').then(r => r.json());
-    renderTrackerChips(trackers);
-  } catch(e) {}
-}
-
 function escapeHtml(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-function renderTrackerChips(trackers) {
-  const container = document.getElementById('track_chips');
-  if (!trackers || trackers.length === 0) {
-    container.innerHTML = '';
+function updateBanner() {
+  if (!SESSION || !SESSION.session_id) return;
+  const bannerEl = document.getElementById('tracker_banner');
+  bannerEl.style.display = 'flex';
+  document.getElementById('tracker_banner_name').textContent =
+    SESSION.display_name || ('session-' + SESSION.session_id.slice(0, 8));
+  const statusEl = document.getElementById('tracker_banner_status');
+  statusEl.className = 'tracker-status-active';
+  statusEl.textContent = 'active · ' + SESSION.session_id.slice(0, 8);
+}
+
+// ── Step 2/3: named-session cards (driven by /admin/sessions) ──
+let _sessCardsPage = 1;
+const SESSIONS_PAGE_SIZE = 10;
+
+function sessionCardHtml(s) {
+  const name = escapeHtml(s.display_name || ('session-' + s.session_id.slice(0, 8)));
+  return '<div class="card session-card" data-session-id="' + escapeHtml(s.session_id) + '">'
+    + '<div class="session-card-name-row">'
+    +   '<span class="session-card-name" data-name>' + name + '</span>'
+    +   '<button class="session-card-pencil" data-rename type="button" title="Rename session">&#9998;</button>'
+    + '</div>'
+    + '<div class="session-card-stats">'
+    +   '<span class="green">' + fmt(s.tokens_saved) + ' saved</span>'
+    +   '<span class="muted">' + (s.requests || 0) + ' req' + (s.requests === 1 ? '' : 's') + '</span>'
+    + '</div>'
+    + '<div class="session-card-meta">' + (s.last_seen ? new Date(s.last_seen).toLocaleString() : '—') + '</div>'
+    + '</div>';
+}
+
+async function loadSessionCards(page) {
+  if (page !== undefined) _sessCardsPage = page;
+  const container = document.getElementById('session_cards');
+  try {
+    const data = await fetch('/admin/sessions?page=' + _sessCardsPage + '&page_size=' + SESSIONS_PAGE_SIZE).then(r => r.json());
+    const items = data.items || [];
+    if (items.length === 0) {
+      container.innerHTML = '<span class="spark-empty">No sessions yet</span>';
+      buildPager('sessions_pager', 1, 0, 0, loadSessionCards);
+      return;
+    }
+    container.innerHTML = items.map(sessionCardHtml).join('');
+    buildPager('sessions_pager', data.page, data.pages, data.total, loadSessionCards);
+  } catch(e) { console.error(e); }
+}
+
+function startSessionRename(card, sessionId) {
+  const nameEl = card.querySelector('[data-name]');
+  if (!nameEl) return;
+  const current = nameEl.textContent;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'track-input';
+  input.style.width = '100%';
+  input.value = current;
+
+  function restoreSpan(text) {
+    const span = document.createElement('span');
+    span.className = 'session-card-name';
+    span.setAttribute('data-name', '');
+    span.textContent = text;
+    input.replaceWith(span);
+  }
+
+  async function commit() {
+    const val = input.value.trim();
+    if (!val) { restoreSpan(current); return; }
+    try {
+      const r = await fetch('/session/' + encodeURIComponent(sessionId) + '/name', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: val }),
+      });
+      const data = await r.json();
+      restoreSpan(r.ok && data.display_name ? data.display_name : current);
+    } catch(e) {
+      console.error(e);
+      restoreSpan(current);
+    }
+  }
+
+  input.addEventListener('click', e => e.stopPropagation());
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); commit(); }
+    else if (e.key === 'Escape') { e.preventDefault(); restoreSpan(current); }
+  });
+
+  nameEl.replaceWith(input);
+  input.focus();
+  input.select();
+}
+
+document.getElementById('session_cards').addEventListener('click', function(e) {
+  const card = e.target.closest('.session-card');
+  if (!card) return;
+  if (e.target.closest('input.track-input')) return; // editing — don't navigate
+  const pencil = e.target.closest('[data-rename]');
+  if (pencil) {
+    e.stopPropagation();
+    startSessionRename(card, card.dataset.sessionId);
     return;
   }
-  container.innerHTML = trackers.map(t => {
-    const color = t.status === 'active' ? '#3fb950' : '#d29922';
-    const slug = encodeURIComponent(t.slug);
-    return '<div class="track-chip" style="display:flex" data-slug="' + escapeHtml(t.slug) + '">'
-      + '<a class="track-chip-link" href="/dashboard/' + slug + '">' + escapeHtml(t.name) + '</a>'
-      + '<span style="font-size:10px;color:' + color + '">· ' + escapeHtml(t.status) + '</span>'
-      + '<button class="track-cancel">✕</button>'
-      + '</div>';
-  }).join('');
-  container.onclick = function(e) {
-    const btn = e.target.closest('.track-cancel');
-    if (btn) cancelTracker(btn.closest('[data-slug]').dataset.slug);
-  };
-}
+  window.location.href = '/dashboard/' + encodeURIComponent(card.dataset.sessionId);
+});
 
 function fmt(n) {
   if (n == null) return '—';
@@ -753,21 +738,7 @@ async function applyDualModels() {
 
 async function refresh() {
   try {
-  // Session tracker: poll for link while pending
-  if (TRACKER && TRACKER.status === 'pending') {
-    try {
-      const list = await fetch('/admin/tracker').then(r => r.json());
-      const t = Array.isArray(list) ? list.find(x => x.slug === TRACKER.slug) : null;
-      if (t && t.status === 'active') {
-        TRACKER.status = 'active';
-        TRACKER.session_id = t.session_id;
-        FILTER_SESSION = t.session_id;
-      }
-    } catch(e) {}
-    updateBanner();
-    if (!FILTER_SESSION) return; // still pending — no stats to show yet
-  }
-  if (TRACKER) updateBanner();
+  if (SESSION) updateBanner();
 
   // Build stats URL (with session filter when on session dashboard)
   const statsUrl = '/stats' + (FILTER_SESSION ? '?session_id=' + encodeURIComponent(FILTER_SESSION) : '');
@@ -784,6 +755,14 @@ async function refresh() {
     // ── API layer numbers (DB-driven, filtered by active model) ──
     const at = d.alltime || {};
     const apiPctDisplay = at.avg_savings_pct != null ? Math.round(at.avg_savings_pct) : 0;
+
+    // ── Shared hero/card metrics (Step 1: promoted into the hero row) ──
+    const latencyStr = at.avg_latency_ms != null ? Math.round(at.avg_latency_ms) + ' ms' : '—';
+    const costStr = (d.cost_per_mtok != null && at.tokens_saved != null)
+      ? '$' + ((at.tokens_saved / 1000000) * d.cost_per_mtok).toFixed(2)
+      : '—';
+    const cacheSinceDeploy = d.cache ? d.cache.since_deploy : null;
+    const hitRateStr = cacheSinceDeploy ? Math.round((cacheSinceDeploy.hit_ratio || 0) * 100) + '%' : '—';
 
     // ── Hero: two-layer vs solo ──
     const hasRtk = d.rtk && d.rtk.total_commands > 0;
@@ -813,6 +792,9 @@ async function refresh() {
       document.getElementById('api_reqs_layers').textContent  = fmt(at.requests);
       document.getElementById('api_saved_layers').textContent = fmt(at.tokens_saved);
       document.getElementById('api_ratio_layers').textContent = at.avg_ratio ? at.avg_ratio + '×' : '—';
+      document.getElementById('api_cost_layers').textContent = costStr;
+      document.getElementById('api_latency_layers').textContent = latencyStr;
+      document.getElementById('api_hit_rate_layers').textContent = hitRateStr;
 
       // rtk command table
       const maxSaved = Math.max(...rtk.top_commands.map(c => c.saved), 1);
@@ -833,6 +815,9 @@ async function refresh() {
       document.getElementById('t_sessions').textContent  = at.sessions ?? Object.keys(d.sessions).length;
       document.getElementById('t_saved').textContent     = fmt(at.tokens_saved) + ' (' + apiPctDisplay + '%)';
       document.getElementById('t_ratio').textContent     = at.avg_ratio ? at.avg_ratio + '×' : '—';
+      document.getElementById('t_cost').textContent      = costStr;
+      document.getElementById('t_latency').textContent   = latencyStr;
+      document.getElementById('t_hit_rate').textContent  = hitRateStr;
     }
 
     // ── Model badge + select sync ──
@@ -880,7 +865,7 @@ async function refresh() {
     // ── Tracked sessions summary ──
     const tracked = d.tracked || {};
     const trackedEl = document.getElementById('tracked_summary');
-    if (trackedEl && !TRACKER && tracked.sessions > 0) {
+    if (trackedEl && !SESSION && tracked.sessions > 0) {
       trackedEl.textContent = fmt(tracked.tokens_saved) + ' tokens saved across ' + tracked.sessions + ' tracked session' + (tracked.sessions !== 1 ? 's' : '') + ' · ';
       const link = document.createElement('a');
       link.href = '/play/list';
@@ -922,26 +907,15 @@ async function refresh() {
     document.getElementById('card_sessions').textContent = at.sessions ?? Object.keys(d.sessions).length;
     document.getElementById('card_ratio').textContent    = at.avg_ratio ? at.avg_ratio + '×' : '—';
 
-    // ── Latency card ──
-    document.getElementById('card_latency').textContent =
-      at.avg_latency_ms != null ? Math.round(at.avg_latency_ms) + ' ms' : '—';
-
-    // ── Cost card ──
+    // ── Cost card (Avg Latency / Hit Rate cards were moved into the hero row, Step 1) ──
     if (d.cost_per_mtok != null && at.tokens_saved != null) {
-      const cost = (at.tokens_saved / 1000000) * d.cost_per_mtok;
-      document.getElementById('card_cost').textContent = '$' + cost.toFixed(2);
+      document.getElementById('card_cost').textContent = costStr;
       document.getElementById('card_cost_label').textContent = '@ $' + d.cost_per_mtok.toFixed(2) + ' / MTok';
     }
 
     // ── Cache cards ──
     if (d.cache) {
       const sd  = d.cache.since_deploy;
-      const h24 = d.cache.last_24h;
-
-      const pct = Math.round((sd.hit_ratio || 0) * 100);
-      document.getElementById('card_cache_ratio').textContent = pct + '%';
-      document.getElementById('card_cache_sub').textContent =
-        sd.hits + ' hits / ' + sd.total + ' · 24h: ' + Math.round((h24.hit_ratio || 0) * 100) + '%';
 
       document.getElementById('card_cache_hits').textContent = fmt(sd.hits);
       document.getElementById('card_cache_entries').textContent =
@@ -1027,17 +1001,9 @@ async function refresh() {
       }).join('');
     }
 
-    // ── Session table ──
-    _sessionsAll = sessions;   // sessions is already sorted by total saved (earlier in refresh())
-    renderSessionsPage(_sessionsPage);
-
-    // Update main dashboard tracker chips (only on global dashboard, not session dashboard)
-    if (!TRACKER) {
-      try {
-        const trackers = await fetch('/admin/tracker').then(r => r.json());
-        renderTrackerChips(trackers);
-      } catch(e) {}
-    }
+    // Named-session cards are fetched separately from /admin/sessions (see
+    // loadSessionCards) on their own cadence — they don't need to re-fetch on
+    // every 2s refresh() tick like the rest of this function does.
 
   } catch(e) { console.error(e); }
 }
@@ -1081,13 +1047,13 @@ function togglePrompt(id) {
 }
 
 async function refreshCompressions(page) {
-  if (!TRACKER || !TRACKER.session_id) return;
+  if (!SESSION || !SESSION.session_id) return;
   const section = document.getElementById('prompt_section');
   if (!section) return;
   section.style.display = 'block';
   if (page !== undefined) _comprPage = page;
   try {
-    const data = await fetch('/session/' + encodeURIComponent(TRACKER.slug) + '/compressions?page=' + _comprPage + '&page_size=' + COMPR_PAGE_SIZE).then(r => r.json());
+    const data = await fetch('/session/' + encodeURIComponent(SESSION.session_id) + '/compressions?page=' + _comprPage + '&page_size=' + COMPR_PAGE_SIZE).then(r => r.json());
     const listEl = document.getElementById('prompt_list');
     const countEl = document.getElementById('prompt_count');
     const rows = data.items || [];
@@ -1141,13 +1107,13 @@ async function refreshCompressions(page) {
 }
 
 async function refreshRtkCommands(page) {
-  if (!TRACKER || !TRACKER.session_id) return;
+  if (!SESSION || !SESSION.session_id) return;
   const section = document.getElementById('rtk_cmd_section');
   if (!section) return;
   section.style.display = 'block';
   if (page !== undefined) _rtkCmdPage = page;
   try {
-    const data = await fetch('/session/' + encodeURIComponent(TRACKER.slug) + '/rtk-commands?page=' + _rtkCmdPage + '&page_size=' + RTK_CMD_PAGE_SIZE).then(r => r.json());
+    const data = await fetch('/session/' + encodeURIComponent(SESSION.session_id) + '/rtk-commands?page=' + _rtkCmdPage + '&page_size=' + RTK_CMD_PAGE_SIZE).then(r => r.json());
     const tbody = document.getElementById('rtk_cmd_list');
     const countEl = document.getElementById('rtk_cmd_count');
     const rows = data.items || [];
@@ -1177,12 +1143,14 @@ async function refreshRtkCommands(page) {
 updateBanner();
 refresh();
 refreshTimeseries();
-if (TRACKER) refreshCompressions();
-if (TRACKER) refreshRtkCommands();
+loadSessionCards();
+if (SESSION) refreshCompressions();
+if (SESSION) refreshRtkCommands();
 setInterval(refresh, 2000);
 setInterval(refreshTimeseries, 10000);
-if (TRACKER) setInterval(refreshCompressions, 5000);
-if (TRACKER) setInterval(refreshRtkCommands, 5000);
+setInterval(loadSessionCards, 10000);
+if (SESSION) setInterval(refreshCompressions, 5000);
+if (SESSION) setInterval(refreshRtkCommands, 5000);
 </script>
 </body>
 </html>
