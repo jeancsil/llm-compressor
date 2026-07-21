@@ -69,7 +69,13 @@
   .dual-role-dot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
   .dual-role-name { font-size: 9px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .1em; }
   .dual-role-desc { font-size: 10px; color: var(--text-muted); line-height: 1.4; margin-top: -2px; }
-  .dual-role-select { width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 5px; padding: 7px 10px; font-family: inherit; font-size: 12px; cursor: pointer; outline: none; transition: border-color .15s; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%238b949e' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; padding-right: 28px; }
+  /* Dropdown arrow color mirrors --text-muted. SVG data URIs can't resolve
+     var(--*), so the fill hex is duplicated across theme rules using tokens.py's
+     own literal --text-muted values (dark #8b9bb0, light #5c6b80). */
+  .dual-role-select { width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 5px; padding: 7px 10px; font-family: inherit; font-size: 12px; cursor: pointer; outline: none; transition: border-color .15s; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%238b9bb0' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; padding-right: 28px; }
+  @media (prefers-color-scheme: light) { .dual-role-select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%235c6b80' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E"); } }
+  :root[data-theme="light"] .dual-role-select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%235c6b80' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E"); }
+  :root[data-theme="dark"] .dual-role-select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%238b9bb0' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E"); }
   .dual-role-select:hover:not(:disabled) { border-color: var(--accent-active); }
   .dual-role-select:focus { border-color: var(--accent-active); }
   .dual-role-select:disabled { opacity: .45; cursor: wait; }
@@ -196,25 +202,29 @@
   }
 
   /* ── Hero band: split-flap headline readout + session chip ── */
-  .hero { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; }
-  .hero-flaps { display: flex; gap: 28px; flex-wrap: wrap; }
-  .flap-row { display: flex; gap: 4px; }
+  .hero { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; flex-wrap: wrap; margin-bottom: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 24px 26px; }
+  .hero-flaps { display: flex; gap: 44px; flex-wrap: wrap; }
+  .flap-row { display: flex; gap: 5px; }
   .flap {
+    position: relative;
     background: var(--surface-raised);
     border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 8px 6px;
+    border-radius: 5px;
+    padding: 10px 9px;
     font-family: ui-monospace, "SF Mono", Menlo, monospace;
     font-variant-numeric: tabular-nums;
-    font-size: 2rem;
-    font-weight: 600;
+    font-size: 2.7rem;
+    font-weight: 700;
+    line-height: 1;
     color: var(--text);
     min-width: 1ch;
     text-align: center;
-    box-shadow: inset 0 -2px 0 var(--border);
+    box-shadow: inset 0 -2px 0 rgba(0,0,0,0.25);
   }
-  .flap-group { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
-  .flap-label { color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }
+  /* departure-board seam across the middle of each tile */
+  .flap::after { content: ''; position: absolute; left: 0; right: 0; top: 50%; height: 1px; background: var(--bg); opacity: 0.55; transform: translateY(-0.5px); }
+  .flap-group { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+  .flap-label { color: var(--text-muted); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; }
   .session-chip {
     display: inline-flex;
     align-items: center;
@@ -275,6 +285,7 @@
     <span class="model-loading" id="model_loading">loading…</span>
   </div>
   <div class="header-right">
+    <a href="/dashboard" id="back_to_overview" style="display:none;color:var(--text-muted);font-size:11px;text-decoration:none;letter-spacing:.02em">← dashboard</a>
     <a href="/play" style="color:var(--text-muted);font-size:11px;text-decoration:none;letter-spacing:.02em">▶ play</a>
     <a href="/play/list" style="color:var(--text-muted);font-size:11px;text-decoration:none;letter-spacing:.02em">▶ history</a>
     <span id="uptime_display">—</span>
@@ -308,7 +319,7 @@
     <div class="dual-panel-grid">
       <div class="dual-role-card">
         <div class="dual-role-hdr">
-          <span class="dual-role-dot" style="background:#58a6ff"></span>
+          <span class="dual-role-dot" style="background:var(--accent-active)"></span>
           <span class="dual-role-name">System prompts</span>
         </div>
         <div class="dual-role-desc">CLAUDE.md · tool definitions · large context blocks</div>
@@ -321,7 +332,7 @@
       </div>
       <div class="dual-role-card">
         <div class="dual-role-hdr">
-          <span class="dual-role-dot" style="background:#3fb950"></span>
+          <span class="dual-role-dot" style="background:var(--accent-savings)"></span>
           <span class="dual-role-name">User messages</span>
         </div>
         <div class="dual-role-desc">prompts · tool outputs · conversational turns</div>
@@ -386,12 +397,12 @@
 
 <!-- rtk hint (shown when no rtk_events recorded yet) -->
 <div class="rtk-hint" id="rtk_hint">
-  <span style="color:#484f58">&#x2B21;</span>
+  <span style="color:var(--text-muted)">&#x2B21;</span>
   <span>Shell-layer compression not yet logging. Add the PostToolUse hook for Bash in Claude Code settings to capture rtk savings per session.</span>
 </div>
 
 <!-- Tracked sessions summary (hidden until data arrives) -->
-<div id="tracked_summary" style="display:none;font-size:11px;color:#8b949e;margin-bottom:10px;text-align:center"></div>
+<div id="tracked_summary" style="display:none;font-size:11px;color:var(--text-muted);margin-bottom:10px;text-align:center"></div>
 
 <!-- Row 1: Today tiles -->
 <div class="tiles">
@@ -425,7 +436,7 @@
     <div class="card">
       <div class="card-label">Est. $ Saved</div>
       <div class="card-value green" id="card_cost">—</div>
-      <div style="font-size:9px;color:#484f58;margin-top:4px" id="card_cost_label">@ $3.00 / MTok</div>
+      <div style="font-size:9px;color:var(--text-muted);margin-top:4px" id="card_cost_label">@ $3.00 / MTok</div>
     </div>
   </div>
 </div>
@@ -437,12 +448,12 @@
     <div class="card">
       <div class="card-label">Inferences Skipped</div>
       <div class="card-value blue" id="card_cache_hits">—</div>
-      <div style="font-size:9px;color:#484f58;margin-top:4px" id="card_cache_entries">— entries cached</div>
+      <div style="font-size:9px;color:var(--text-muted);margin-top:4px" id="card_cache_entries">— entries cached</div>
     </div>
     <div class="card">
       <div class="card-label">Inference Time Saved</div>
       <div class="card-value" id="card_cache_time">—</div>
-      <div style="font-size:9px;color:#484f58;margin-top:4px">model compute avoided</div>
+      <div style="font-size:9px;color:var(--text-muted);margin-top:4px">model compute avoided</div>
     </div>
   </div>
 </div>
@@ -476,7 +487,7 @@
 
 <!-- 48h timeseries -->
 <div class="section">
-  <div class="section-title s-activity">Compression rate — last 48h &nbsp;·&nbsp; <span style="color:#484f58;font-weight:normal">height = requests &nbsp;·&nbsp; color = avg savings %</span></div>
+  <div class="section-title s-activity">Compression rate — last 48h &nbsp;·&nbsp; <span style="color:var(--text-muted);font-weight:normal">height = requests &nbsp;·&nbsp; color = avg savings %</span></div>
   <div id="ts_chart" class="ts-chart"><span class="spark-empty">No data</span></div>
   <div id="ts_labels" class="ts-labels"></div>
 </div>
@@ -493,18 +504,18 @@
 
 <!-- Compressions sparkline -->
 <div class="section">
-  <div class="section-title s-activity">Recent compressions &nbsp;·&nbsp; <span style="color:#484f58;font-weight:normal">height = original size &nbsp;·&nbsp; color = savings %</span></div>
+  <div class="section-title s-activity">Recent compressions &nbsp;·&nbsp; <span style="color:var(--text-muted);font-weight:normal">height = original size &nbsp;·&nbsp; color = savings %</span></div>
   <div id="sparkline" class="sparkline"><span class="spark-empty">No compressions yet</span></div>
   <div class="spark-legend">
-    <span><span class="leg-dot" style="background:#3fb950"></span>&#x2265;40% saved</span>
-    <span><span class="leg-dot" style="background:#d29922"></span>20&#x2013;39% saved</span>
-    <span><span class="leg-dot" style="background:#484f58"></span>&lt;20% saved</span>
+    <span><span class="leg-dot" style="background:var(--accent-savings)"></span>&#x2265;40% saved</span>
+    <span><span class="leg-dot" style="background:var(--accent-warn)"></span>20&#x2013;39% saved</span>
+    <span><span class="leg-dot" style="background:var(--text-muted)"></span>&lt;20% saved</span>
   </div>
 </div>
 
 <!-- Session efficiency bars -->
 <div class="section">
-  <div class="section-title s-sessions">Sessions by tokens saved &nbsp;·&nbsp; <span style="color:#3fb950">■</span> API &nbsp;<span style="color:#58a6ff">■</span> Shell (rtk)</div>
+  <div class="section-title s-sessions">Sessions by tokens saved &nbsp;·&nbsp; <span style="color:var(--accent-savings)">■</span> API &nbsp;<span style="color:var(--accent-active)">■</span> Shell (rtk)</div>
   <div id="sess_bars" class="sess-bars"><span class="spark-empty">No sessions yet</span></div>
 </div>
 
@@ -519,7 +530,7 @@
 <div class="section" id="prompt_section" style="display:none">
   <div class="section-title s-compression">
     Prompt compression history
-    <span id="prompt_count" style="color:#484f58;font-size:10px;text-transform:none;letter-spacing:0"></span>
+    <span id="prompt_count" style="color:var(--text-muted);font-size:10px;text-transform:none;letter-spacing:0"></span>
   </div>
   <div id="prompt_list"><span class="spark-empty">No compressions yet</span></div>
   <div id="prompt_pager"></div>
@@ -529,7 +540,7 @@
 <div class="section" id="rtk_cmd_section" style="display:none">
   <div class="section-title s-rtk">
     Shell command history
-    <span id="rtk_cmd_count" style="color:#484f58;font-size:10px;text-transform:none;letter-spacing:0"></span>
+    <span id="rtk_cmd_count" style="color:var(--text-muted);font-size:10px;text-transform:none;letter-spacing:0"></span>
   </div>
   <table>
     <thead><tr><th>Time</th><th>Command</th><th>Tokens in</th><th>Saved</th><th>%</th></tr></thead>
@@ -580,8 +591,8 @@ function renderRecentPage(page) {
   }
   document.getElementById('recent_body').innerHTML = rows.map(function(row) {
     var roleBadge = row.role === 'system'
-      ? '<span style="font-size:10px;border-radius:3px;padding:1px 5px;background:#0d1a35;color:#58a6ff;border:1px solid #1e2f50">system</span>'
-      : '<span style="font-size:10px;border-radius:3px;padding:1px 5px;background:#0f1e14;color:#aed6ae;border:1px solid #1e3a2a">user</span>';
+      ? '<span style="font-size:10px;border-radius:3px;padding:1px 5px;background:var(--surface-raised);color:var(--accent-active);border:1px solid var(--border)">system</span>'
+      : '<span style="font-size:10px;border-radius:3px;padding:1px 5px;background:var(--surface-raised);color:var(--accent-savings);border:1px solid var(--accent-savings)">user</span>';
     return '<tr>'
       + '<td class="muted">' + row.ts.slice(11, 16) + '</td>'
       + '<td><span class="model-badge">' + row.model + '</span></td>'
@@ -606,12 +617,15 @@ function escapeHtml(s) {
 function updateBanner() {
   const chip = document.getElementById('session_chip');
   const label = document.getElementById('session_chip_label');
+  const back = document.getElementById('back_to_overview');
   if (!chip || !label) return;
   if (SESSION && SESSION.session_id) {
     label.textContent = SESSION.display_name || SESSION.session_id.slice(0, 8);
     chip.style.display = 'inline-flex';
+    if (back) back.style.display = 'inline';
   } else {
     chip.style.display = 'none';
+    if (back) back.style.display = 'none';
   }
 }
 
@@ -740,14 +754,14 @@ function fmtUptime(secs) {
   return Math.floor(secs / 3600) + 'h ' + Math.floor((secs % 3600) / 60) + 'm';
 }
 function barColor(pct) {
-  if (pct >= 40) return '#3fb950';
-  if (pct >= 20) return '#d29922';
-  return '#484f58';
+  if (pct >= 40) return 'var(--accent-savings)';
+  if (pct >= 20) return 'var(--accent-warn)';
+  return 'var(--text-muted)';
 }
 function ratioBadgeStyle(ratio) {
-  if (ratio >= 2.0) return 'background:#0d2b1a;color:#3fb950';
-  if (ratio >= 1.5) return 'background:#2b2200;color:#d29922';
-  return 'background:#1c2128;color:#8b949e';
+  if (ratio >= 2.0) return 'background:var(--surface-raised);color:var(--accent-savings)';
+  if (ratio >= 1.5) return 'background:var(--surface-raised);color:var(--accent-warn)';
+  return 'background:var(--surface-raised);color:var(--text-muted)';
 }
 
 let _prevLoading = false;
@@ -936,7 +950,7 @@ async function refresh() {
       const link = document.createElement('a');
       link.href = '/play/list';
       link.textContent = 'view history';
-      link.style.cssText = 'color:#58a6ff;font-size:11px';
+      link.style.cssText = 'color:var(--accent-active);font-size:11px';
       trackedEl.appendChild(link);
       trackedEl.style.display = '';
     } else if (trackedEl) {
@@ -955,7 +969,7 @@ async function refresh() {
       const maxReq = Math.max(...d.by_model.map(m => m.requests), 1);
       document.getElementById('model_body').innerHTML = d.by_model.map(function(m) {
         const isActive = d.compressor && m.model === d.compressor.model;
-        const bg = isActive ? 'background:#1c2128;' : '';
+        const bg = isActive ? 'background:var(--surface-raised);' : '';
         const w = Math.round((m.requests / maxReq) * 100);
         return '<tr style="' + bg + '">'
           + '<td><span class="model-badge">' + m.model + '</span></td>'
@@ -1000,8 +1014,8 @@ async function refresh() {
         document.getElementById('cache_section').style.display = 'block';
         document.getElementById('cache_role_body').innerHTML = roles.map(([role, r]) => {
           const badge = role === 'system'
-            ? '<span style="font-size:10px;border-radius:3px;padding:1px 5px;background:#0d1a35;color:#58a6ff;border:1px solid #1e2f50">system</span>'
-            : '<span style="font-size:10px;border-radius:3px;padding:1px 5px;background:#0f1e14;color:#aed6ae;border:1px solid #1e3a2a">user</span>';
+            ? '<span style="font-size:10px;border-radius:3px;padding:1px 5px;background:var(--surface-raised);color:var(--accent-active);border:1px solid var(--border)">system</span>'
+            : '<span style="font-size:10px;border-radius:3px;padding:1px 5px;background:var(--surface-raised);color:var(--accent-savings);border:1px solid var(--accent-savings)">user</span>';
           const rPct = Math.round((r.hit_ratio || 0) * 100);
           const rMs  = r.time_saved_ms || 0;
           const rFmt = rMs >= 1000 ? (rMs / 1000).toFixed(1) + 's' : rMs + 'ms';
@@ -1059,10 +1073,10 @@ async function refresh() {
           + '<div class="sess-bar-label" title="' + id + '">' + label + '</div>'
           + '<div class="sess-bar-wrap">'
           +   '<div class="sess-bar-fill" style="width:' + wApi + '%;background:' + barColor(sPct) + '"></div>'
-          +   (rtkSaved ? '<div class="sess-bar-fill" style="width:' + wRtk + '%;background:#58a6ff;opacity:0.7"></div>' : '')
+          +   (rtkSaved ? '<div class="sess-bar-fill" style="width:' + wRtk + '%;background:var(--accent-active);opacity:0.7"></div>' : '')
           + '</div>'
           + '<div class="sess-bar-pct">' + sPct + '%</div>'
-          + '<div class="sess-bar-saved">' + fmt(total) + (rtkSaved ? ' <span style="color:#58a6ff;font-size:9px">+rtk</span>' : '') + '</div>'
+          + '<div class="sess-bar-saved">' + fmt(total) + (rtkSaved ? ' <span style="color:var(--accent-active);font-size:9px">+rtk</span>' : '') + '</div>'
           + '</div>';
       }).join('');
     }
@@ -1151,9 +1165,9 @@ async function refreshCompressions(page) {
         + (hasText
           ? '<div class="prompt-body" id="' + id + '_body">'
             + '<div class="prompt-panels">'
-            + '<div><div class="prompt-panel-label"><span>Original</span><span style="color:#484f58">' + fmt(origLen) + ' chars</span></div>'
+            + '<div><div class="prompt-panel-label"><span>Original</span><span style="color:var(--text-muted)">' + fmt(origLen) + ' chars</span></div>'
             + '<pre class="prompt-text">' + escapeHtml(r.original_text) + '</pre></div>'
-            + '<div><div class="prompt-panel-label"><span>Compressed</span><span style="color:#3fb950">' + fmt(compLen) + ' chars</span></div>'
+            + '<div><div class="prompt-panel-label"><span>Compressed</span><span style="color:var(--accent-savings)">' + fmt(compLen) + ' chars</span></div>'
             + '<pre class="prompt-text compressed">' + escapeHtml(r.compressed_text || '') + '</pre></div>'
             + '</div></div>'
           : '')
@@ -1193,12 +1207,12 @@ async function refreshRtkCommands(page) {
     tbody.innerHTML = rows.map(r => {
       const pct = r.savings_pct != null ? r.savings_pct : 0;
       const ts  = r.ts ? r.ts.slice(11, 16) : '';
-      const color = pct >= 40 ? '#3fb950' : pct >= 20 ? '#d29922' : '#8b949e';
+      const color = pct >= 40 ? 'var(--accent-savings)' : pct >= 20 ? 'var(--accent-warn)' : 'var(--text-muted)';
       return '<tr>'
         + '<td class="muted">' + ts + '</td>'
-        + '<td style="font-family:monospace;font-size:11px;color:#c9d1d9;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + escapeHtml(r.rtk_cmd) + '">' + escapeHtml(r.rtk_cmd) + '</td>'
+        + '<td style="font-family:monospace;font-size:11px;color:var(--text);max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + escapeHtml(r.rtk_cmd) + '">' + escapeHtml(r.rtk_cmd) + '</td>'
         + '<td class="muted">' + fmt(r.input_tokens) + '</td>'
-        + '<td style="color:#3fb950">' + fmt(r.saved_tokens) + '</td>'
+        + '<td style="color:var(--accent-savings)">' + fmt(r.saved_tokens) + '</td>'
         + '<td style="color:' + color + '">' + pct + '%</td>'
         + '</tr>';
     }).join('');
