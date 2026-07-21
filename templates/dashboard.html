@@ -866,7 +866,7 @@ async function refreshCompressions(page) {
         + '<span class="prompt-ts">' + ts + '</span>'
         + '<span>' + fmt(r.original_tokens) + ' → ' + fmt(r.compressed_tokens) + ' tok</span>'
         + '<span class="prompt-savings">-' + pct + '%</span>'
-        + '<span class="model-pill">' + (r.model || '—') + '</span>'
+        + '<span class="model-pill">' + escapeHtml(r.model || '—') + '</span>'
         + (r.latency_ms ? '<span class="prompt-latency">' + Math.round(r.latency_ms) + 'ms</span>' : '')
         + (hasText ? '' : '<span class="prompt-no-text">text not stored</span>')
         + '</div>'
