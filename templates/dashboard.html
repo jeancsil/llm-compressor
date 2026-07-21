@@ -454,7 +454,7 @@
   </section>
 
   <!-- SESSIONS -->
-  <section class="sessions-section" aria-label="All sessions overview">
+  <section class="sessions-section" id="sessions_section" aria-label="All sessions overview">
     <div class="sessions-head">
       <h2>Sessions</h2>
       <p>Every tracked session. Each card's share bar shows its contribution to the tokens saved on this page — open one for its own isolated timeline.</p>
@@ -934,11 +934,17 @@ setInterval(() => {
 
 refresh();
 refreshTimeseries();
-loadSessionCards();
-if (SESSION) { refreshCompressions(); refreshRtkCommands(); }
+if (SESSION) {
+  refreshCompressions();
+  refreshRtkCommands();
+  const sessionsSection = document.getElementById('sessions_section');
+  if (sessionsSection) sessionsSection.style.display = 'none';
+} else {
+  loadSessionCards();
+  setInterval(loadSessionCards, 10000);
+}
 setInterval(refresh, 2000);
 setInterval(refreshTimeseries, 10000);
-setInterval(loadSessionCards, 10000);
 if (SESSION) { setInterval(refreshCompressions, 5000); setInterval(refreshRtkCommands, 5000); }
 </script>
 </body>
