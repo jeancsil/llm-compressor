@@ -1,637 +1,502 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LLM Compressor</title>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Overview · llm-compressor</title>
 <!--TOKENS-->
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  /* Typography (font-family) inherited from the token system (tokens.py) so the
-     sans-serif default renders; numeric readouts opt into monospace via .mono /
-     the explicit ui-monospace stacks on .flap and .session-chip. */
-  body { background: var(--bg); color: var(--text); padding: 20px 48px; max-width: 1440px; margin: 0 auto; }
-
-  /* ── Header ── */
-  .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
-  .title { color: var(--accent-active); font-size: 14px; font-weight: 700; letter-spacing: .04em; }
-  .header-right { display: flex; align-items: center; gap: 16px; font-size: 11px; color: var(--text-muted); }
-  .live-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent-savings); margin-right: 4px; animation: pulse 2s infinite; vertical-align: middle; }
-  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
-
-  /* ── Two-layer hero (shown when rtk present) ── */
-  .layers { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
-  .layer { border: 1px solid var(--border); border-radius: 8px; padding: 18px 20px; }
-  .layer-shell { background: var(--surface); border-color: var(--accent-savings); }
-  .layer-api   { background: var(--surface); border-color: var(--border); }
-  .layer-label { font-size: 9px; text-transform: uppercase; letter-spacing: .1em; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
-  .layer-shell .layer-label { color: var(--accent-savings); }
-  .layer-api   .layer-label { color: var(--accent-active); }
-  .layer-badge { font-size: 9px; padding: 1px 6px; border-radius: 3px; }
-  .layer-shell .layer-badge { background: var(--surface-raised); color: var(--accent-savings); }
-  .layer-api   .layer-badge { background: var(--surface-raised); color: var(--accent-active); }
-  .layer-pct { font-size: 52px; font-weight: 800; line-height: 1; letter-spacing: -.02em; }
-  .layer-shell .layer-pct { color: var(--accent-savings); }
-  .layer-api   .layer-pct { color: var(--accent-active); }
-  .layer-sub { font-size: 10px; color: var(--text-muted); margin-top: 6px; }
-  .layer-stats { margin-top: 12px; display: flex; flex-direction: column; gap: 3px; }
-  .layer-stat { display: flex; justify-content: space-between; font-size: 12px; }
-  .layer-stat-k { color: var(--text-muted); }
-  .layer-stat-v { color: var(--text); font-weight: 600; }
-
-  /* ── Single hero (rtk absent) ── */
-  .hero-solo { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
-  .hero-left { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 28px 20px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
-  .hero-pct { font-size: 68px; font-weight: 800; color: var(--accent-savings); line-height: 1; letter-spacing: -.02em; }
-  .hero-label { font-size: 10px; color: var(--text-muted); margin-top: 8px; text-transform: uppercase; letter-spacing: .1em; }
-  .hero-sublabel { font-size: 9px; color: var(--text-muted); margin-top: 3px; }
-  .hero-right { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 18px 20px; }
-  .term-prompt { color: var(--accent-savings); margin-bottom: 10px; font-size: 12px; }
-  .term-line { display: flex; gap: 8px; padding: 3px 0; font-size: 12px; }
-  .term-key { color: var(--text-muted); flex: 1; white-space: nowrap; }
-  .term-val { color: var(--text); font-weight: 600; text-align: right; }
-  .term-val.green { color: var(--accent-savings); }
-  .term-val.blue { color: var(--accent-active); }
-
-  /* ── rtk install hint ── */
-  .rtk-hint { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; margin-bottom: 12px; font-size: 11px; color: var(--text-muted); display: flex; align-items: center; gap: 10px; }
-  .rtk-hint code { background: var(--border); padding: 1px 6px; border-radius: 3px; color: var(--text); }
-
-  /* ── Dual routing panel ── */
-  .dual-panel { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 16px 18px; margin-bottom: 12px; }
-  .dual-panel-hdr { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
-  .dual-panel-title { font-size: 9px; color: var(--accent-active); text-transform: uppercase; letter-spacing: .12em; font-weight: 700; display: flex; align-items: center; gap: 7px; }
-  .dual-panel-title::before { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent-active); opacity: .7; }
-  .dual-panel-status { font-size: 9px; color: var(--text-muted); }
-  .dual-panel-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  .dual-role-card { background: var(--surface-raised); border: 1px solid var(--border); border-radius: 6px; padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; }
-  .dual-role-hdr { display: flex; align-items: center; gap: 6px; }
-  .dual-role-dot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
-  .dual-role-name { font-size: 9px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .1em; }
-  .dual-role-desc { font-size: 10px; color: var(--text-muted); line-height: 1.4; margin-top: -2px; }
-  /* Dropdown arrow color mirrors --text-muted. SVG data URIs can't resolve
-     var(--*), so the fill hex is duplicated across theme rules using tokens.py's
-     own literal --text-muted values (dark #8b9bb0, light #5c6b80). */
-  .dual-role-select { width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 5px; padding: 7px 10px; font-family: inherit; font-size: 12px; cursor: pointer; outline: none; transition: border-color .15s; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%238b9bb0' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; padding-right: 28px; }
-  @media (prefers-color-scheme: light) { .dual-role-select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%235c6b80' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E"); } }
-  :root[data-theme="light"] .dual-role-select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%235c6b80' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E"); }
-  :root[data-theme="dark"] .dual-role-select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%238b9bb0' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E"); }
-  .dual-role-select:hover:not(:disabled) { border-color: var(--accent-active); }
-  .dual-role-select:focus { border-color: var(--accent-active); }
-  .dual-role-select:disabled { opacity: .45; cursor: wait; }
-  .dual-role-meta { font-size: 9px; color: var(--text-muted); line-height: 1.5; min-height: 13px; }
-  .dual-role-meta .hi { color: var(--accent-active); }
-  @media (max-width: 700px) { .dual-panel-grid { grid-template-columns: 1fr; } }
-
-  /* ── Today tiles ── */
-  .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 16px; }
-  .tile { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px 18px; cursor: default; transition: transform .15s, box-shadow .15s; }
-  .tile:hover { transform: translateY(-2px); box-shadow: 0 4px 16px rgba(0,0,0,.4); }
-  .tile-num { font-size: 28px; font-weight: 800; color: var(--text); line-height: 1; }
-  .tile-num.blue  { color: var(--accent-active); }
-  .tile-num.green { color: var(--accent-savings); }
-  .tile-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .08em; margin-top: 6px; }
-
-  /* ── Card groups ── */
-  .card-group { margin-bottom: 16px; }
-  .card-group-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .1em; padding-bottom: 7px; margin-bottom: 8px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; }
-  .card-group-label::before { content: ''; width: 3px; height: 12px; border-radius: 2px; flex-shrink: 0; }
-  .card-group-label.s-compression::before { background: var(--accent-active); }
-  .card-group-label.s-cache::before       { background: var(--accent-cache); }
-
-  /* ── Metric cards ── */
-  .cards { display: grid; gap: 10px; }
-  .cards.compression-cards { grid-template-columns: repeat(6, 1fr); }
-  .cards.cache-cards        { grid-template-columns: repeat(2, 1fr); max-width: calc((2/6) * 100% + (2/6 - 1) * 10px); }
-  .cards.session-cards     { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
-  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
-  .card-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 6px; }
-  .card-value { font-size: 22px; font-weight: 700; color: var(--text); }
-  .card-value.blue  { color: var(--accent-active); }
-  .card-value.green { color: var(--accent-savings); }
-
-  /* ── Session cards ── */
-  .session-card { cursor: pointer; transition: transform .15s, box-shadow .15s; }
-  .session-card:hover { transform: translateY(-2px); box-shadow: 0 4px 16px rgba(0,0,0,.4); }
-  .session-card-name-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
-  .session-card-name { font-size: 14px; font-weight: 700; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .session-card-pencil { background: none; border: none; color: var(--text-muted); cursor: pointer; opacity: 0; transition: opacity .15s; font-size: 12px; padding: 2px 4px; flex-shrink: 0; }
-  .session-card:hover .session-card-pencil { opacity: 1; }
-  .session-card-stats { display: flex; gap: 12px; margin-top: 8px; font-size: 11px; }
-  .session-card-meta { font-size: 9px; color: var(--text-muted); margin-top: 6px; }
-
-  /* ── Shared section ── */
-  .section { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px 18px; margin-bottom: 14px; }
-  .section-title { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 13px; display: flex; align-items: center; gap: 10px; }
-  .section-title::before { content: ''; width: 3px; height: 13px; border-radius: 2px; flex-shrink: 0; background: transparent; }
-  .section-title.s-cache::before       { background: var(--accent-cache); }
-  .section-title.s-rtk::before         { background: var(--accent-savings); }
-  .section-title.s-model::before       { background: var(--accent-active); }
-  .section-title.s-compression::before { background: var(--accent-active); }
-  .section-title.s-activity::before    { background: var(--text-muted); }
-  .section-title.s-sessions::before    { background: var(--text-muted); }
-
-  /* ── rtk command table ── */
-  .cmd-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-  .cmd-table th { text-align: left; color: var(--text-muted); padding: 5px 8px; border-bottom: 1px solid var(--border); font-weight: normal; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
-  .cmd-table td { padding: 7px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
-  .cmd-table tr:last-child td { border-bottom: none; }
-  .cmd-table tr:hover td { background: var(--surface-raised); }
-  .cmd-name { color: var(--text); font-family: inherit; }
-  .cmd-bar-wrap { width: 120px; background: var(--border); border-radius: 2px; height: 8px; display: inline-block; vertical-align: middle; }
-  .cmd-bar-fill { height: 100%; border-radius: 2px; background: var(--accent-savings); }
-
-  /* ── Sparkline ── */
-  .sparkline { display: flex; align-items: flex-end; gap: 2px; height: 44px; overflow: hidden; }
-  .bar { width: 9px; min-height: 4px; border-radius: 2px 2px 0 0; cursor: default; opacity: .85; transition: opacity .1s; flex-shrink: 0; }
-  .bar:hover { opacity: 1; }
-  .spark-empty { font-size: 11px; color: var(--text-muted); }
-  .spark-legend { display: flex; gap: 16px; margin-top: 8px; font-size: 10px; color: var(--text-muted); }
-  .leg-dot { display: inline-block; width: 8px; height: 8px; border-radius: 1px; margin-right: 4px; vertical-align: middle; }
-
-  /* ── Model badge ── */
-  .model-badge { font-size: 10px; background: var(--surface-raised); color: var(--accent-active); padding: 2px 8px; border-radius: 4px; }
-
-  /* ── Model select (switcher) ── */
-  .model-select { font-size: 12px; background: var(--surface); color: var(--accent-active); padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border); cursor: pointer; font-family: inherit; outline: none; }
-  .model-select:hover:not(:disabled) { border-color: var(--accent-active); }
-  .model-select:disabled { opacity: 0.5; cursor: wait; }
-  .model-loading { font-size: 10px; color: var(--accent-warn); margin-left: 6px; display: none; }
-
-  /* ── Time-series chart ── */
-  .ts-chart { display: flex; align-items: flex-end; gap: 4px; height: 60px; overflow: hidden; }
-  .ts-bar { flex: 1; min-height: 4px; border-radius: 2px 2px 0 0; opacity: .8; transition: opacity .1s; cursor: default; }
-  .ts-bar:hover { opacity: 1; }
-  .ts-labels { display: flex; justify-content: space-between; margin-top: 4px; font-size: 9px; color: var(--text-muted); }
-
-  /* ── Model comparison table ── */
-  .model-bar-wrap { flex: 1; background: var(--border); border-radius: 2px; height: 8px; display: inline-block; vertical-align: middle; min-width: 60px; }
-  .model-bar-fill { height: 100%; border-radius: 2px; }
-
-  /* ── Session bars ── */
-  .sess-bars { display: flex; flex-direction: column; gap: 8px; }
-  .sess-bar-row { display: flex; align-items: center; gap: 10px; font-size: 11px; }
-  .sess-bar-label { width: 90px; color: var(--text-muted); flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .sess-bar-wrap { flex: 1; background: var(--border); border-radius: 3px; height: 12px; overflow: hidden; }
-  .sess-bar-fill { height: 100%; border-radius: 3px; transition: width .3s; }
-  .sess-bar-pct   { width: 36px; text-align: right; color: var(--accent-savings); flex-shrink: 0; }
-  .sess-bar-saved { width: 54px; text-align: right; color: var(--text-muted); flex-shrink: 0; font-size: 10px; }
-
-  /* ── Tables ── */
-  table { width: 100%; border-collapse: collapse; font-size: 12px; }
-  th { text-align: left; color: var(--text-muted); padding: 6px 10px; border-bottom: 1px solid var(--border); font-weight: normal; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
-  td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
-  tr:last-child td { border-bottom: none; }
-  tr:hover td { background: var(--surface-raised); }
-  .badge     { display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: 10px; background: var(--surface-raised); color: var(--accent-active); }
-  .name-tag  { display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: 10px; background: var(--surface-raised); color: var(--accent-cache); }
-  .ratio-badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 10px; }
-  .muted { color: var(--text-muted); }
-  .green { color: var(--accent-savings); }
-
-  /* ── Footer ── */
-  .footer { font-size: 9px; color: var(--text-muted); text-align: center; padding-top: 8px; }
-
-  @media (max-width: 900px) {
-    body { padding: 16px 20px; }
-    .layers, .hero-solo { grid-template-columns: 1fr; }
-    .tiles { grid-template-columns: repeat(2, 1fr); }
-    .cards.compression-cards { grid-template-columns: repeat(4, 1fr); }
-    .cards.cache-cards        { grid-template-columns: repeat(3, 1fr); max-width: 100%; }
-    .layer-pct, .hero-pct { font-size: 48px; }
+  /* Supplemental tokens layered on tokens.py (dims/grid follow the accent tokens
+     via color-mix, so a single accent change in tokens.py propagates here). */
+  :root {
+    --accent-active-dim: color-mix(in srgb, var(--accent-active) 16%, transparent);
+    --accent-savings-dim: color-mix(in srgb, var(--accent-savings) 16%, transparent);
+    --accent-cache-dim: color-mix(in srgb, var(--accent-cache) 16%, transparent);
+    --accent-warn-dim: color-mix(in srgb, var(--accent-warn) 16%, transparent);
+    --grid-line: color-mix(in srgb, var(--text-muted) 6%, transparent);
+    --shadow-1: 0 1px 0 rgba(0,0,0,0.45);
+    --shadow-panel: 0 10px 30px -14px rgba(0,0,0,0.6);
+    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
   }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme]) { --shadow-1: 0 1px 0 rgba(255,255,255,0.6); --shadow-panel: 0 10px 30px -18px rgba(30,41,59,0.25); }
+  }
+  :root[data-theme="light"] { --shadow-1: 0 1px 0 rgba(255,255,255,0.6); --shadow-panel: 0 10px 30px -18px rgba(30,41,59,0.25); }
 
-  /* ── Hero band: split-flap headline readout + session chip ── */
-  .hero { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; flex-wrap: wrap; margin-bottom: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 24px 26px; }
-  .hero-flaps { display: flex; gap: 44px; flex-wrap: wrap; }
-  .flap-row { display: flex; gap: 5px; }
-  .flap {
-    position: relative;
-    background: var(--surface-raised);
-    border: 1px solid var(--border);
-    border-radius: 5px;
-    padding: 10px 9px;
-    font-family: ui-monospace, "SF Mono", Menlo, monospace;
-    font-variant-numeric: tabular-nums;
-    font-size: 2.7rem;
-    font-weight: 700;
-    line-height: 1;
+  *, *::before, *::after { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background:
+      linear-gradient(var(--grid-line) 1px, transparent 1px) 0 0 / 100% 28px,
+      linear-gradient(90deg, var(--grid-line) 1px, transparent 1px) 0 0 / 28px 100%,
+      var(--bg);
     color: var(--text);
-    min-width: 1ch;
-    text-align: center;
-    box-shadow: inset 0 -2px 0 rgba(0,0,0,0.25);
+    font-family: var(--font-sans);
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+    transition: background-color .2s ease, color .2s ease;
   }
-  /* departure-board seam across the middle of each tile */
-  .flap::after { content: ''; position: absolute; left: 0; right: 0; top: 50%; height: 1px; background: var(--bg); opacity: 0.55; transform: translateY(-0.5px); }
-  .flap-group { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
-  .flap-label { color: var(--text-muted); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; }
-  .session-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    background: var(--surface-raised);
-    border: 1px solid var(--accent-active);
-    color: var(--accent-active);
-    border-radius: 999px;
-    padding: 4px 12px;
-    font-size: 0.8rem;
-    font-family: ui-monospace, "SF Mono", Menlo, monospace;
-  }
-  .session-chip::before {
-    content: "●";
-    font-size: 0.6rem;
-  }
-  /* ── Inline rename input (Step 3 reuses this for session-card rename) ── */
-  .track-input { font-size: 11px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 5px; padding: 3px 8px; font-family: inherit; outline: none; width: 160px; }
-  .track-input:focus { border-color: var(--accent-active); }
+  h1,h2,h3,p { margin: 0; }
+  a { color: inherit; text-decoration: none; }
+  button { font: inherit; color: inherit; background: none; border: 0; }
+  svg { display: block; }
+  :focus-visible { outline: 2px solid var(--accent-active); outline-offset: 2px; border-radius: 4px; }
 
-  /* ── Prompt history (session dashboards only) ── */
-  .prompt-row { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; margin-bottom: 8px; overflow: hidden; }
-  .prompt-row-header { display: flex; align-items: center; gap: 12px; padding: 10px 14px; cursor: pointer; user-select: none; }
-  .prompt-row-header:hover { background: var(--surface-raised); }
-  .prompt-toggle { color: var(--text-muted); font-size: 10px; flex-shrink: 0; width: 10px; }
-  .prompt-ts { color: var(--text-muted); font-size: 10px; flex-shrink: 0; width: 52px; }
-  .prompt-tokens { font-size: 11px; }
-  .prompt-savings { font-size: 11px; color: var(--accent-savings); font-weight: 600; min-width: 44px; }
-  .prompt-latency { font-size: 10px; color: var(--text-muted); margin-left: auto; }
-  .prompt-no-text { font-size: 10px; color: var(--text-muted); font-style: italic; margin-left: auto; }
+  .num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow-panel); }
+  .eyebrow { display: flex; align-items: center; gap: 8px; font-family: var(--font-mono); font-size: 11px; font-weight: 600; letter-spacing: .11em; text-transform: uppercase; color: var(--text-muted); }
+  .b-empty, .m-empty { color: var(--text-muted); font-size: 12px; padding: 14px 0; }
+
+  /* ---- NAV ---- */
+  .nav { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px clamp(16px,4vw,40px); background: color-mix(in srgb, var(--surface) 92%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid var(--border); }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .brand-mark { display: flex; align-items: flex-end; gap: 3px; height: 20px; }
+  .brand-mark span { display: block; width: 4px; border-radius: 2px 2px 0 0; }
+  .brand-mark span:nth-child(1) { height: 60%; background: var(--accent-active); }
+  .brand-mark span:nth-child(2) { height: 100%; background: var(--accent-savings); }
+  .brand-mark span:nth-child(3) { height: 40%; background: var(--accent-cache); }
+  .brand-name { font-family: var(--font-mono); font-weight: 700; font-size: 15px; letter-spacing: -.01em; }
+  .brand-name b { color: var(--accent-active); }
+  .nav-links { display: flex; align-items: center; gap: 4px; font-size: 13px; font-weight: 600; }
+  .nav-links a { padding: 7px 12px; border-radius: 8px; color: var(--text-muted); }
+  .nav-links a:hover { color: var(--text); background: var(--surface-raised); }
+  .nav-links a[aria-current="page"] { color: var(--text); background: var(--accent-active-dim); }
+  .nav-right { display: flex; align-items: center; gap: 10px; }
+  .theme-toggle { display: flex; align-items: center; justify-content: center; width: 34px; height: 34px; border: 1px solid var(--border); border-radius: 9px; color: var(--text-muted); cursor: pointer; }
+  .theme-toggle:hover { color: var(--text); border-color: var(--text-muted); }
+  .theme-toggle svg { width: 16px; height: 16px; }
+  .theme-toggle .icon-sun { display: none; }
+  :root[data-theme="light"] .theme-toggle .icon-moon { display: none; }
+  :root[data-theme="light"] .theme-toggle .icon-sun { display: block; }
+  @media (prefers-color-scheme: light) { :root:not([data-theme]) .theme-toggle .icon-moon { display: none; } :root:not([data-theme]) .theme-toggle .icon-sun { display: block; } }
+
+  .page { max-width: 1180px; margin: 0 auto; padding: 28px clamp(16px,4vw,40px) 60px; display: flex; flex-direction: column; gap: 22px; }
+
+  /* ---- HERO ---- */
+  .hero { padding: clamp(22px,4vw,34px); position: relative; overflow: hidden; }
+  .hero::before { content: ""; position: absolute; inset: 0; background: radial-gradient(560px 220px at 85% -10%, var(--accent-active-dim), transparent 70%); pointer-events: none; }
+  .hero-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px; position: relative; }
+  .status-pill { display: flex; align-items: center; gap: 8px; font-family: var(--font-mono); font-size: 12px; font-weight: 600; letter-spacing: .04em; color: var(--accent-savings); background: var(--accent-savings-dim); border: 1px solid color-mix(in srgb, var(--accent-savings) 35%, transparent); padding: 6px 12px 6px 10px; border-radius: 20px; }
+  .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent-savings); animation: pulse 2.2s ease-out infinite; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 var(--accent-savings-dim); } 70% { box-shadow: 0 0 0 7px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+  .hero-meta { display: flex; align-items: center; gap: 10px; font-family: var(--font-mono); font-size: 12px; color: var(--text-muted); text-align: right; }
+  .session-chip { display: none; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--accent-active); background: var(--accent-active-dim); border: 1px solid color-mix(in srgb, var(--accent-active) 35%, transparent); padding: 4px 10px; border-radius: 999px; }
+  .session-chip::before { content: "●"; font-size: 0.6rem; }
+  .hero-readout { margin-top: 24px; display: flex; flex-wrap: wrap; align-items: flex-end; gap: clamp(20px,4vw,40px); position: relative; }
+  .flap-block { display: flex; flex-direction: column; gap: 10px; }
+  .flap-row { display: flex; gap: 4px; }
+  .flap { position: relative; display: flex; align-items: center; justify-content: center; min-width: 0.72em; padding: 0.08em 0.14em; font-family: var(--font-mono); font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; background: linear-gradient(var(--surface-raised), color-mix(in srgb, var(--surface-raised) 82%, black)); border: 1px solid var(--border); border-radius: 5px; box-shadow: var(--shadow-1), 0 1px 2px rgba(0,0,0,0.35); }
+  .flap::after { content: ""; position: absolute; left: 1px; right: 1px; top: 50%; height: 1px; background: rgba(0,0,0,0.4); }
+  .flap-tokens .flap { font-size: clamp(2rem,5vw,3.1rem); color: var(--text); }
+  .flap-dollar .flap { font-size: clamp(1.3rem,3vw,1.9rem); color: var(--accent-savings); }
+  .flap-label { font-family: var(--font-mono); font-size: 11.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted); }
+  .hero-sub { margin-top: 20px; display: flex; flex-wrap: wrap; gap: 18px; font-size: 13px; color: var(--text-muted); position: relative; }
+  .hero-sub strong { color: var(--text); font-family: var(--font-mono); }
+
+  /* ---- MODEL / DUAL CONTROLS ---- */
+  .ctl-panel { padding: clamp(16px,3vw,22px); display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
+  .ctl-left { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .ctl-label { font-family: var(--font-mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--text-muted); }
+  .model-badge { font-family: var(--font-mono); font-size: 11px; background: var(--accent-active-dim); color: var(--accent-active); padding: 3px 9px; border-radius: 8px; }
+  select.model-select, select.dual-role-select { font-family: var(--font-mono); font-size: 12.5px; background: var(--surface-raised); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; cursor: pointer; outline: none; }
+  select.model-select:hover:not(:disabled), select.dual-role-select:hover:not(:disabled) { border-color: var(--accent-active); }
+  select:disabled { opacity: .5; cursor: wait; }
+  .model-loading { font-family: var(--font-mono); font-size: 10px; color: var(--accent-warn); display: none; }
+  .dual-panel { display: none; margin-top: 4px; width: 100%; padding-top: 14px; border-top: 1px solid var(--border); }
+  .dual-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .dual-card { background: var(--surface-raised); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+  .dual-role-name { font-family: var(--font-mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted); }
+  .dual-role-meta { font-size: 10.5px; color: var(--text-muted); min-height: 13px; }
+  .dual-role-meta .hi { color: var(--accent-active); }
+  @media (max-width: 640px) { .dual-grid { grid-template-columns: 1fr; } }
+
+  /* ---- FLOW ---- */
+  .flow-panel { padding: clamp(20px,3.5vw,28px); }
+  .flow-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .flow-head h2 { font-size: 15px; font-weight: 700; }
+  .flow-track { margin-top: 20px; display: flex; align-items: stretch; gap: 0; }
+  .flow-box { flex: 1 1 180px; background: var(--surface-raised); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; min-width: 0; }
+  .fb-label { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--text-muted); display: flex; align-items: center; gap: 6px; }
+  .fb-dot { width: 6px; height: 6px; border-radius: 50%; }
+  .flow-box.in .fb-dot { background: var(--accent-active); }
+  .flow-box.compress .fb-dot { background: var(--accent-cache); }
+  .flow-box.out .fb-dot { background: var(--accent-savings); }
+  .fb-value { margin-top: 8px; font-family: var(--font-mono); font-size: clamp(1.3rem,3vw,1.7rem); font-weight: 700; }
+  .fb-sub { margin-top: 4px; font-size: 12px; color: var(--text-muted); }
+  .fb-bars { margin-top: 12px; display: flex; gap: 3px; align-items: flex-end; height: 22px; }
+  .fb-bars i { display: block; flex: 1; border-radius: 2px 2px 0 0; background: var(--accent-cache); opacity: .85; }
+  .flow-connector { flex: 0 0 56px; position: relative; display: flex; align-items: center; justify-content: center; }
+  .flow-connector .line { position: absolute; left: 6px; right: 6px; top: 50%; height: 2px; background: repeating-linear-gradient(90deg, var(--border) 0 6px, transparent 6px 10px); transform: translateY(-1px); }
+  .flow-connector .dot { position: absolute; top: 50%; left: 6px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent-active); box-shadow: 0 0 8px var(--accent-active); transform: translate(-50%,-50%); animation: travel 2.6s linear infinite; }
+  .flow-connector.b .dot { animation-delay: -1.3s; }
+  @keyframes travel { 0% { left: 6px; } 100% { left: calc(100% - 6px); } }
+  @media (max-width: 700px) {
+    .flow-track { flex-direction: column; }
+    .flow-connector { flex: 0 0 34px; width: 100%; }
+    .flow-connector .line { left: 50%; right: auto; top: 6px; bottom: 6px; height: auto; width: 2px; transform: translateX(-1px); background: repeating-linear-gradient(180deg, var(--border) 0 6px, transparent 6px 10px); }
+    .flow-connector .dot { left: 50%; top: 6px; animation-name: travel-v; }
+    @keyframes travel-v { 0% { top: 6px; } 100% { top: calc(100% - 6px); } }
+  }
+
+  /* ---- STATS GRID ---- */
+  .stats-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 16px; }
+  .tile { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 18px 20px; box-shadow: var(--shadow-panel); }
+  .t-label { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .09em; text-transform: uppercase; color: var(--text-muted); }
+  .t-value { margin-top: 10px; font-family: var(--font-mono); font-size: 1.9rem; font-weight: 700; }
+  .t-sub { margin-top: 6px; font-size: 12px; color: var(--text-muted); }
+  .tile.wide { grid-column: span 2; }
+  .ring-wrap { display: flex; align-items: center; gap: 16px; margin-top: 4px; }
+  .ring { width: 64px; height: 64px; border-radius: 50%; flex: none; background: conic-gradient(var(--accent-cache) calc(var(--pct,0) * 1%), var(--surface-raised) 0); display: flex; align-items: center; justify-content: center; }
+  .ring::after { content: ""; width: 46px; height: 46px; border-radius: 50%; background: var(--surface); }
+  .tile-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .model-bars { margin-top: 14px; display: flex; flex-direction: column; gap: 10px; }
+  .model-bar-row { display: grid; grid-template-columns: 128px 1fr 44px; align-items: center; gap: 10px; font-size: 12px; }
+  .m-name { color: var(--text-muted); font-family: var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .model-bar-track { height: 7px; border-radius: 4px; background: var(--surface-raised); overflow: hidden; }
+  .model-bar-fill { height: 100%; border-radius: 4px; }
+  .m-pct { font-family: var(--font-mono); text-align: right; color: var(--text); }
+  @media (max-width: 900px) { .stats-grid { grid-template-columns: repeat(2,1fr); } }
+  @media (max-width: 540px) { .stats-grid { grid-template-columns: 1fr; } .tile.wide { grid-column: span 1; } }
+
+  /* ---- CHART ---- */
+  .chart-panel { padding: clamp(20px,3.5vw,28px); }
+  .chart-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .chart-head h2 { font-size: 15px; font-weight: 700; }
+  .chart-head .c-total { font-family: var(--font-mono); font-size: 12px; color: var(--accent-savings); }
+  .chart-svg-wrap { margin-top: 16px; width: 100%; }
+  .chart-svg-wrap svg { width: 100%; height: auto; overflow: visible; }
+  .chart-axis text { font-family: var(--font-mono); font-size: 9.5px; fill: var(--text-muted); }
+
+  /* ---- ACTIVITY BOARD ---- */
+  .board-panel { padding: clamp(18px,3.5vw,26px); }
+  .board-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .board-head h2 { font-size: 15px; font-weight: 700; }
+  .b-live { display: flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); }
+  .board-scroll { margin-top: 16px; overflow-x: auto; }
+  table.board { width: 100%; border-collapse: collapse; font-family: var(--font-mono); font-size: 12.5px; min-width: 620px; }
+  .board thead th { text-align: left; font-size: 10px; letter-spacing: .09em; text-transform: uppercase; color: var(--text-muted); font-weight: 600; padding: 0 12px 8px; border-bottom: 1px solid var(--border); }
+  .board tbody td { padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; color: var(--text); }
+  .board tbody tr:last-child td { border-bottom: 0; }
+  .board tbody tr:hover td { background: var(--surface-raised); }
+  .board td.t-time { color: var(--text-muted); }
+  .board td.t-flow b { color: var(--text); font-weight: 600; }
+  .board td.t-flow { color: var(--text-muted); }
+  .badge { display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px; border-radius: 20px; font-size: 10.5px; font-weight: 600; white-space: nowrap; }
+  .badge::before { content: ""; width: 5px; height: 5px; border-radius: 50%; }
+  .badge.sys { background: var(--accent-active-dim); color: var(--accent-active); }
+  .badge.sys::before { background: var(--accent-active); }
+  .badge.usr { background: var(--accent-savings-dim); color: var(--accent-savings); }
+  .badge.usr::before { background: var(--accent-savings); }
+  .model-pill { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--text-muted); white-space: nowrap; }
+  .pct-good { color: var(--accent-savings); font-weight: 700; }
+
+  /* ---- SESSIONS ---- */
+  .sessions-section { display: flex; flex-direction: column; gap: 14px; }
+  .sessions-head { display: flex; flex-direction: column; gap: 4px; }
+  .sessions-head h2 { font-size: 15px; font-weight: 700; }
+  .sessions-head p { font-size: 12.5px; color: var(--text-muted); max-width: 62ch; }
+  .sessions-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px,1fr)); gap: 14px; }
+  .session-card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 16px 18px; box-shadow: var(--shadow-panel); display: flex; flex-direction: column; gap: 12px; cursor: pointer; transition: transform .15s, border-color .15s; }
+  .session-card:hover { transform: translateY(-2px); border-color: var(--accent-active); }
+  .sc-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+  .sc-name { font-family: var(--font-mono); font-size: 13.5px; font-weight: 700; word-break: break-word; }
+  .sc-pencil { color: var(--text-muted); cursor: pointer; opacity: 0; transition: opacity .15s; font-size: 12px; flex-shrink: 0; }
+  .session-card:hover .sc-pencil { opacity: 1; }
+  .sc-metrics { display: flex; gap: 18px; }
+  .sc-metric .m-num { font-family: var(--font-mono); font-size: 1.15rem; font-weight: 700; }
+  .sc-metric .m-num.accent { color: var(--accent-savings); }
+  .sc-metric .m-lbl { font-size: 10.5px; color: var(--text-muted); margin-top: 2px; }
+  .sc-share { display: flex; flex-direction: column; gap: 5px; }
+  .sc-share-top { display: flex; justify-content: space-between; font-size: 10.5px; color: var(--text-muted); }
+  .sc-share-top b { color: var(--text); font-family: var(--font-mono); }
+  .sc-share-track { height: 5px; border-radius: 3px; background: var(--surface-raised); overflow: hidden; }
+  .sc-share-fill { height: 100%; background: linear-gradient(90deg, var(--accent-savings), var(--accent-cache)); border-radius: 3px; }
+  .sc-active { font-size: 10.5px; color: var(--text-muted); }
+  .track-input { font-family: var(--font-mono); font-size: 12.5px; background: var(--bg); color: var(--text); border: 1px solid var(--accent-active); border-radius: 6px; padding: 3px 8px; outline: none; width: 100%; }
+
+  /* ---- SESSION DETAIL (prompt + rtk history) ---- */
+  .detail-panel { padding: clamp(18px,3.5vw,26px); }
+  .detail-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .detail-head h2 { font-size: 15px; font-weight: 700; }
+  .detail-count { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); }
+  .prompt-row { background: var(--surface-raised); border: 1px solid var(--border); border-radius: 8px; margin-top: 8px; overflow: hidden; }
+  .prompt-row-header { display: flex; align-items: center; gap: 12px; padding: 10px 14px; cursor: pointer; user-select: none; font-family: var(--font-mono); font-size: 12px; }
+  .prompt-row-header:hover { background: color-mix(in srgb, var(--surface-raised) 70%, var(--bg)); }
+  .prompt-toggle { color: var(--text-muted); font-size: 10px; width: 10px; }
+  .prompt-ts { color: var(--text-muted); width: 52px; }
+  .prompt-savings { color: var(--accent-savings); font-weight: 700; min-width: 44px; }
+  .prompt-latency { color: var(--text-muted); margin-left: auto; }
+  .prompt-no-text { color: var(--text-muted); font-style: italic; margin-left: auto; }
   .prompt-body { display: none; padding: 0 14px 14px; }
   .prompt-body.open { display: block; }
   .prompt-panels { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-  .prompt-panel-label { font-size: 9px; text-transform: uppercase; letter-spacing: .1em; color: var(--text-muted); margin-bottom: 6px; display: flex; justify-content: space-between; }
-  .prompt-text { font-size: 11px; line-height: 1.5; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 10px 12px; max-height: 320px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; color: var(--text); font-family: inherit; margin: 0; }
-  .prompt-text.compressed { border-color: var(--accent-savings); background: var(--surface-raised); color: var(--accent-savings); }
+  .prompt-panel-label { font-family: var(--font-mono); font-size: 9px; text-transform: uppercase; letter-spacing: .1em; color: var(--text-muted); margin: 8px 0 6px; display: flex; justify-content: space-between; }
+  .prompt-text { font-size: 11px; line-height: 1.5; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; max-height: 320px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; color: var(--text); font-family: var(--font-mono); margin: 0; }
+  .prompt-text.compressed { border-color: color-mix(in srgb, var(--accent-savings) 40%, transparent); color: var(--accent-savings); }
   @media (max-width: 700px) { .prompt-panels { grid-template-columns: 1fr; } }
-  .pager { display: flex; align-items: center; gap: 10px; padding: 12px 0 4px; margin-top: 2px; border-top: 1px solid var(--border); }
-  .pager-btn { background: var(--surface); color: var(--accent-active); border: 1px solid var(--border); border-radius: 5px; padding: 3px 10px; cursor: pointer; font-family: inherit; font-size: 11px; line-height: 1.4; }
+  .rtk-table { width: 100%; border-collapse: collapse; font-family: var(--font-mono); font-size: 12px; margin-top: 8px; }
+  .rtk-table th { text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); font-weight: 600; padding: 0 10px 8px; border-bottom: 1px solid var(--border); }
+  .rtk-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); color: var(--text); }
+
+  /* ---- PAGER ---- */
+  .pager { display: flex; align-items: center; gap: 10px; padding: 12px 0 0; margin-top: 8px; }
+  .pager-btn { background: var(--surface-raised); color: var(--accent-active); border: 1px solid var(--border); border-radius: 8px; padding: 4px 12px; cursor: pointer; font-size: 12px; }
   .pager-btn:hover:not(:disabled) { border-color: var(--accent-active); }
   .pager-btn:disabled { opacity: .35; cursor: default; }
-  .pager-info { color: var(--text-muted); font-size: 11px; line-height: 1.4; }
+  .pager-info { color: var(--text-muted); font-size: 12px; font-family: var(--font-mono); }
+
+  /* ---- FOOTER ---- */
+  .statusbar { display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: center; justify-content: center; padding: 14px 20px 26px; font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); text-align: center; }
+  .statusbar b { color: var(--text); }
+  .live-point { animation: blink 2.2s ease-in-out infinite; }
+  @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+  @media (prefers-reduced-motion: reduce) { .status-dot, .flow-connector .dot, .live-point { animation: none !important; } }
 </style>
 <!--THEME_SCRIPT-->
 </head>
 <body>
 
-<div class="header">
-  <div style="display:flex;align-items:center;gap:8px">
-    <div class="title">LLM Compressor</div>
-    <span class="model-badge" id="model_badge">—</span>
-    <select class="model-select" id="model_select" onchange="switchModel(this.value)" disabled>
-      <option value="llmlingua2">llmlingua2</option>
-      <option value="llmlingua2-large">llmlingua2-large</option>
-      <option value="kompress">kompress</option>
-      <option value="dual">dual (configurable)</option>
-    </select>
-    <span class="model-loading" id="model_loading">loading…</span>
+<header class="nav">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span>
+    <span class="brand-name">llm-<b>compressor</b></span>
   </div>
-  <div class="header-right">
-    <a href="/dashboard" id="back_to_overview" style="display:none;color:var(--text-muted);font-size:11px;text-decoration:none;letter-spacing:.02em">← dashboard</a>
-    <a href="/play" style="color:var(--text-muted);font-size:11px;text-decoration:none;letter-spacing:.02em">▶ play</a>
-    <a href="/play/list" style="color:var(--text-muted);font-size:11px;text-decoration:none;letter-spacing:.02em">▶ history</a>
-    <span id="uptime_display">—</span>
-    <span><span class="live-dot"></span>live</span>
-    <button class="theme-toggle" onclick="toggleTheme()">◐ theme</button>
+  <nav class="nav-links" aria-label="Primary">
+    <a href="/dashboard" aria-current="page">Overview</a>
+    <a href="/play/list">Sessions</a>
+    <a href="/play">Playground</a>
+  </nav>
+  <div class="nav-right">
+    <button class="theme-toggle" onclick="toggleTheme()" type="button" aria-label="Toggle light and dark theme">
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z"/></svg>
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+    </button>
   </div>
-</div>
+</header>
 
-<!-- Hero: split-flap headline readout + session-scope chip -->
-<div class="hero">
-  <div class="hero-flaps">
-    <div class="flap-group">
-      <div class="flap-label">Tokens saved</div>
-      <div class="flap-row" id="flap_tokens_saved"></div>
-    </div>
-    <div class="flap-group">
-      <div class="flap-label">Cost saved</div>
-      <div class="flap-row" id="flap_cost_saved"></div>
-    </div>
-  </div>
-  <span id="session_chip" class="session-chip" style="display:none">SESSION · <span id="session_chip_label"></span></span>
-</div>
+<main class="page">
 
-<!-- Dual routing panel (shown only in dual mode) -->
-<div id="dual_routing_panel" style="display:none">
-  <div class="dual-panel">
-    <div class="dual-panel-hdr">
-      <span class="dual-panel-title">Dual mode routing</span>
-      <span class="dual-panel-status" id="dual_panel_status">changes apply immediately · persisted across restarts</span>
+  <!-- HERO -->
+  <section class="hero panel" aria-label="Aggregate savings">
+    <div class="hero-top">
+      <span class="status-pill"><span class="status-dot" aria-hidden="true"></span>PROXY ACTIVE · 127.0.0.1:9099</span>
+      <span class="hero-meta">
+        <span id="session_chip" class="session-chip">SESSION · <span id="session_chip_label"></span></span>
+        <span><span id="hero_meta_scope">ALL SESSIONS</span> · UPDATED <span id="hero_meta_ago" class="num">0s ago</span></span>
+      </span>
     </div>
-    <div class="dual-panel-grid">
-      <div class="dual-role-card">
-        <div class="dual-role-hdr">
-          <span class="dual-role-dot" style="background:var(--accent-active)"></span>
+    <div class="hero-readout">
+      <div class="flap-block">
+        <div class="flap-row flap-tokens" id="flap_tokens" aria-hidden="true"></div>
+        <span class="flap-label">tokens saved</span>
+      </div>
+      <div class="flap-block">
+        <div class="flap-row flap-dollar" id="flap_cost" aria-hidden="true"></div>
+        <span class="flap-label">est. api cost saved</span>
+      </div>
+    </div>
+    <div class="hero-sub">
+      <span><strong id="sub_today_saved">—</strong> tokens saved today</span>
+      <span><strong id="sub_requests_today">—</strong> requests today</span>
+      <span><strong id="sub_ratio">—</strong> avg compression</span>
+      <span><strong id="sub_sessions">—</strong> active sessions</span>
+    </div>
+  </section>
+
+  <!-- MODEL CONTROLS -->
+  <section class="ctl-panel panel" aria-label="Compression model">
+    <div class="ctl-left">
+      <span class="ctl-label">Model</span>
+      <span class="model-badge" id="model_badge">—</span>
+      <select class="model-select" id="model_select" onchange="switchModel(this.value)" disabled>
+        <option value="llmlingua2">llmlingua2</option>
+        <option value="llmlingua2-large">llmlingua2-large</option>
+        <option value="kompress">kompress</option>
+        <option value="dual">dual (configurable)</option>
+      </select>
+      <span class="model-loading" id="model_loading">loading…</span>
+    </div>
+    <div class="dual-panel" id="dual_routing_panel">
+      <div class="dual-grid">
+        <div class="dual-card">
           <span class="dual-role-name">System prompts</span>
+          <select class="dual-role-select" id="dual_system_select" onchange="applyDualModels()">
+            <option value="llmlingua2">llmlingua2</option>
+            <option value="llmlingua2-large">llmlingua2-large</option>
+            <option value="kompress">kompress</option>
+          </select>
+          <div class="dual-role-meta" id="dual_system_meta"></div>
         </div>
-        <div class="dual-role-desc">CLAUDE.md · tool definitions · large context blocks</div>
-        <select class="dual-role-select" id="dual_system_select" onchange="applyDualModels()">
-          <option value="llmlingua2">llmlingua2</option>
-          <option value="llmlingua2-large">llmlingua2-large</option>
-          <option value="kompress">kompress</option>
-        </select>
-        <div class="dual-role-meta" id="dual_system_meta"></div>
-      </div>
-      <div class="dual-role-card">
-        <div class="dual-role-hdr">
-          <span class="dual-role-dot" style="background:var(--accent-savings)"></span>
+        <div class="dual-card">
           <span class="dual-role-name">User messages</span>
+          <select class="dual-role-select" id="dual_user_select" onchange="applyDualModels()">
+            <option value="llmlingua2">llmlingua2</option>
+            <option value="llmlingua2-large">llmlingua2-large</option>
+            <option value="kompress">kompress</option>
+          </select>
+          <div class="dual-role-meta" id="dual_user_meta"></div>
         </div>
-        <div class="dual-role-desc">prompts · tool outputs · conversational turns</div>
-        <select class="dual-role-select" id="dual_user_select" onchange="applyDualModels()">
-          <option value="llmlingua2">llmlingua2</option>
-          <option value="llmlingua2-large">llmlingua2-large</option>
-          <option value="kompress">kompress</option>
-        </select>
-        <div class="dual-role-meta" id="dual_user_meta"></div>
       </div>
     </div>
-  </div>
-</div>
+  </section>
 
-<!-- Two-layer hero (rtk present) -->
-<div class="layers" id="hero_layers" style="display:none">
-  <div class="layer layer-shell">
-    <div class="layer-label">Shell layer <span class="layer-badge">rtk</span></div>
-    <div class="layer-pct" id="rtk_pct">—%</div>
-    <div class="layer-sub">CLI output compression</div>
-    <div class="layer-stats">
-      <div class="layer-stat"><span class="layer-stat-k">commands</span><span class="layer-stat-v" id="rtk_cmds">—</span></div>
-      <div class="layer-stat"><span class="layer-stat-k">tokens saved</span><span class="layer-stat-v" id="rtk_saved">—</span></div>
-      <div class="layer-stat"><span class="layer-stat-k">avg savings</span><span class="layer-stat-v" id="rtk_avg">—</span></div>
+  <!-- REQUEST FLOW -->
+  <section class="flow-panel panel" aria-label="Request flow">
+    <div class="flow-head">
+      <h2>Request flow</h2>
+      <span class="eyebrow">avg per request</span>
     </div>
-  </div>
-  <div class="layer layer-api">
-    <div class="layer-label">API layer <span class="layer-badge" id="api_layer_badge">LLMLingua-2</span></div>
-    <div class="layer-pct" id="api_pct_layers">—%</div>
-    <div class="layer-sub" id="api_layer_sub">Prompt compression · LLMLingua-2 tokenizer units</div>
-    <div class="layer-stats">
-      <div class="layer-stat"><span class="layer-stat-k">requests</span><span class="layer-stat-v" id="api_reqs_layers">—</span></div>
-      <div class="layer-stat"><span class="layer-stat-k">tokens saved</span><span class="layer-stat-v" id="api_saved_layers">—</span></div>
-      <div class="layer-stat"><span class="layer-stat-k">ratio</span><span class="layer-stat-v" id="api_ratio_layers">—</span></div>
-      <div class="layer-stat"><span class="layer-stat-k">est. $ saved</span><span class="layer-stat-v" id="api_cost_layers">—</span></div>
-      <div class="layer-stat"><span class="layer-stat-k">avg latency</span><span class="layer-stat-v" id="api_latency_layers">—</span></div>
-      <div class="layer-stat"><span class="layer-stat-k">cache hit rate</span><span class="layer-stat-v" id="api_hit_rate_layers">—</span></div>
+    <div class="flow-track">
+      <div class="flow-box in">
+        <div class="fb-label"><span class="fb-dot"></span>in</div>
+        <div class="fb-value num" id="flow_in">—</div>
+        <div class="fb-sub">avg original tokens</div>
+      </div>
+      <div class="flow-connector a" aria-hidden="true"><span class="line"></span><span class="dot"></span></div>
+      <div class="flow-box compress">
+        <div class="fb-label"><span class="fb-dot"></span>compress</div>
+        <div class="fb-value num" id="flow_compress_pct">—</div>
+        <div class="fb-sub" id="flow_compress_sub">avg reduction</div>
+        <div class="fb-bars" id="flow_bars" aria-hidden="true"></div>
+      </div>
+      <div class="flow-connector b" aria-hidden="true"><span class="line"></span><span class="dot"></span></div>
+      <div class="flow-box out">
+        <div class="fb-label"><span class="fb-dot"></span>out</div>
+        <div class="fb-value num" id="flow_out">—</div>
+        <div class="fb-sub">avg compressed tokens</div>
+      </div>
     </div>
-  </div>
-</div>
+  </section>
 
-<!-- Single hero (rtk absent) -->
-<div class="hero-solo" id="hero_solo">
-  <div class="hero-left">
-    <div class="hero-pct" id="savings_pct">—%</div>
-    <div class="hero-label">tokens saved overall</div>
-    <div class="hero-sublabel" id="api_layer_sub_solo">LLMLingua-2 tokenizer units</div>
-  </div>
-  <div class="hero-right">
-    <div class="term-prompt">$ llm-compressor --status</div>
-    <div class="term-line"><span class="term-key">requests processed</span><span class="term-val blue" id="t_requests">—</span></div>
-    <div class="term-line"><span class="term-key">original tokens</span><span class="term-val" id="t_original">—</span></div>
-    <div class="term-line"><span class="term-key">compressed tokens</span><span class="term-val" id="t_compressed">—</span></div>
-    <div class="term-line"><span class="term-key">tokens saved</span><span class="term-val green" id="t_saved">—</span></div>
-    <div class="term-line"><span class="term-key">compression ratio</span><span class="term-val green" id="t_ratio">—</span></div>
-    <div class="term-line"><span class="term-key">est. $ saved</span><span class="term-val green" id="t_cost">—</span></div>
-    <div class="term-line"><span class="term-key">avg latency</span><span class="term-val" id="t_latency">—</span></div>
-    <div class="term-line"><span class="term-key">cache hit rate</span><span class="term-val green" id="t_hit_rate">—</span></div>
-    <div class="term-line"><span class="term-key">active sessions</span><span class="term-val blue" id="t_sessions">—</span></div>
-  </div>
-</div>
-
-<!-- rtk hint (shown when no rtk_events recorded yet) -->
-<div class="rtk-hint" id="rtk_hint">
-  <span style="color:var(--text-muted)">&#x2B21;</span>
-  <span>Shell-layer compression not yet logging. Add the PostToolUse hook for Bash in Claude Code settings to capture rtk savings per session.</span>
-</div>
-
-<!-- Tracked sessions summary (hidden until data arrives) -->
-<div id="tracked_summary" style="display:none;font-size:11px;color:var(--text-muted);margin-bottom:10px;text-align:center"></div>
-
-<!-- Row 1: Today tiles -->
-<div class="tiles">
-  <div class="tile">
-    <div class="tile-num blue" id="tile_requests">—</div>
-    <div class="tile-label">Today · Requests</div>
-  </div>
-  <div class="tile">
-    <div class="tile-num green" id="tile_savings">—</div>
-    <div class="tile-label">Today · Avg Savings %</div>
-  </div>
-  <div class="tile">
-    <div class="tile-num" id="tile_latency">—</div>
-    <div class="tile-label">Today · Avg Latency ms</div>
-  </div>
-  <div class="tile">
-    <div class="tile-num green" id="tile_tokens_saved">—</div>
-    <div class="tile-label">Today · Tokens Saved</div>
-  </div>
-</div>
-
-<!-- Card group: Compression -->
-<div class="card-group">
-  <div class="card-group-label s-compression">Compression</div>
-  <div class="cards compression-cards">
-    <div class="card"><div class="card-label">Requests</div><div class="card-value blue" id="card_requests">—</div></div>
-    <div class="card"><div class="card-label">Tokens Saved</div><div class="card-value green" id="card_saved">—</div></div>
-    <div class="card"><div class="card-label">Sessions</div><div class="card-value blue" id="card_sessions">—</div></div>
-    <div class="card"><div class="card-label">Avg Ratio</div><div class="card-value green" id="card_ratio">—</div></div>
-    <div class="card"><div class="card-label">Uptime</div><div class="card-value" id="card_uptime">—</div></div>
-    <div class="card">
-      <div class="card-label">Est. $ Saved</div>
-      <div class="card-value green" id="card_cost">—</div>
-      <div style="font-size:9px;color:var(--text-muted);margin-top:4px" id="card_cost_label">@ $3.00 / MTok</div>
+  <!-- STAT TILES -->
+  <section class="stats-grid" aria-label="Key metrics">
+    <div class="tile">
+      <div class="t-label">cache hit rate</div>
+      <div class="ring-wrap">
+        <div class="ring" id="ring" style="--pct:0"></div>
+        <div>
+          <div class="t-value" id="ring_pct">—</div>
+          <div class="t-sub" id="ring_sub">—</div>
+        </div>
+      </div>
     </div>
-  </div>
-</div>
-
-<!-- Card group: Cache -->
-<div class="card-group">
-  <div class="card-group-label s-cache">Cache</div>
-  <div class="cards cache-cards">
-    <div class="card">
-      <div class="card-label">Inferences Skipped</div>
-      <div class="card-value blue" id="card_cache_hits">—</div>
-      <div style="font-size:9px;color:var(--text-muted);margin-top:4px" id="card_cache_entries">— entries cached</div>
+    <div class="tile">
+      <div class="t-label">active sessions</div>
+      <div class="t-value" id="tile_sessions">—</div>
+      <div class="t-sub" id="tile_sessions_sub">—</div>
     </div>
-    <div class="card">
-      <div class="card-label">Inference Time Saved</div>
-      <div class="card-value" id="card_cache_time">—</div>
-      <div style="font-size:9px;color:var(--text-muted);margin-top:4px">model compute avoided</div>
+    <div class="tile">
+      <div class="t-label">avg latency</div>
+      <div class="t-value"><span id="tile_latency">—</span><span style="font-size:1rem;color:var(--text-muted)">ms</span></div>
+      <div class="t-sub" id="tile_latency_sub">—</div>
     </div>
-  </div>
-</div>
+    <div class="tile wide">
+      <div class="tile-head"><div class="t-label">requests by model</div></div>
+      <div class="model-bars" id="model_bars"><div class="m-empty">Loading…</div></div>
+    </div>
+  </section>
 
-<!-- Cache role breakdown -->
-<div class="section" id="cache_section" style="display:none">
-  <div class="section-title s-cache">Hit rate by role</div>
-  <table class="cmd-table">
-    <thead><tr><th>Role</th><th>Hits / Total</th><th>Hit Rate</th><th>Avg miss latency</th><th>Time saved</th></tr></thead>
-    <tbody id="cache_role_body"></tbody>
-  </table>
-</div>
+  <!-- 48H CHART -->
+  <section class="chart-panel panel" aria-label="Compression volume, last 48 hours">
+    <div class="chart-head">
+      <h2>Compression rate · last 48h</h2>
+      <span class="c-total num" id="chart_total">—</span>
+    </div>
+    <div class="chart-svg-wrap">
+      <svg id="sparkline" viewBox="0 0 960 240" preserveAspectRatio="none" role="img" aria-label="Area chart of requests per hour over the last 48 hours">
+        <defs>
+          <linearGradient id="areaFill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="var(--accent-savings)" stop-opacity="0.35" />
+            <stop offset="100%" stop-color="var(--accent-savings)" stop-opacity="0" />
+          </linearGradient>
+        </defs>
+        <path id="areaPath" fill="url(#areaFill)" stroke="none"></path>
+        <path id="linePath" fill="none" stroke="var(--accent-savings)" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"></path>
+        <circle id="livePoint" class="live-point" r="4.5" fill="var(--accent-savings)"></circle>
+        <g id="chartAxis" class="chart-axis"></g>
+      </svg>
+    </div>
+  </section>
 
-<!-- RTK top commands -->
-<div class="section" id="rtk_section" style="display:none">
-  <div class="section-title s-rtk">Top commands by tokens saved</div>
-  <table class="cmd-table">
-    <thead><tr><th>Command</th><th>Runs</th><th>Saved</th><th>Avg %</th><th style="width:140px"></th></tr></thead>
-    <tbody id="rtk_cmd_body"></tbody>
-  </table>
-</div>
+  <!-- RECENT ACTIVITY -->
+  <section class="board-panel panel" aria-label="Recent activity">
+    <div class="board-head">
+      <h2>Recent activity</h2>
+      <span class="b-live"><span class="status-dot" style="width:5px;height:5px" aria-hidden="true"></span>streaming</span>
+    </div>
+    <div class="board-scroll">
+      <table class="board">
+        <thead><tr><th>Time</th><th>Role</th><th>Model</th><th>Tokens (before → after)</th><th>Saved</th></tr></thead>
+        <tbody id="recent_body"><tr><td colspan="5" class="b-empty">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
 
-<!-- Model comparison -->
-<div class="section" id="model_section" style="display:none">
-  <div class="section-title s-model">Model comparison</div>
-  <table>
-    <thead><tr><th>Model</th><th style="width:200px">Requests</th><th>Savings %</th><th>Latency ms</th></tr></thead>
-    <tbody id="model_body"></tbody>
-  </table>
-</div>
+  <!-- SESSION DETAIL: prompt history (session view only) -->
+  <section class="detail-panel panel" id="prompt_section" style="display:none" aria-label="Prompt compression history">
+    <div class="detail-head"><h2>Prompt compression history</h2><span class="detail-count" id="prompt_count"></span></div>
+    <div id="prompt_list"><div class="b-empty">No compressions yet</div></div>
+    <div id="prompt_pager"></div>
+  </section>
 
-<!-- 48h timeseries -->
-<div class="section">
-  <div class="section-title s-activity">Compression rate — last 48h &nbsp;·&nbsp; <span style="color:var(--text-muted);font-weight:normal">height = requests &nbsp;·&nbsp; color = avg savings %</span></div>
-  <div id="ts_chart" class="ts-chart"><span class="spark-empty">No data</span></div>
-  <div id="ts_labels" class="ts-labels"></div>
-</div>
+  <!-- SESSION DETAIL: rtk history (session view only) -->
+  <section class="detail-panel panel" id="rtk_cmd_section" style="display:none" aria-label="Shell command history">
+    <div class="detail-head"><h2>Shell command history</h2><span class="detail-count" id="rtk_cmd_count"></span></div>
+    <div class="board-scroll">
+      <table class="rtk-table">
+        <thead><tr><th>Time</th><th>Command</th><th>Tokens in</th><th>Saved</th><th>%</th></tr></thead>
+        <tbody id="rtk_cmd_list"></tbody>
+      </table>
+    </div>
+    <div id="rtk_cmd_pager"></div>
+  </section>
 
-<!-- Recent activity -->
-<div class="section">
-  <div class="section-title s-activity">Recent activity</div>
-  <table>
-    <thead><tr><th>Time</th><th>Model</th><th>Role</th><th>Tokens</th><th>Savings %</th><th>Latency ms</th></tr></thead>
-    <tbody id="recent_body"></tbody>
-  </table>
-  <div id="recent_pager"></div>
-</div>
+  <!-- SESSIONS -->
+  <section class="sessions-section" aria-label="All sessions overview">
+    <div class="sessions-head">
+      <h2>Sessions</h2>
+      <p>Every tracked session. Each card's share bar shows its contribution to the tokens saved on this page — open one for its own isolated timeline.</p>
+    </div>
+    <div class="sessions-grid" id="sessions_grid"><div class="b-empty">Loading…</div></div>
+    <div id="sessions_pager"></div>
+  </section>
 
-<!-- Compressions sparkline -->
-<div class="section">
-  <div class="section-title s-activity">Recent compressions &nbsp;·&nbsp; <span style="color:var(--text-muted);font-weight:normal">height = original size &nbsp;·&nbsp; color = savings %</span></div>
-  <div id="sparkline" class="sparkline"><span class="spark-empty">No compressions yet</span></div>
-  <div class="spark-legend">
-    <span><span class="leg-dot" style="background:var(--accent-savings)"></span>&#x2265;40% saved</span>
-    <span><span class="leg-dot" style="background:var(--accent-warn)"></span>20&#x2013;39% saved</span>
-    <span><span class="leg-dot" style="background:var(--text-muted)"></span>&lt;20% saved</span>
-  </div>
-</div>
+</main>
 
-<!-- Session efficiency bars -->
-<div class="section">
-  <div class="section-title s-sessions">Sessions by tokens saved &nbsp;·&nbsp; <span style="color:var(--accent-savings)">■</span> API &nbsp;<span style="color:var(--accent-active)">■</span> Shell (rtk)</div>
-  <div id="sess_bars" class="sess-bars"><span class="spark-empty">No sessions yet</span></div>
-</div>
-
-<!-- Named-session cards (driven by /admin/sessions) -->
-<div class="section">
-  <div class="section-title s-sessions">Sessions</div>
-  <div id="session_cards" class="cards session-cards"><span class="spark-empty">No sessions yet</span></div>
-  <div id="sessions_pager"></div>
-</div>
-
-<!-- Prompt compression history (session dashboards only) -->
-<div class="section" id="prompt_section" style="display:none">
-  <div class="section-title s-compression">
-    Prompt compression history
-    <span id="prompt_count" style="color:var(--text-muted);font-size:10px;text-transform:none;letter-spacing:0"></span>
-  </div>
-  <div id="prompt_list"><span class="spark-empty">No compressions yet</span></div>
-  <div id="prompt_pager"></div>
-</div>
-
-<!-- RTK command history (session dashboards only) -->
-<div class="section" id="rtk_cmd_section" style="display:none">
-  <div class="section-title s-rtk">
-    Shell command history
-    <span id="rtk_cmd_count" style="color:var(--text-muted);font-size:10px;text-transform:none;letter-spacing:0"></span>
-  </div>
-  <table>
-    <thead><tr><th>Time</th><th>Command</th><th>Tokens in</th><th>Saved</th><th>%</th></tr></thead>
-    <tbody id="rtk_cmd_list"></tbody>
-  </table>
-  <div id="rtk_cmd_pager"></div>
-</div>
-
-<div class="footer">All data from metrics.db &amp; history.db in <code>~/Library/Application Support/rtk/</code> &nbsp;·&nbsp; updated every 2s</div>
+<footer class="statusbar">
+  <span>proxy on <b>127.0.0.1:9099</b></span>
+  <span>model <b id="foot_model">—</b></span>
+  <span>uptime <b id="foot_uptime">—</b></span>
+  <span>data from <b>metrics.db</b></span>
+</footer>
 
 <script>
 const SESSION = (typeof window !== 'undefined' && window.SESSION) ? window.SESSION : null;
 let FILTER_SESSION = SESSION ? SESSION.session_id : null;
+let lastRefresh = Date.now();
 
-function buildPager(containerId, page, pages, total, onPage) {
-  const el = document.getElementById(containerId);
-  if (!el) return;
-  if (pages <= 0) { el.innerHTML = ''; return; }
-  el.innerHTML =
-    '<button class="pager-btn" id="' + containerId + '_prev" ' + (page <= 1 ? 'disabled' : '') + '>← Prev</button>' +
-    '<span class="pager-info">Page ' + page + ' of ' + pages + ' &nbsp;·&nbsp; ' + total + ' total</span>' +
-    '<button class="pager-btn" id="' + containerId + '_next" ' + (page >= pages ? 'disabled' : '') + '>Next →</button>';
-  const prevBtn = document.getElementById(containerId + '_prev');
-  const nextBtn = document.getElementById(containerId + '_next');
-  if (prevBtn) prevBtn.onclick = () => onPage(page - 1);
-  if (nextBtn) nextBtn.onclick = () => onPage(page + 1);
+/* ---------- helpers ---------- */
+function setText(id, v) { const el = document.getElementById(id); if (el) el.textContent = v; }
+function escapeHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function fmt(n) {
+  if (n == null) return '—';
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+  if (n >= 1000)    return (n / 1000).toFixed(1) + 'k';
+  return Number(n).toLocaleString();
 }
-
-let _recentPage = 1;
-const RECENT_PAGE_SIZE = 10;
-let _recentAll = [];
-
-let _comprPage = 1;
-const COMPR_PAGE_SIZE = 20;
-
-let _rtkCmdPage = 1;
-const RTK_CMD_PAGE_SIZE = 25;
-
-function renderRecentPage(page) {
-  _recentPage = page;
-  const start = (page - 1) * RECENT_PAGE_SIZE;
-  const rows = _recentAll.slice(start, start + RECENT_PAGE_SIZE);
-  if (rows.length === 0) {
-    document.getElementById('recent_body').innerHTML =
-      '<tr><td colspan="6" class="muted" style="text-align:center;padding:12px">No data yet</td></tr>';
-    document.getElementById('recent_pager').innerHTML = '';
-    return;
-  }
-  document.getElementById('recent_body').innerHTML = rows.map(function(row) {
-    var roleBadge = row.role === 'system'
-      ? '<span style="font-size:10px;border-radius:3px;padding:1px 5px;background:var(--surface-raised);color:var(--accent-active);border:1px solid var(--border)">system</span>'
-      : '<span style="font-size:10px;border-radius:3px;padding:1px 5px;background:var(--surface-raised);color:var(--accent-savings);border:1px solid var(--accent-savings)">user</span>';
-    return '<tr>'
-      + '<td class="muted">' + row.ts.slice(11, 16) + '</td>'
-      + '<td><span class="model-badge">' + row.model + '</span></td>'
-      + '<td>' + roleBadge + '</td>'
-      + '<td>' + fmt(row.original_tokens) + ' &#x2192; ' + fmt(row.compressed_tokens) + '</td>'
-      + '<td class="green">' + row.savings_pct + '%</td>'
-      + '<td class="muted">' + row.latency_ms + ' ms</td>'
-      + '</tr>';
-  }).join('');
-  const pages = Math.ceil(_recentAll.length / RECENT_PAGE_SIZE);
-  buildPager('recent_pager', _recentPage, pages, _recentAll.length, renderRecentPage);
+function fmtCompact(n) {
+  n = n || 0;
+  if (n >= 1000000) return (n / 1000000).toFixed(2) + 'M';
+  if (n >= 1000)    return (n / 1000).toFixed(1) + 'k';
+  return String(Math.round(n));
 }
-
-function escapeHtml(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+function fmtUptime(s) {
+  if (s < 60) return s + 's';
+  if (s < 3600) return Math.floor(s / 60) + 'm';
+  return Math.floor(s / 3600) + 'h ' + Math.floor((s % 3600) / 60) + 'm';
 }
-
-// ── Session-scope chip (replaces the old #tracker_banner row) ──
-// Shown only when window.SESSION is truthy (i.e. on /dashboard/{session_id});
-// hidden on the global Overview. Prefers the human-readable display name,
-// falling back to the short session id.
-function updateBanner() {
-  const chip = document.getElementById('session_chip');
-  const label = document.getElementById('session_chip_label');
-  const back = document.getElementById('back_to_overview');
-  if (!chip || !label) return;
-  if (SESSION && SESSION.session_id) {
-    label.textContent = SESSION.display_name || SESSION.session_id.slice(0, 8);
-    chip.style.display = 'inline-flex';
-    if (back) back.style.display = 'inline';
-  } else {
-    chip.style.display = 'none';
-    if (back) back.style.display = 'none';
-  }
-}
-
-// ── Split-flap hero readout ──
-// Clears the container and appends one .flap tile per character (digits, commas,
-// "$" and "." each get their own flap, departure-board style).
 function renderFlaps(containerId, text) {
   const el = document.getElementById(containerId);
   if (!el) return;
@@ -644,450 +509,199 @@ function renderFlaps(containerId, text) {
     el.appendChild(flap);
   }
 }
-
-// ── Step 2/3: named-session cards (driven by /admin/sessions) ──
-let _sessCardsPage = 1;
-const SESSIONS_PAGE_SIZE = 10;
-
-function sessionCardHtml(s) {
-  const name = escapeHtml(s.display_name || ('session-' + s.session_id.slice(0, 8)));
-  return '<div class="card session-card" data-session-id="' + escapeHtml(s.session_id) + '">'
-    + '<div class="session-card-name-row">'
-    +   '<span class="session-card-name" data-name>' + name + '</span>'
-    +   '<button class="session-card-pencil" data-rename type="button" title="Rename session">&#9998;</button>'
-    + '</div>'
-    + '<div class="session-card-stats">'
-    +   '<span class="green">' + fmt(s.tokens_saved) + ' saved</span>'
-    +   '<span class="muted">' + (s.requests || 0) + ' req' + (s.requests === 1 ? '' : 's') + '</span>'
-    + '</div>'
-    + '<div class="session-card-meta">' + (s.last_seen ? new Date(s.last_seen).toLocaleString() : '—') + '</div>'
-    + '</div>';
-}
-
-async function loadSessionCards(page) {
-  if (page !== undefined) _sessCardsPage = page;
-  const container = document.getElementById('session_cards');
-  try {
-    const data = await fetch('/admin/sessions?page=' + _sessCardsPage + '&page_size=' + SESSIONS_PAGE_SIZE).then(r => r.json());
-    const items = data.items || [];
-    if (items.length === 0) {
-      container.innerHTML = '<span class="spark-empty">No sessions yet</span>';
-      buildPager('sessions_pager', 1, 0, 0, loadSessionCards);
-      return;
-    }
-    container.innerHTML = items.map(sessionCardHtml).join('');
-    buildPager('sessions_pager', data.page, data.pages, data.total, loadSessionCards);
-  } catch(e) { console.error(e); }
-}
-
-function startSessionRename(card, sessionId) {
-  const nameEl = card.querySelector('[data-name]');
-  if (!nameEl) return;
-  const current = nameEl.textContent;
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.className = 'track-input';
-  input.style.width = '100%';
-  input.value = current;
-
-  function restoreSpan(text) {
-    const span = document.createElement('span');
-    span.className = 'session-card-name';
-    span.setAttribute('data-name', '');
-    span.textContent = text;
-    input.replaceWith(span);
+function updateChip() {
+  const chip = document.getElementById('session_chip');
+  const label = document.getElementById('session_chip_label');
+  if (!chip || !label) return;
+  if (SESSION && SESSION.session_id) {
+    label.textContent = SESSION.display_name || SESSION.session_id.slice(0, 8);
+    chip.style.display = 'inline-flex';
+  } else {
+    chip.style.display = 'none';
   }
-
-  async function commit() {
-    const val = input.value.trim();
-    if (!val) { restoreSpan(current); return; }
-    try {
-      const r = await fetch('/session/' + encodeURIComponent(sessionId) + '/name', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: val }),
-      });
-      const data = await r.json();
-      restoreSpan(r.ok && data.display_name ? data.display_name : current);
-    } catch(e) {
-      console.error(e);
-      restoreSpan(current);
-    }
-  }
-
-  input.addEventListener('click', e => e.stopPropagation());
-  input.addEventListener('keydown', e => {
-    if (e.key === 'Enter') { e.preventDefault(); commit(); }
-    else if (e.key === 'Escape') { e.preventDefault(); restoreSpan(current); }
-  });
-
-  nameEl.replaceWith(input);
-  input.focus();
-  input.select();
+}
+function buildPager(containerId, page, pages, total, onPage) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  if (pages <= 1) { el.innerHTML = ''; return; }
+  el.className = 'pager';
+  el.innerHTML =
+    '<button class="pager-btn" id="' + containerId + '_prev" ' + (page <= 1 ? 'disabled' : '') + '>← Prev</button>' +
+    '<span class="pager-info">Page ' + page + ' of ' + pages + ' · ' + total + ' total</span>' +
+    '<button class="pager-btn" id="' + containerId + '_next" ' + (page >= pages ? 'disabled' : '') + '>Next →</button>';
+  const prev = document.getElementById(containerId + '_prev');
+  const next = document.getElementById(containerId + '_next');
+  if (prev) prev.onclick = () => onPage(page - 1);
+  if (next) next.onclick = () => onPage(page + 1);
 }
 
-document.getElementById('session_cards').addEventListener('click', function(e) {
-  const card = e.target.closest('.session-card');
-  if (!card) return;
-  if (e.target.closest('input.track-input')) return; // editing — don't navigate
-  const pencil = e.target.closest('[data-rename]');
-  if (pencil) {
-    e.stopPropagation();
-    startSessionRename(card, card.dataset.sessionId);
-    return;
-  }
-  window.location.href = '/dashboard/' + encodeURIComponent(card.dataset.sessionId);
-});
-
-function fmt(n) {
-  if (n == null) return '—';
-  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
-  if (n >= 1000)    return (n / 1000).toFixed(1) + 'k';
-  return n.toLocaleString();
-}
-// alias used by tile population
-var fmtN = fmt;
-
-function fmtUptime(secs) {
-  if (secs < 60)   return secs + 's';
-  if (secs < 3600) return Math.floor(secs / 60) + 'm';
-  return Math.floor(secs / 3600) + 'h ' + Math.floor((secs % 3600) / 60) + 'm';
-}
-function barColor(pct) {
-  if (pct >= 40) return 'var(--accent-savings)';
-  if (pct >= 20) return 'var(--accent-warn)';
-  return 'var(--text-muted)';
-}
-function ratioBadgeStyle(ratio) {
-  if (ratio >= 2.0) return 'background:var(--surface-raised);color:var(--accent-savings)';
-  if (ratio >= 1.5) return 'background:var(--surface-raised);color:var(--accent-warn)';
-  return 'background:var(--surface-raised);color:var(--text-muted)';
-}
-
+/* ---------- model switcher / dual routing ---------- */
 let _prevLoading = false;
-
 const MODEL_META = {
-  'llmlingua2':       { savings: '~47%', latency: '~370ms', note: 'fast · good default' },
+  'llmlingua2':       { savings: '~47%', latency: '~370ms',  note: 'fast · good default' },
   'llmlingua2-large': { savings: '~52%', latency: '~1700ms', note: 'most aggressive · slower' },
-  'kompress':         { savings: '~27%', latency: '~280ms', note: 'low distortion · precise' },
+  'kompress':         { savings: '~27%', latency: '~280ms',  note: 'low distortion · precise' },
 };
-
 function updateDualMeta(role) {
-  const sel  = document.getElementById('dual_' + role + '_select');
+  const sel = document.getElementById('dual_' + role + '_select');
   const meta = document.getElementById('dual_' + role + '_meta');
   if (!sel || !meta) return;
   const m = MODEL_META[sel.value];
-  if (m) meta.innerHTML = '<span class="hi">' + m.savings + ' savings</span> &nbsp;·&nbsp; ' + m.latency + ' &nbsp;·&nbsp; ' + m.note;
+  if (m) meta.innerHTML = '<span class="hi">' + m.savings + ' savings</span> · ' + m.latency + ' · ' + m.note;
 }
-
 async function switchModel(model) {
   const sel = document.getElementById('model_select');
   const lbl = document.getElementById('model_loading');
-  sel.disabled = true;
-  lbl.style.display = 'inline';
+  if (sel) sel.disabled = true;
+  if (lbl) lbl.style.display = 'inline';
   _prevLoading = true;
   try {
-    await fetch('/admin/set-model', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model }),
-    });
-  } catch(e) { console.error(e); }
+    await fetch('/admin/set-model', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model }) });
+  } catch (e) { console.error(e); }
 }
-
 async function applyDualModels() {
-  const ss     = document.getElementById('dual_system_select');
-  const us     = document.getElementById('dual_user_select');
-  const status = document.getElementById('dual_panel_status');
-  ss.disabled = true;
-  us.disabled = true;
-  if (status) status.textContent = 'loading…';
+  const ss = document.getElementById('dual_system_select');
+  const us = document.getElementById('dual_user_select');
+  if (ss) ss.disabled = true;
+  if (us) us.disabled = true;
   _prevLoading = true;
   try {
-    await fetch('/admin/set-dual-models', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ system: ss.value, user: us.value }),
-    });
-  } catch(e) { console.error(e); }
+    await fetch('/admin/set-dual-models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ system: ss.value, user: us.value }) });
+  } catch (e) { console.error(e); }
+}
+function syncModel(d) {
+  if (!d.compressor) return;
+  const c = d.compressor;
+  const sel = document.getElementById('model_select');
+  const lbl = document.getElementById('model_loading');
+  const badge = document.getElementById('model_badge');
+  setText('foot_model', c.model);
+  if (!sel) return;
+  if (c.loading) {
+    sel.disabled = true;
+    if (lbl) lbl.style.display = 'inline';
+    if (badge) badge.textContent = (c.model === 'dual' ? 'dual' : c.model) + ' · loading…';
+    _prevLoading = true;
+    return;
+  }
+  sel.value = c.model;
+  sel.disabled = false;
+  if (lbl) lbl.style.display = 'none';
+  const dss = document.getElementById('dual_system_select');
+  const dus = document.getElementById('dual_user_select');
+  if (dss) dss.disabled = false;
+  if (dus) dus.disabled = false;
+  const panel = document.getElementById('dual_routing_panel');
+  if (c.model === 'dual') {
+    if (badge) badge.textContent = 'dual';
+    if (panel) panel.style.display = 'block';
+    if (dss && !dss.disabled) { dss.value = c.model_system || 'llmlingua2-large'; updateDualMeta('system'); }
+    if (dus && !dus.disabled) { dus.value = c.model_user || 'kompress'; updateDualMeta('user'); }
+  } else {
+    if (panel) panel.style.display = 'none';
+    if (badge) badge.textContent = c.model + (c.param_name ? ' · ' + c.param_name + '=' + c.param_value : '');
+  }
+  if (_prevLoading) { _prevLoading = false; refreshTimeseries(); }
 }
 
+/* ---------- main refresh ---------- */
 async function refresh() {
   try {
-  if (SESSION) updateBanner();
-
-  // Build stats URL (with session filter when on session dashboard)
-  const statsUrl = '/stats' + (FILTER_SESSION ? '?session_id=' + encodeURIComponent(FILTER_SESSION) : '');
-
-    const r = await fetch(statsUrl);
-    const d = await r.json();
-
-    // ── Uptime ──
-    const uptimeSecs = Math.floor((Date.now() - new Date(d.started_at)) / 1000);
-    const uptimeStr = fmtUptime(uptimeSecs);
-    document.getElementById('uptime_display').textContent = 'up ' + uptimeStr;
-    document.getElementById('card_uptime').textContent = uptimeStr;
-
-    // ── API layer numbers (DB-driven, filtered by active model) ──
+    updateChip();
+    const url = '/stats' + (FILTER_SESSION ? '?session_id=' + encodeURIComponent(FILTER_SESSION) : '');
+    const d = await (await fetch(url)).json();
     const at = d.alltime || {};
-    const apiPctDisplay = at.avg_savings_pct != null ? Math.round(at.avg_savings_pct) : 0;
 
-    // ── Shared hero/card metrics (Step 1: promoted into the hero row) ──
-    const latencyStr = at.avg_latency_ms != null ? Math.round(at.avg_latency_ms) + ' ms' : '—';
-    const costStr = (d.cost_per_mtok != null && at.tokens_saved != null)
-      ? '$' + ((at.tokens_saved / 1000000) * d.cost_per_mtok).toFixed(2)
-      : '—';
-    const cacheSinceDeploy = d.cache ? d.cache.since_deploy : null;
-    const hitRateStr = cacheSinceDeploy ? Math.round((cacheSinceDeploy.hit_ratio || 0) * 100) + '%' : '—';
+    lastRefresh = Date.now();
+    setText('foot_uptime', fmtUptime(Math.floor((Date.now() - new Date(d.started_at)) / 1000)));
+    setText('hero_meta_scope', SESSION ? (SESSION.display_name || SESSION.session_id.slice(0, 8)) : 'ALL SESSIONS');
 
-    // ── Split-flap hero headline numbers (session-filtered when scoped) ──
-    renderFlaps('flap_tokens_saved', (at.tokens_saved || 0).toLocaleString());
-    renderFlaps('flap_cost_saved', costStr === '—' ? '$0.00' : costStr);
+    // Hero flaps
+    const cost = (d.cost_per_mtok != null && at.tokens_saved != null) ? (at.tokens_saved / 1000000) * d.cost_per_mtok : 0;
+    renderFlaps('flap_tokens', fmtCompact(at.tokens_saved || 0));
+    renderFlaps('flap_cost', '$' + cost.toFixed(2));
 
-    // ── Hero: two-layer vs solo ──
-    const hasRtk = d.rtk && d.rtk.total_commands > 0;
-    document.getElementById('hero_layers').style.display = hasRtk ? 'grid' : 'none';
-    document.getElementById('hero_solo').style.display   = hasRtk ? 'none' : 'grid';
-    document.getElementById('rtk_hint').style.display    = hasRtk ? 'none' : 'flex';
-    document.getElementById('rtk_section').style.display = hasRtk ? 'block' : 'none';
+    // Hero sub
+    const sessCount = (at.sessions != null ? at.sessions : Object.keys(d.sessions || {}).length);
+    setText('sub_today_saved', fmt((d.today && d.today.tokens_saved) || 0));
+    setText('sub_requests_today', fmt((d.today && d.today.requests) || 0));
+    setText('sub_ratio', (at.avg_savings_pct != null ? Math.round(at.avg_savings_pct) : 0) + '%');
+    setText('sub_sessions', sessCount);
 
-    // ── Update API layer model badge (both hero variants) ──
-    const activeModel = d.compressor ? d.compressor.model : 'llm-compressor';
-    const apiBadgeEl = document.getElementById('api_layer_badge');
-    if (apiBadgeEl) apiBadgeEl.textContent = activeModel;
-    const apiSubEl = document.getElementById('api_layer_sub');
-    if (apiSubEl) apiSubEl.textContent = 'Prompt compression · ' + activeModel + ' tokenizer units';
-    const apiSubSoloEl = document.getElementById('api_layer_sub_solo');
-    if (apiSubSoloEl) apiSubSoloEl.textContent = activeModel + ' tokenizer units';
+    // Request flow (derived from all-time aggregates)
+    const reqs = at.requests || 0;
+    const pct = at.avg_savings_pct || 0;
+    const savedAvg = reqs ? (at.tokens_saved || 0) / reqs : 0;
+    const inAvg = pct > 0 ? savedAvg / (pct / 100) : 0;
+    const outAvg = Math.max(inAvg - savedAvg, 0);
+    setText('flow_in', reqs ? fmt(Math.round(inAvg)) : '—');
+    setText('flow_compress_pct', (Math.round(pct * 10) / 10) + '%');
+    setText('flow_out', reqs ? fmt(Math.round(outAvg)) : '—');
+    setText('flow_compress_sub', 'avg reduction · ' + (d.compressor ? d.compressor.model : 'llmlingua2'));
+    const rc = (d.recent || []).slice(0, 12);
+    const bars = document.getElementById('flow_bars');
+    if (bars) bars.innerHTML = rc.length
+      ? rc.map(r => '<i style="height:' + Math.max(15, Math.min(100, Math.round(r.savings_pct || 0))) + '%"></i>').join('')
+      : '<i style="height:40%"></i>';
 
-    if (hasRtk) {
-      const rtk = d.rtk;
-      const rtkPct = rtk.total_input_tokens > 0
-        ? Math.round((rtk.total_saved_tokens / rtk.total_input_tokens) * 100) : 0;
-      document.getElementById('rtk_pct').textContent    = rtkPct + '%';
-      document.getElementById('rtk_cmds').textContent   = fmt(rtk.total_commands);
-      document.getElementById('rtk_saved').textContent  = fmt(rtk.total_saved_tokens);
-      document.getElementById('rtk_avg').textContent    = rtk.avg_savings_pct + '%';
-      document.getElementById('api_pct_layers').textContent   = apiPctDisplay + '%';
-      document.getElementById('api_reqs_layers').textContent  = fmt(at.requests);
-      document.getElementById('api_saved_layers').textContent = fmt(at.tokens_saved);
-      document.getElementById('api_ratio_layers').textContent = at.avg_ratio ? at.avg_ratio + '×' : '—';
-      document.getElementById('api_cost_layers').textContent = costStr;
-      document.getElementById('api_latency_layers').textContent = latencyStr;
-      document.getElementById('api_hit_rate_layers').textContent = hitRateStr;
+    // Cache ring
+    const cd = d.cache ? d.cache.since_deploy : null;
+    const hit = cd ? Math.round((cd.hit_ratio || 0) * 100) : 0;
+    const ring = document.getElementById('ring');
+    if (ring) ring.style.setProperty('--pct', hit);
+    setText('ring_pct', hit + '%');
+    setText('ring_sub', cd ? (fmt(cd.hits) + ' / ' + fmt(cd.total) + ' hits') : 'no cache data');
 
-      // rtk command table
-      const maxSaved = Math.max(...rtk.top_commands.map(c => c.saved), 1);
-      document.getElementById('rtk_cmd_body').innerHTML = rtk.top_commands.map(c => {
-        const w = Math.round((c.saved / maxSaved) * 100);
-        return '<tr>'
-          + '<td class="cmd-name">' + c.cmd + '</td>'
-          + '<td class="muted">' + c.count + '</td>'
-          + '<td class="green">' + fmt(c.saved) + '</td>'
-          + '<td class="muted">' + c.avg_pct + '%</td>'
-          + '<td><div class="cmd-bar-wrap"><div class="cmd-bar-fill" style="width:' + w + '%"></div></div></td>'
-          + '</tr>';
-      }).join('');
-    } else {
-      // Solo hero (DB-driven, filtered by active model)
-      document.getElementById('savings_pct').textContent = apiPctDisplay + '%';
-      document.getElementById('t_requests').textContent  = fmt(at.requests);
-      document.getElementById('t_sessions').textContent  = at.sessions ?? Object.keys(d.sessions).length;
-      document.getElementById('t_saved').textContent     = fmt(at.tokens_saved) + ' (' + apiPctDisplay + '%)';
-      document.getElementById('t_ratio').textContent     = at.avg_ratio ? at.avg_ratio + '×' : '—';
-      document.getElementById('t_cost').textContent      = costStr;
-      document.getElementById('t_latency').textContent   = latencyStr;
-      document.getElementById('t_hit_rate').textContent  = hitRateStr;
-    }
+    // Sessions + latency tiles
+    setText('tile_sessions', sessCount);
+    setText('tile_sessions_sub', (d.tracked && d.tracked.sessions) ? (d.tracked.sessions + ' tracked') : 'live');
+    setText('tile_latency', at.avg_latency_ms != null ? Math.round(at.avg_latency_ms) : 0);
+    setText('tile_latency_sub', 'avg added per request');
 
-    // ── Model badge + select sync ──
-    if (d.compressor) {
-      const c = d.compressor;
-      const sel = document.getElementById('model_select');
-      const lbl = document.getElementById('model_loading');
-      if (c.loading) {
-        sel.disabled = true;
-        lbl.style.display = 'inline';
-        document.getElementById('model_badge').textContent = (c.model === 'dual' ? 'dual' : c.model) + ' · loading…';
-        _prevLoading = true;
-      } else {
-        sel.value = c.model;
-        sel.disabled = false;
-        lbl.style.display = 'none';
-        // Re-enable dual routing panel selects after loading finishes
-        const dss = document.getElementById('dual_system_select');
-        const dus = document.getElementById('dual_user_select');
-        if (dss) dss.disabled = false;
-        if (dus) dus.disabled = false;
-        if (c.model === 'dual') {
-          const sys = c.model_system || 'llmlingua2-large';
-          const usr = c.model_user   || 'kompress';
-          document.getElementById('model_badge').textContent = 'dual';
-          // Show routing panel and sync selects
-          const panel  = document.getElementById('dual_routing_panel');
-          const status = document.getElementById('dual_panel_status');
-          if (panel)  panel.style.display = '';
-          if (status) status.textContent = 'changes apply immediately · persisted across restarts';
-          const ss = document.getElementById('dual_system_select');
-          const us = document.getElementById('dual_user_select');
-          if (ss && !ss.disabled) { ss.value = sys; updateDualMeta('system'); }
-          if (us && !us.disabled) { us.value = usr; updateDualMeta('user'); }
-        } else {
-          const panel = document.getElementById('dual_routing_panel');
-          if (panel) panel.style.display = 'none';
-          document.getElementById('model_badge').textContent =
-            c.model + (c.param_name ? ' · ' + c.param_name + '=' + c.param_value : '');
-        }
-        if (_prevLoading) { _prevLoading = false; refreshTimeseries(); }
-      }
-    }
+    // Model bars
+    renderModelBars(d.by_model || []);
 
-    // ── Tracked sessions summary ──
-    const tracked = d.tracked || {};
-    const trackedEl = document.getElementById('tracked_summary');
-    if (trackedEl && !SESSION && tracked.sessions > 0) {
-      trackedEl.textContent = fmt(tracked.tokens_saved) + ' tokens saved across ' + tracked.sessions + ' tracked session' + (tracked.sessions !== 1 ? 's' : '') + ' · ';
-      const link = document.createElement('a');
-      link.href = '/play/list';
-      link.textContent = 'view history';
-      link.style.cssText = 'color:var(--accent-active);font-size:11px';
-      trackedEl.appendChild(link);
-      trackedEl.style.display = '';
-    } else if (trackedEl) {
-      trackedEl.style.display = 'none';
-    }
+    // Model switcher sync
+    syncModel(d);
 
-    // ── Today tiles (DB-driven) ──
-    document.getElementById('tile_requests').textContent = d.today.requests ?? 0;
-    document.getElementById('tile_savings').textContent = (d.today.avg_savings_pct ?? 0) + '%';
-    document.getElementById('tile_latency').textContent = (d.today.avg_latency_ms ?? 0) + 'ms';
-    document.getElementById('tile_tokens_saved').textContent = fmtN(d.today.tokens_saved ?? 0);
-
-    // ── Row 2: Model comparison ──
-    if (d.by_model && d.by_model.length > 0) {
-      document.getElementById('model_section').style.display = 'block';
-      const maxReq = Math.max(...d.by_model.map(m => m.requests), 1);
-      document.getElementById('model_body').innerHTML = d.by_model.map(function(m) {
-        const isActive = d.compressor && m.model === d.compressor.model;
-        const bg = isActive ? 'background:var(--surface-raised);' : '';
-        const w = Math.round((m.requests / maxReq) * 100);
-        return '<tr style="' + bg + '">'
-          + '<td><span class="model-badge">' + m.model + '</span></td>'
-          + '<td><div class="model-bar-wrap" style="width:160px"><div class="model-bar-fill" style="width:' + w + '%;background:' + barColor(m.avg_savings_pct || 0) + ';height:100%"></div></div>'
-          + ' <span class="muted" style="font-size:10px">' + m.requests + '</span></td>'
-          + '<td class="green">' + (m.avg_savings_pct ?? '—') + '%</td>'
-          + '<td class="muted">' + (m.avg_latency_ms != null ? m.avg_latency_ms + ' ms' : '—') + '</td>'
-          + '</tr>';
-      }).join('');
-    }
-
-    // ── Metric cards (DB-driven, filtered by active model) ──
-    document.getElementById('card_requests').textContent = fmt(at.requests);
-    document.getElementById('card_saved').textContent    = fmt(at.tokens_saved);
-    document.getElementById('card_sessions').textContent = at.sessions ?? Object.keys(d.sessions).length;
-    document.getElementById('card_ratio').textContent    = at.avg_ratio ? at.avg_ratio + '×' : '—';
-
-    // ── Cost card (Avg Latency / Hit Rate cards were moved into the hero row, Step 1) ──
-    if (d.cost_per_mtok != null && at.tokens_saved != null) {
-      document.getElementById('card_cost').textContent = costStr;
-      document.getElementById('card_cost_label').textContent = '@ $' + d.cost_per_mtok.toFixed(2) + ' / MTok';
-    }
-
-    // ── Cache cards ──
-    if (d.cache) {
-      const sd  = d.cache.since_deploy;
-
-      document.getElementById('card_cache_hits').textContent = fmt(sd.hits);
-      document.getElementById('card_cache_entries').textContent =
-        fmt(d.cache.entries || 0) + ' entr' + ((d.cache.entries === 1) ? 'y' : 'ies') + ' cached';
-
-      const ms = d.cache.time_saved_ms || 0;
-      const timeFmt = ms >= 60000
-        ? Math.floor(ms / 60000) + 'm ' + Math.floor((ms % 60000) / 1000) + 's'
-        : ms >= 1000 ? (ms / 1000).toFixed(1) + 's' : ms + 'ms';
-      document.getElementById('card_cache_time').textContent = timeFmt;
-
-      // Role breakdown table
-      const byRole = d.cache.by_role || {};
-      const roles = Object.entries(byRole);
-      if (roles.length > 0) {
-        document.getElementById('cache_section').style.display = 'block';
-        document.getElementById('cache_role_body').innerHTML = roles.map(([role, r]) => {
-          const badge = role === 'system'
-            ? '<span style="font-size:10px;border-radius:3px;padding:1px 5px;background:var(--surface-raised);color:var(--accent-active);border:1px solid var(--border)">system</span>'
-            : '<span style="font-size:10px;border-radius:3px;padding:1px 5px;background:var(--surface-raised);color:var(--accent-savings);border:1px solid var(--accent-savings)">user</span>';
-          const rPct = Math.round((r.hit_ratio || 0) * 100);
-          const rMs  = r.time_saved_ms || 0;
-          const rFmt = rMs >= 1000 ? (rMs / 1000).toFixed(1) + 's' : rMs + 'ms';
-          return '<tr>'
-            + '<td>' + badge + '</td>'
-            + '<td class="muted">' + fmt(r.hits) + ' / ' + fmt(r.total) + '</td>'
-            + '<td class="green">' + rPct + '%</td>'
-            + '<td class="muted">' + r.avg_miss_latency_ms + ' ms</td>'
-            + '<td class="green">' + rFmt + '</td>'
-            + '</tr>';
-        }).join('');
-      }
-    }
-
-    // ── Row 4: Recent activity table ──
-    _recentAll = d.recent || [];
-    renderRecentPage(_recentPage);
-
-    // ── Sparkline ──
-    const comps = [...d.recent_compressions].reverse();
-    const sparkEl = document.getElementById('sparkline');
-    if (comps.length === 0) {
-      sparkEl.innerHTML = '<span class="spark-empty">No compressions yet</span>';
-    } else {
-      const maxOrig = Math.max(...comps.map(c => c.original), 1);
-      sparkEl.innerHTML = comps.map(c => {
-        const pct = c.original > 0 ? Math.round((1 - c.compressed / c.original) * 100) : 0;
-        const h = Math.max(10, Math.round((c.original / maxOrig) * 100));
-        const tip = c.ts + ' · ' + c.session_id + ' · ' + pct + '% saved (' + fmt(c.original) + ' → ' + fmt(c.compressed) + ')' +
-          (c.latency_ms != null ? ' · ' + c.latency_ms + 'ms' : '');
-        return '<div class="bar" style="background:' + barColor(pct) + ';height:' + h + '%" title="' + tip + '"></div>';
-      }).join('');
-    }
-
-    // ── Session bars (LLMLingua + RTK stacked) ──
-    const sessions = Object.entries(d.sessions).sort((a, b) =>
-      ((b[1].saved_tokens || 0) + (b[1].rtk_saved || 0)) - ((a[1].saved_tokens || 0) + (a[1].rtk_saved || 0))
-    );
-    const maxSess = Math.max(...sessions.map(([, s]) => (s.saved_tokens || 0) + (s.rtk_saved || 0)), 1);
-    const sessBarEl = document.getElementById('sess_bars');
-    if (sessions.length === 0) {
-      sessBarEl.innerHTML = '<span class="spark-empty">No sessions yet</span>';
-    } else {
-      sessBarEl.innerHTML = sessions.slice(0, 8).map(([id, s]) => {
-        const sPct = s.original_tokens > 0
-          ? Math.round((1 - s.compressed_tokens / s.original_tokens) * 100) : 0;
-        const apiSaved = s.saved_tokens || 0;
-        const rtkSaved = s.rtk_saved || 0;
-        const total    = apiSaved + rtkSaved;
-        const wApi = Math.round((apiSaved / maxSess) * 100);
-        const wRtk = Math.round((rtkSaved / maxSess) * 100);
-        const label = s.name ? s.name : id.slice(0, 8);
-        const tip = 'API: ' + fmt(apiSaved) + (rtkSaved ? ' · rtk: ' + fmt(rtkSaved) : '');
-        return '<div class="sess-bar-row" title="' + tip + '">'
-          + '<div class="sess-bar-label" title="' + id + '">' + label + '</div>'
-          + '<div class="sess-bar-wrap">'
-          +   '<div class="sess-bar-fill" style="width:' + wApi + '%;background:' + barColor(sPct) + '"></div>'
-          +   (rtkSaved ? '<div class="sess-bar-fill" style="width:' + wRtk + '%;background:var(--accent-active);opacity:0.7"></div>' : '')
-          + '</div>'
-          + '<div class="sess-bar-pct">' + sPct + '%</div>'
-          + '<div class="sess-bar-saved">' + fmt(total) + (rtkSaved ? ' <span style="color:var(--accent-active);font-size:9px">+rtk</span>' : '') + '</div>'
-          + '</div>';
-      }).join('');
-    }
-
-    // Named-session cards are fetched separately from /admin/sessions (see
-    // loadSessionCards) on their own cadence — they don't need to re-fetch on
-    // every 2s refresh() tick like the rest of this function does.
-
-  } catch(e) { console.error(e); }
+    // Recent activity board
+    renderRecent(d.recent || []);
+  } catch (e) { console.error(e); }
 }
 
+function renderModelBars(rows) {
+  const el = document.getElementById('model_bars');
+  if (!el) return;
+  if (!rows.length) { el.innerHTML = '<div class="m-empty">No model data yet</div>'; return; }
+  const maxReq = Math.max.apply(null, rows.map(m => m.requests || 0).concat([1]));
+  const colors = ['var(--accent-active)', 'var(--accent-warn)', 'var(--accent-cache)', 'var(--accent-savings)'];
+  el.innerHTML = rows.map((m, i) => {
+    const w = Math.round(((m.requests || 0) / maxReq) * 100);
+    return '<div class="model-bar-row">'
+      + '<span class="m-name" title="' + escapeHtml(m.model) + '">' + escapeHtml(m.model) + '</span>'
+      + '<span class="model-bar-track"><span class="model-bar-fill" style="width:' + w + '%;background:' + colors[i % colors.length] + '"></span></span>'
+      + '<span class="m-pct">' + (m.avg_savings_pct != null ? m.avg_savings_pct + '%' : '—') + '</span>'
+      + '</div>';
+  }).join('');
+}
+
+function renderRecent(rows) {
+  const tb = document.getElementById('recent_body');
+  if (!tb) return;
+  if (!rows.length) { tb.innerHTML = '<tr><td colspan="5" class="b-empty">No activity yet</td></tr>'; return; }
+  tb.innerHTML = rows.slice(0, 10).map(r => {
+    const badge = r.role === 'system' ? '<span class="badge sys">system</span>' : '<span class="badge usr">user</span>';
+    return '<tr>'
+      + '<td class="t-time">' + (r.ts ? r.ts.slice(11, 19) : '') + '</td>'
+      + '<td>' + badge + '</td>'
+      + '<td><span class="model-pill">' + escapeHtml(r.model || '—') + '</span></td>'
+      + '<td class="t-flow"><b>' + fmt(r.original_tokens) + '</b> → ' + fmt(r.compressed_tokens) + '</td>'
+      + '<td class="pct-good">' + (r.savings_pct != null ? r.savings_pct : 0) + '%</td>'
+      + '</tr>';
+  }).join('');
+}
+
+/* ---------- 48h area chart ---------- */
 async function refreshTimeseries() {
   try {
     const sel = document.getElementById('model_select');
@@ -1095,37 +709,131 @@ async function refreshTimeseries() {
     const params = [];
     if (model) params.push('model=' + encodeURIComponent(model));
     if (FILTER_SESSION) params.push('session_id=' + encodeURIComponent(FILTER_SESSION));
-    const r = await fetch('/stats/timeseries' + (params.length ? '?' + params.join('&') : ''));
-    const buckets = await r.json();
-    const chartEl = document.getElementById('ts_chart');
-    const labelsEl = document.getElementById('ts_labels');
-    if (!buckets || buckets.length === 0) {
-      chartEl.innerHTML = '<span class="spark-empty">No data</span>';
-      labelsEl.innerHTML = '';
+    const buckets = await (await fetch('/stats/timeseries' + (params.length ? '?' + params.join('&') : ''))).json();
+    const line = document.getElementById('linePath');
+    const area = document.getElementById('areaPath');
+    const live = document.getElementById('livePoint');
+    const axis = document.getElementById('chartAxis');
+    if (!buckets || !buckets.length) {
+      if (line) line.setAttribute('d', '');
+      if (area) area.setAttribute('d', '');
+      if (live) live.setAttribute('cx', -10);
+      if (axis) axis.innerHTML = '';
+      setText('chart_total', 'no data');
       return;
     }
-    const maxReq = Math.max(...buckets.map(b => b.requests), 1);
-    chartEl.innerHTML = buckets.map(b => {
-      const h = Math.max(4, Math.round((b.requests / maxReq) * 100));
-      const tip = b.hour.slice(11, 16) + ' · ' + b.requests + ' req · ' +
-        b.avg_savings_pct + '% saved · ' + b.avg_latency_ms + 'ms avg';
-      return '<div class="ts-bar" style="height:' + h + '%;background:' + barColor(b.avg_savings_pct) + '" title="' + tip + '"></div>';
-    }).join('');
-    const first = buckets[0].hour.slice(11, 16);
-    const last  = buckets[buckets.length - 1].hour.slice(11, 16);
-    labelsEl.innerHTML = '<span>' + first + '</span><span>' + last + '</span>';
-  } catch(e) { console.error(e); }
+    const W = 960, H = 240, padTop = 14, padBottom = 26;
+    const vals = buckets.map(b => b.requests || 0);
+    const max = Math.max.apply(null, vals.concat([1]));
+    const n = buckets.length;
+    const stepX = n > 1 ? W / (n - 1) : W;
+    const X = i => i * stepX;
+    const Y = v => padTop + (1 - v / max) * (H - padTop - padBottom);
+    const pts = vals.map((v, i) => [X(i), Y(v)]);
+    let dd = 'M ' + pts[0][0] + ' ' + pts[0][1];
+    for (let i = 0; i < pts.length - 1; i++) {
+      const p0 = pts[i], p1 = pts[i + 1];
+      const mx = (p0[0] + p1[0]) / 2, my = (p0[1] + p1[1]) / 2;
+      dd += ' Q ' + p0[0] + ' ' + p0[1] + ' ' + mx + ' ' + my;
+    }
+    dd += ' L ' + pts[pts.length - 1][0] + ' ' + pts[pts.length - 1][1];
+    if (line) line.setAttribute('d', dd);
+    if (area) area.setAttribute('d', dd + ' L ' + pts[pts.length - 1][0] + ' ' + (H - padBottom) + ' L 0 ' + (H - padBottom) + ' Z');
+    const last = pts[pts.length - 1];
+    if (live) { live.setAttribute('cx', last[0]); live.setAttribute('cy', last[1]); }
+    setText('chart_total', vals.reduce((a, b) => a + b, 0) + ' requests · 48h');
+    if (axis) {
+      const f = buckets[0].hour ? buckets[0].hour.slice(11, 16) : '';
+      const l = buckets[n - 1].hour ? buckets[n - 1].hour.slice(11, 16) : '';
+      axis.innerHTML = '<text x="0" y="238">' + f + '</text><text x="960" y="238" text-anchor="end">' + l + '</text>';
+    }
+  } catch (e) { console.error(e); }
 }
 
+/* ---------- session cards ---------- */
+let _sessPage = 1;
+const SESS_PAGE_SIZE = 12;
+function sessionCardHtml(s, sum) {
+  const name = escapeHtml(s.display_name || ('session-' + s.session_id.slice(0, 8)));
+  const share = Math.round(((s.tokens_saved || 0) / sum) * 1000) / 10;
+  return '<div class="session-card" data-session-id="' + escapeHtml(s.session_id) + '">'
+    + '<div class="sc-top"><span class="sc-name" data-name>' + name + '</span>'
+    +   '<button class="sc-pencil" data-rename type="button" title="Rename session">&#9998;</button></div>'
+    + '<div class="sc-metrics">'
+    +   '<div class="sc-metric"><div class="m-num accent">' + fmt(s.tokens_saved) + '</div><div class="m-lbl">tokens saved</div></div>'
+    +   '<div class="sc-metric"><div class="m-num">' + (s.requests || 0) + '</div><div class="m-lbl">requests</div></div>'
+    + '</div>'
+    + '<div class="sc-share"><div class="sc-share-top"><span>share of page</span><b>' + share + '%</b></div>'
+    +   '<div class="sc-share-track"><div class="sc-share-fill" style="width:' + share + '%"></div></div></div>'
+    + '<div class="sc-active">' + (s.last_seen ? new Date(s.last_seen).toLocaleString() : '—') + '</div>'
+    + '</div>';
+}
+async function loadSessionCards(page) {
+  if (page !== undefined) _sessPage = page;
+  const el = document.getElementById('sessions_grid');
+  if (!el) return;
+  try {
+    const data = await (await fetch('/admin/sessions?page=' + _sessPage + '&page_size=' + SESS_PAGE_SIZE)).json();
+    const items = data.items || [];
+    if (!items.length) { el.innerHTML = '<div class="b-empty">No sessions yet</div>'; buildPager('sessions_pager', 1, 0, 0, loadSessionCards); return; }
+    const sum = items.reduce((a, s) => a + (s.tokens_saved || 0), 0) || 1;
+    el.innerHTML = items.map(s => sessionCardHtml(s, sum)).join('');
+    buildPager('sessions_pager', data.page, data.pages, data.total, loadSessionCards);
+  } catch (e) { console.error(e); }
+}
+function startSessionRename(card, sessionId) {
+  const nameEl = card.querySelector('[data-name]');
+  if (!nameEl) return;
+  const current = nameEl.textContent;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'track-input';
+  input.value = current;
+  function restore(text) {
+    const span = document.createElement('span');
+    span.className = 'sc-name';
+    span.setAttribute('data-name', '');
+    span.textContent = text;
+    input.replaceWith(span);
+  }
+  async function commit() {
+    const val = input.value.trim();
+    if (!val) { restore(current); return; }
+    try {
+      const r = await fetch('/session/' + encodeURIComponent(sessionId) + '/name', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: val }) });
+      const data = await r.json();
+      restore(r.ok && data.display_name ? data.display_name : current);
+    } catch (e) { console.error(e); restore(current); }
+  }
+  input.addEventListener('click', e => e.stopPropagation());
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); commit(); }
+    else if (e.key === 'Escape') { e.preventDefault(); restore(current); }
+  });
+  nameEl.replaceWith(input);
+  input.focus();
+  input.select();
+}
+document.getElementById('sessions_grid').addEventListener('click', function (e) {
+  const card = e.target.closest('.session-card');
+  if (!card) return;
+  if (e.target.closest('input.track-input')) return;
+  const pencil = e.target.closest('[data-rename]');
+  if (pencil) { e.stopPropagation(); startSessionRename(card, card.dataset.sessionId); return; }
+  window.location.href = '/dashboard/' + encodeURIComponent(card.dataset.sessionId);
+});
+
+/* ---------- session detail: prompt + rtk history ---------- */
+let _comprPage = 1; const COMPR_PAGE_SIZE = 20;
+let _rtkCmdPage = 1; const RTK_CMD_PAGE_SIZE = 25;
 function togglePrompt(id) {
   const body = document.getElementById(id + '_body');
   const arrow = document.getElementById(id + '_arrow');
   if (!body) return;
-  const isOpen = body.classList.contains('open');
-  body.classList.toggle('open', !isOpen);
-  if (arrow) arrow.textContent = isOpen ? '▶' : '▼';
+  const open = body.classList.contains('open');
+  body.classList.toggle('open', !open);
+  if (arrow) arrow.textContent = open ? '▶' : '▼';
 }
-
 async function refreshCompressions(page) {
   if (!SESSION || !SESSION.session_id) return;
   const section = document.getElementById('prompt_section');
@@ -1133,12 +841,12 @@ async function refreshCompressions(page) {
   section.style.display = 'block';
   if (page !== undefined) _comprPage = page;
   try {
-    const data = await fetch('/session/' + encodeURIComponent(SESSION.session_id) + '/compressions?page=' + _comprPage + '&page_size=' + COMPR_PAGE_SIZE).then(r => r.json());
+    const data = await (await fetch('/session/' + encodeURIComponent(SESSION.session_id) + '/compressions?page=' + _comprPage + '&page_size=' + COMPR_PAGE_SIZE)).json();
     const listEl = document.getElementById('prompt_list');
     const countEl = document.getElementById('prompt_count');
     const rows = data.items || [];
     if (rows.length === 0 && data.total === 0) {
-      listEl.innerHTML = '<span class="spark-empty">No compressions yet</span>';
+      listEl.innerHTML = '<div class="b-empty">No compressions yet</div>';
       countEl.textContent = '';
       document.getElementById('prompt_pager').innerHTML = '';
       return;
@@ -1156,18 +864,17 @@ async function refreshCompressions(page) {
         + '<div class="prompt-row-header" data-toggle-id="' + id + '">'
         + '<span class="prompt-toggle" id="' + id + '_arrow">▶</span>'
         + '<span class="prompt-ts">' + ts + '</span>'
-        + '<span class="prompt-tokens">' + fmt(r.original_tokens) + ' → ' + fmt(r.compressed_tokens) + ' tok</span>'
+        + '<span>' + fmt(r.original_tokens) + ' → ' + fmt(r.compressed_tokens) + ' tok</span>'
         + '<span class="prompt-savings">-' + pct + '%</span>'
-        + '<span class="model-badge" style="font-size:9px;padding:1px 5px">' + (r.model || '—') + '</span>'
+        + '<span class="model-pill">' + (r.model || '—') + '</span>'
         + (r.latency_ms ? '<span class="prompt-latency">' + Math.round(r.latency_ms) + 'ms</span>' : '')
         + (hasText ? '' : '<span class="prompt-no-text">text not stored</span>')
         + '</div>'
         + (hasText
-          ? '<div class="prompt-body" id="' + id + '_body">'
-            + '<div class="prompt-panels">'
-            + '<div><div class="prompt-panel-label"><span>Original</span><span style="color:var(--text-muted)">' + fmt(origLen) + ' chars</span></div>'
+          ? '<div class="prompt-body" id="' + id + '_body"><div class="prompt-panels">'
+            + '<div><div class="prompt-panel-label"><span>Original</span><span>' + fmt(origLen) + ' chars</span></div>'
             + '<pre class="prompt-text">' + escapeHtml(r.original_text) + '</pre></div>'
-            + '<div><div class="prompt-panel-label"><span>Compressed</span><span style="color:var(--accent-savings)">' + fmt(compLen) + ' chars</span></div>'
+            + '<div><div class="prompt-panel-label"><span>Compressed</span><span>' + fmt(compLen) + ' chars</span></div>'
             + '<pre class="prompt-text compressed">' + escapeHtml(r.compressed_text || '') + '</pre></div>'
             + '</div></div>'
           : '')
@@ -1178,14 +885,13 @@ async function refreshCompressions(page) {
       const arrow = document.getElementById(bodyId.replace('_body', '_arrow'));
       if (body) { body.classList.add('open'); if (arrow) arrow.textContent = '▼'; }
     });
-    listEl.onclick = function(e) {
+    listEl.onclick = function (e) {
       const hdr = e.target.closest('[data-toggle-id]');
       if (hdr) togglePrompt(hdr.dataset.toggleId);
     };
     buildPager('prompt_pager', data.page, data.pages, data.total, refreshCompressions);
-  } catch(e) { console.error(e); }
+  } catch (e) { console.error(e); }
 }
-
 async function refreshRtkCommands(page) {
   if (!SESSION || !SESSION.session_id) return;
   const section = document.getElementById('rtk_cmd_section');
@@ -1193,12 +899,12 @@ async function refreshRtkCommands(page) {
   section.style.display = 'block';
   if (page !== undefined) _rtkCmdPage = page;
   try {
-    const data = await fetch('/session/' + encodeURIComponent(SESSION.session_id) + '/rtk-commands?page=' + _rtkCmdPage + '&page_size=' + RTK_CMD_PAGE_SIZE).then(r => r.json());
+    const data = await (await fetch('/session/' + encodeURIComponent(SESSION.session_id) + '/rtk-commands?page=' + _rtkCmdPage + '&page_size=' + RTK_CMD_PAGE_SIZE)).json();
     const tbody = document.getElementById('rtk_cmd_list');
     const countEl = document.getElementById('rtk_cmd_count');
     const rows = data.items || [];
     if (rows.length === 0 && data.total === 0) {
-      tbody.innerHTML = '<tr><td colspan="5" class="spark-empty">No RTK commands this session</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="5" class="b-empty">No shell commands this session</td></tr>';
       countEl.textContent = '';
       document.getElementById('rtk_cmd_pager').innerHTML = '';
       return;
@@ -1206,31 +912,34 @@ async function refreshRtkCommands(page) {
     countEl.textContent = data.total + ' commands total';
     tbody.innerHTML = rows.map(r => {
       const pct = r.savings_pct != null ? r.savings_pct : 0;
-      const ts  = r.ts ? r.ts.slice(11, 16) : '';
+      const ts = r.ts ? r.ts.slice(11, 16) : '';
       const color = pct >= 40 ? 'var(--accent-savings)' : pct >= 20 ? 'var(--accent-warn)' : 'var(--text-muted)';
       return '<tr>'
-        + '<td class="muted">' + ts + '</td>'
-        + '<td style="font-family:monospace;font-size:11px;color:var(--text);max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + escapeHtml(r.rtk_cmd) + '">' + escapeHtml(r.rtk_cmd) + '</td>'
-        + '<td class="muted">' + fmt(r.input_tokens) + '</td>'
+        + '<td class="t-time">' + ts + '</td>'
+        + '<td style="max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + escapeHtml(r.rtk_cmd) + '">' + escapeHtml(r.rtk_cmd) + '</td>'
+        + '<td>' + fmt(r.input_tokens) + '</td>'
         + '<td style="color:var(--accent-savings)">' + fmt(r.saved_tokens) + '</td>'
         + '<td style="color:' + color + '">' + pct + '%</td>'
         + '</tr>';
     }).join('');
     buildPager('rtk_cmd_pager', data.page, data.pages, data.total, refreshRtkCommands);
-  } catch(e) { console.error(e); }
+  } catch (e) { console.error(e); }
 }
 
-updateBanner();
+/* ---------- init ---------- */
+setInterval(() => {
+  const el = document.getElementById('hero_meta_ago');
+  if (el) el.textContent = Math.max(0, Math.floor((Date.now() - lastRefresh) / 1000)) + 's ago';
+}, 1000);
+
 refresh();
 refreshTimeseries();
 loadSessionCards();
-if (SESSION) refreshCompressions();
-if (SESSION) refreshRtkCommands();
+if (SESSION) { refreshCompressions(); refreshRtkCommands(); }
 setInterval(refresh, 2000);
 setInterval(refreshTimeseries, 10000);
 setInterval(loadSessionCards, 10000);
-if (SESSION) setInterval(refreshCompressions, 5000);
-if (SESSION) setInterval(refreshRtkCommands, 5000);
+if (SESSION) { setInterval(refreshCompressions, 5000); setInterval(refreshRtkCommands, 5000); }
 </script>
 </body>
 </html>
