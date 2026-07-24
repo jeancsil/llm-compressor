@@ -82,6 +82,11 @@
   .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent-savings); animation: pulse 2.2s ease-out infinite; }
   @keyframes pulse { 0% { box-shadow: 0 0 0 0 var(--accent-savings-dim); } 70% { box-shadow: 0 0 0 7px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
   .hero-meta { display: flex; align-items: center; gap: 10px; font-family: var(--font-mono); font-size: 12px; color: var(--text-muted); text-align: right; }
+  .live-indicator { display: inline-flex; align-items: center; gap: 6px; letter-spacing: .06em; }
+  .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent-savings); transition: background-color .3s ease; }
+  .live-dot.live { animation: pulse 2.2s ease-out infinite; }
+  .live-dot.stale { background: var(--accent-warn); }
+  .live-dot.offline { background: var(--text-muted); }
   .session-chip { display: none; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--accent-active); background: var(--accent-active-dim); border: 1px solid color-mix(in srgb, var(--accent-active) 35%, transparent); padding: 4px 10px; border-radius: 999px; }
   .session-chip::before { content: "●"; font-size: 0.6rem; }
   .hero-readout { margin-top: 24px; display: flex; flex-wrap: wrap; align-items: flex-end; gap: clamp(20px,4vw,40px); position: relative; }
@@ -284,7 +289,7 @@
       <span class="status-pill"><span class="status-dot" aria-hidden="true"></span>PROXY ACTIVE · 127.0.0.1:9099</span>
       <span class="hero-meta">
         <span id="session_chip" class="session-chip">SESSION · <span id="session_chip_label"></span></span>
-        <span><span id="hero_meta_scope">ALL SESSIONS</span> · UPDATED <span id="hero_meta_ago" class="num">0s ago</span></span>
+        <span><span id="hero_meta_scope">ALL SESSIONS</span> · <span class="live-indicator" id="hero_meta_indicator" title="Live"><span class="live-dot live" id="hero_meta_dot" aria-hidden="true"></span><span id="hero_meta_status">LIVE</span></span></span>
       </span>
     </div>
     <div class="hero-readout">
@@ -613,6 +618,7 @@ async function refresh() {
     const at = d.alltime || {};
 
     lastRefresh = Date.now();
+    updateLiveIndicator();
     setText('foot_uptime', fmtUptime(Math.floor((Date.now() - new Date(d.started_at)) / 1000)));
     setText('hero_meta_scope', SESSION ? (SESSION.display_name || SESSION.session_id.slice(0, 8)) : 'ALL SESSIONS');
 
@@ -927,10 +933,21 @@ async function refreshRtkCommands(page) {
 }
 
 /* ---------- init ---------- */
-setInterval(() => {
-  const el = document.getElementById('hero_meta_ago');
-  if (el) el.textContent = Math.max(0, Math.floor((Date.now() - lastRefresh) / 1000)) + 's ago';
-}, 1000);
+let _liveState = 'live';
+function updateLiveIndicator() {
+  const dot = document.getElementById('hero_meta_dot');
+  const wrap = document.getElementById('hero_meta_indicator');
+  if (!dot) return;
+  const secs = Math.max(0, Math.floor((Date.now() - lastRefresh) / 1000));
+  const state = secs > 15 ? 'offline' : secs > 5 ? 'stale' : 'live';
+  if (state !== _liveState) {
+    _liveState = state;
+    dot.className = 'live-dot ' + state;
+    setText('hero_meta_status', state.toUpperCase());
+  }
+  if (wrap) wrap.title = 'Last updated ' + secs + 's ago';
+}
+setInterval(updateLiveIndicator, 2000);
 
 refresh();
 refreshTimeseries();
