@@ -35,9 +35,11 @@ def test_trackers_table_still_present(tmp_path):
         assert col in cols
 
 
-def test_session_dashboard_injects_session(client):
-    # Task 11: session_dashboard now looks up `sessions` by session_id directly
-    # (trackers/slug indirection removed) and injects window.SESSION.
+def test_session_detail_bootstraps_the_session_record(client):
+    # The page reads its session through UI.bootstrap('session-data'), which
+    # parses an inert <script type="application/json"> block. The old build
+    # interpolated json.dumps() into an executable <script> as window.SESSION,
+    # which made every user-settable display name an XSS vector.
     import proxy
 
     proxy._db_conn.execute(
@@ -45,14 +47,28 @@ def test_session_dashboard_injects_session(client):
         " VALUES ('dash-sess-1', 'My Test', 'auto', 't', 't')"
     )
     proxy._db_conn.commit()
-    r = client.get("/dashboard/dash-sess-1")
+    r = client.get("/sessions/dash-sess-1")
     assert r.status_code == 200
-    assert "window.SESSION" in r.text
+    assert 'type="application/json" id="session-data"' in r.text
+    assert "window.SESSION" not in r.text
     assert '"session_id": "dash-sess-1"' in r.text
     assert '"display_name": "My Test"' in r.text
 
 
-def test_dashboard_session_id_returns_html(client):
+def test_session_detail_escapes_a_hostile_display_name(client):
+    import proxy
+
+    proxy._db_conn.execute(
+        "INSERT INTO sessions (session_id, display_name, name_source, first_seen, last_seen)"
+        " VALUES ('dash-sess-x', '</script><img src=x onerror=alert(1)>', 'manual', 't', 't')"
+    )
+    proxy._db_conn.commit()
+    r = client.get("/sessions/dash-sess-x")
+    assert r.status_code == 200
+    assert "</script><img" not in r.text
+
+
+def test_legacy_dashboard_url_redirects_to_the_session_page(client):
     import proxy
 
     proxy._db_conn.execute(
@@ -60,9 +76,19 @@ def test_dashboard_session_id_returns_html(client):
         " VALUES ('dash-sess-2', 'HTML Test', 'auto', 't', 't')"
     )
     proxy._db_conn.commit()
+
+    r = client.get("/dashboard/dash-sess-2", follow_redirects=False)
+    assert r.status_code == 301
+    assert r.headers["location"] == "/sessions/dash-sess-2"
+
     r = client.get("/dashboard/dash-sess-2")
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("text/html")
+
+
+def test_unknown_session_is_a_404_not_a_blank_page(client):
+    r = client.get("/sessions/no-such-session-id")
+    assert r.status_code == 404
 
 
 def test_provisional_name_is_session_hex():
@@ -301,3 +327,52 @@ def test_rename_endpoint_rejects_empty(client):
 
 def test_rename_endpoint_404_missing(client):
     assert client.patch("/session/nope/name", json={"name": "x"}).status_code == 404
+
+
+def test_listing_sinks_a_malformed_timestamp_below_real_ones(tmp_path):
+    """A bare time must not outrank every dated row.
+
+    `sessions.last_seen` is TEXT and the listing sorts it lexicographically, so
+    '22:53:59' compares greater than '2026-08-13T19:12:36' at offset 1 ('2' >
+    '0'). One such row -- and real databases have them -- pinned itself to the
+    top of page one forever, above genuinely recent sessions, while the UI
+    showed its Last seen as "—" because it could not be parsed.
+    """
+    conn = _conn(tmp_path)
+    conn.executemany(
+        "INSERT INTO sessions (session_id, display_name, first_seen, last_seen)"
+        " VALUES (?, ?, ?, ?)",
+        [
+            ("bare", "bare-time", "22:01:45", "22:53:59"),
+            ("older", "older", "2026-08-01T10:00:00", "2026-08-01T10:00:00"),
+            ("newest", "newest", "2026-08-13T19:12:36", "2026-08-13T19:12:36"),
+        ],
+    )
+    conn.commit()
+
+    ids = [i["session_id"] for i in S.list_sessions(conn)["items"]]
+
+    assert ids[0] == "newest", f"malformed timestamp captured the top of the list: {ids}"
+    assert ids == ["newest", "older", "bare"]
+
+
+def test_listing_uses_session_id_index(tmp_path):
+    """The sessions listing must not full-scan `compressions` per session.
+
+    Every per-session aggregate in `list_sessions` is a correlated subquery
+    keyed on session_id, and the ORDER BY is a computed expression, so SQLite
+    evaluates all of them for every session before LIMIT applies. Unindexed,
+    that is one full table scan per subquery per session: on a real 186k-row
+    install /sessions took 39s to load. Guard both the index and its use.
+    """
+    conn = _conn(tmp_path)
+    idx = {r[1] for r in conn.execute("PRAGMA index_list(compressions)")}
+    assert "idx_compressions_session" in idx
+
+    plan = "\n".join(
+        str(r[-1])
+        for r in conn.execute(
+            "EXPLAIN QUERY PLAN SELECT COUNT(*) FROM compressions c WHERE c.session_id = 's1'"
+        )
+    )
+    assert "idx_compressions_session" in plan, plan

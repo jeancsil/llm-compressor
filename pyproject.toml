@@ -37,6 +37,9 @@ langfuse = [
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+# Agent worktrees are full copies of this repo; linting them double-reports
+# every finding against a checkout nobody edits.
+exclude = [".claude"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]

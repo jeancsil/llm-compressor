@@ -17,7 +17,6 @@ first test.
 """
 
 import copy
-import json
 import math
 import os
 import threading
@@ -26,16 +25,16 @@ from datetime import datetime, timezone
 
 import httpx
 from fastapi import Request
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 
 import backends
 import compression
 import db
 import stats as _stats
+import templates
 from app import app
 from sessions import record_request  # re-export target for tests: proxy.record_request
 from stats import _cache_stats, stats
-from templates import DASHBOARD_HTML, LIST_HTML, PLAY_HTML
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 ANTHROPIC_BASE = "https://api.anthropic.com"
@@ -61,7 +60,17 @@ def build_headers(request: Request) -> dict:
 
 @app.get("/")
 @app.head("/")
-async def health():
+async def health(request: Request):
+    """Health probe, or the way into the UI when a browser asks.
+
+    `/` cannot simply become a redirect: `cli.py`'s readiness loop and
+    `make check` poll it as the liveness endpoint and expect the JSON. So it
+    answers by what the caller asked for -- a browser sends
+    `Accept: text/html` and gets sent to the dashboard, everything else
+    (curl's `*/*`, the CLI, monitoring) still gets `{"status": "ok"}`.
+    """
+    if "text/html" in request.headers.get("accept", ""):
+        return RedirectResponse("/overview", status_code=302)
     return {"status": "ok"}
 
 
@@ -162,42 +171,32 @@ async def get_stats(session_id: str | None = None):
 
 
 @app.get("/stats/timeseries")
-async def get_timeseries(model: str | None = None, session_id: str | None = None):
+async def get_timeseries(
+    model: str | None = None,
+    session_id: str | None = None,
+    range: str = _stats.DEFAULT_RANGE,
+):
+    """Bucketed traffic for the flow chart. `range` is one of 24h/48h/7d/30d."""
     if db._db_conn is None:
         return JSONResponse([])
-    sess_filter = " AND session_id = ?" if session_id else ""
-    sess_args = (session_id,) if session_id else ()
-    if model:
-        rows = db._db_conn.execute(
-            f"""
-            SELECT strftime('%Y-%m-%dT%H:00:00', ts) AS hour,
-                   COUNT(*) AS requests,
-                   ROUND(AVG((original_tokens - compressed_tokens) * 100.0 / original_tokens), 1) AS avg_savings_pct,
-                   SUM(original_tokens - compressed_tokens) AS total_saved,
-                   ROUND(AVG(latency_ms), 1) AS avg_latency_ms
-            FROM compressions
-            WHERE ts >= datetime('now', '-48 hours') AND model = ?{sess_filter}
-            GROUP BY hour
-            ORDER BY hour
-            """,
-            (model, *sess_args),
-        ).fetchall()
-    else:
-        rows = db._db_conn.execute(
-            f"""
-            SELECT strftime('%Y-%m-%dT%H:00:00', ts) AS hour,
-                   COUNT(*) AS requests,
-                   ROUND(AVG((original_tokens - compressed_tokens) * 100.0 / original_tokens), 1) AS avg_savings_pct,
-                   SUM(original_tokens - compressed_tokens) AS total_saved,
-                   ROUND(AVG(latency_ms), 1) AS avg_latency_ms
-            FROM compressions
-            WHERE ts >= datetime('now', '-48 hours'){sess_filter}
-            GROUP BY hour
-            ORDER BY hour
-            """,
-            sess_args,
-        ).fetchall()
-    return JSONResponse([dict(r) for r in rows])
+    if range not in _stats.RANGES:
+        return JSONResponse({"error": f"unknown range {range!r}"}, status_code=400)
+    return JSONResponse(_stats.timeseries(range, model, session_id))
+
+
+@app.get("/stats/window")
+async def get_window(
+    range: str = _stats.DEFAULT_RANGE,
+    session_id: str | None = None,
+    model: str | None = None,
+):
+    """Totals for a window plus the preceding one, for the KPI tiles' deltas."""
+    if db._db_conn is None:
+        return JSONResponse({"range": range, "current": {}, "previous": {}})
+    if range not in _stats.RANGES:
+        return JSONResponse({"error": f"unknown range {range!r}"}, status_code=400)
+    active = model or _stats._compressor_info()["model"]
+    return JSONResponse(_stats.window_summary(range, active, session_id))
 
 
 @app.post("/rtk/log")
@@ -229,8 +228,29 @@ async def rtk_log(request: Request):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
-@app.get("/dashboard/{session_id}", response_class=HTMLResponse)
-async def session_dashboard(session_id: str):
+# ---------------------------------------------------------------------------
+# Pages
+#
+# Five destinations, one canonical surface per concept. The old set had two
+# different pages listing sessions from the same endpoint, and served session
+# detail as the byte-identical overview document -- so the nav could not say
+# which page you were on and the tab title never changed. Each page now names
+# its own nav slot and title.
+# ---------------------------------------------------------------------------
+
+
+@app.get("/overview", response_class=HTMLResponse)
+async def overview():
+    return HTMLResponse(templates.render("overview.html", title="Overview", nav="overview"))
+
+
+@app.get("/sessions", response_class=HTMLResponse)
+async def sessions_page():
+    return HTMLResponse(templates.render("sessions.html", title="Sessions", nav="sessions"))
+
+
+@app.get("/sessions/{session_id}", response_class=HTMLResponse)
+async def session_detail(session_id: str):
     import sessions as _sessions  # local import ok; module is light
 
     if db._db_conn is None:
@@ -238,24 +258,49 @@ async def session_dashboard(session_id: str):
     session = _sessions.get_session(db._db_conn, session_id)
     if session is None:
         return HTMLResponse(f"<h1>Session '{session_id}' not found</h1>", status_code=404)
-    bootstrap = f"<script>window.SESSION = {json.dumps(session)};</script>"
-    html = DASHBOARD_HTML.replace("</head>", bootstrap + "\n</head>", 1)
-    return HTMLResponse(html)
+
+    name = session.get("display_name") or _sessions.provisional_name(session_id)
+    return HTMLResponse(
+        templates.render(
+            "session_detail.html",
+            title=name,
+            nav="sessions",
+            breadcrumb=templates.crumbs(("Sessions", "/sessions"), (name, None)),
+            head=templates.json_script("session-data", session),
+        )
+    )
 
 
-@app.get("/dashboard", response_class=HTMLResponse)
-async def dashboard():
-    return HTMLResponse(DASHBOARD_HTML)
+@app.get("/playground", response_class=HTMLResponse)
+async def playground():
+    return HTMLResponse(templates.render("playground.html", title="Playground", nav="playground"))
 
 
-@app.get("/play", response_class=HTMLResponse)
-async def play():
-    return HTMLResponse(PLAY_HTML)
+@app.get("/settings", response_class=HTMLResponse)
+async def settings_page():
+    return HTMLResponse(templates.render("settings.html", title="Settings", nav="settings"))
 
 
-@app.get("/play/list", response_class=HTMLResponse)
-async def play_list():
-    return HTMLResponse(LIST_HTML)
+# Permanent redirects, so existing bookmarks and `make dashboard` still land
+# somewhere real instead of 404ing after the rename.
+@app.get("/dashboard", include_in_schema=False)
+async def _legacy_dashboard():
+    return RedirectResponse("/overview", status_code=301)
+
+
+@app.get("/dashboard/{session_id}", include_in_schema=False)
+async def _legacy_session_dashboard(session_id: str):
+    return RedirectResponse(f"/sessions/{session_id}", status_code=301)
+
+
+@app.get("/play", include_in_schema=False)
+async def _legacy_play():
+    return RedirectResponse("/playground", status_code=301)
+
+
+@app.get("/play/list", include_in_schema=False)
+async def _legacy_play_list():
+    return RedirectResponse("/sessions", status_code=301)
 
 
 @app.post("/play/compress")

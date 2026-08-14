@@ -1,0 +1,148 @@
+<!--#STYLE-->
+#filter-row { margin-bottom: var(--sp-3); }
+#sessions-table tbody tr { position: relative; }
+#sessions-table .sess-link { position: static; font-weight: 550; }
+#sessions-table .sess-link::after { content: ""; position: absolute; inset: 0; }
+#sessions-table .sess-id { color: var(--text-faint); font-size: var(--fs-sm); margin-top: 2px; }
+#filter-note { margin-top: var(--sp-2); color: var(--text-faint); font-size: var(--fs-sm); }
+
+/* Project is only ever populated when RTK has logged a path for the session.
+   Without that integration the column is 25 rows of em-dash holding open the
+   widest gap on the page, so it is withheld until some row can fill it. */
+#sessions-table.no-project th:nth-child(2),
+#sessions-table.no-project td:nth-child(2) { display: none; }
+
+<!--#BODY-->
+<div class="row spread wrap" id="filter-row">
+  <h1 style="font-size: var(--fs-lg)">Sessions</h1>
+  <div class="row wrap" style="gap: var(--sp-3)">
+    <input type="search" id="filter-input" placeholder="Filter page&hellip;" aria-label="Filter sessions on this page">
+    <div class="seg" id="page-size-seg" role="group" aria-label="Rows per page">
+      <button type="button" data-size="25" aria-pressed="true">25</button>
+      <button type="button" data-size="50" aria-pressed="false">50</button>
+      <button type="button" data-size="100" aria-pressed="false">100</button>
+    </div>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="table-wrap">
+    <table class="data" id="sessions-table">
+      <thead>
+        <tr>
+          <th>Session</th>
+          <th>Project</th>
+          <th class="num">Requests</th>
+          <th class="num">Tokens saved</th>
+          <th class="num">Avg ratio</th>
+          <th class="num">Last seen</th>
+        </tr>
+      </thead>
+      <tbody id="sessions-rows">
+        <tr><td colspan="6" class="empty">Loading&hellip;</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="pager" id="sessions-pager"></div>
+</div>
+<p id="filter-note" aria-live="polite" hidden></p>
+
+<!--#SCRIPT-->
+(function () {
+  'use strict';
+
+  var state = { page: 0, perPage: 25, total: 0, items: [] };
+
+  var rowsEl = document.getElementById('sessions-rows');
+  var pagerEl = document.getElementById('sessions-pager');
+  var filterInput = document.getElementById('filter-input');
+  var filterNoteEl = document.getElementById('filter-note');
+  var sizeSeg = document.getElementById('page-size-seg');
+
+  function nameCell(s) {
+    var shortId = (s.session_id || '').slice(0, 8);
+    var name = s.display_name || ('session-' + shortId);
+    var chip = '';
+    if (s.name_source === 'provisional') chip = ' <span class="chip">unnamed</span>';
+    else if (s.name_source === 'naming') chip = ' <span class="chip">naming&hellip;</span>';
+    return '<a class="sess-link" href="/sessions/' + encodeURIComponent(s.session_id) + '">' +
+      UI.escapeHtml(name) + '</a>' + chip +
+      '<div class="mono sess-id">' + UI.escapeHtml(shortId) + '</div>';
+  }
+
+  function rowHtml(s) {
+    var tokensSaved = s.tokens_saved || 0;
+    var avgRatio = s.avg_ratio;
+    var search = ((s.display_name || '') + ' ' + (s.session_id || '') + ' ' + (s.project || '')).toLowerCase();
+    return '<tr class="linked" data-search="' + UI.escapeHtml(search) + '">' +
+      '<td>' + nameCell(s) + '</td>' +
+      '<td>' + (s.project ? UI.escapeHtml(s.project) : '&mdash;') + '</td>' +
+      '<td class="num">' + UI.fmtExact(s.requests || 0) + '</td>' +
+      '<td class="num" title="' + UI.escapeHtml(UI.fmtExact(tokensSaved)) + '">' + UI.fmt(tokensSaved) + '</td>' +
+      '<td class="num">' + (avgRatio ? Number(avgRatio).toFixed(2) + '&times;' : '&mdash;') + '</td>' +
+      '<td class="num" title="' + UI.escapeHtml(UI.fmtTime(s.last_seen)) + '">' + UI.escapeHtml(UI.ago(s.last_seen)) + '</td>' +
+      '</tr>';
+  }
+
+  function render() {
+    var hasProject = state.items.some(function (s) { return !!s.project; });
+    document.getElementById('sessions-table').classList.toggle('no-project', !hasProject);
+    if (!state.items.length) {
+      rowsEl.innerHTML = '<tr><td colspan="6" class="empty">No sessions yet.</td></tr>';
+    } else {
+      rowsEl.innerHTML = state.items.map(rowHtml).join('');
+    }
+    UI.buildPager(pagerEl, { page: state.page, perPage: state.perPage, total: state.total }, function (p) {
+      load(p, state.perPage);
+    });
+    applyFilter();
+  }
+
+  function applyFilter() {
+    var q = filterInput.value.trim().toLowerCase();
+    var trs = rowsEl.querySelectorAll('tr[data-search]');
+    var visible = 0;
+    trs.forEach(function (tr) {
+      var match = !q || (tr.getAttribute('data-search') || '').indexOf(q) !== -1;
+      tr.style.display = match ? '' : 'none';
+      if (match) visible++;
+    });
+    if (q && trs.length) {
+      filterNoteEl.hidden = false;
+      filterNoteEl.textContent = 'Showing ' + visible + ' of ' + trs.length +
+        ' on this page — filtering does not search other pages.';
+    } else {
+      filterNoteEl.hidden = true;
+      filterNoteEl.textContent = '';
+    }
+  }
+
+  filterInput.addEventListener('input', applyFilter);
+
+  sizeSeg.querySelectorAll('button').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var size = Number(btn.getAttribute('data-size'));
+      sizeSeg.querySelectorAll('button').forEach(function (b) {
+        b.setAttribute('aria-pressed', String(b === btn));
+      });
+      load(0, size);
+    });
+  });
+
+  function load(page, perPage) {
+    return UI.getJSON('/admin/sessions?page=' + (page + 1) + '&page_size=' + perPage)
+      .then(function (data) {
+        state.page = page;
+        state.perPage = perPage;
+        state.total = data.total || 0;
+        state.items = data.items || [];
+        render();
+      })
+      .catch(function () {
+        rowsEl.innerHTML = '<tr><td colspan="6" class="empty">Could not load sessions.</td></tr>';
+        pagerEl.innerHTML = '';
+      });
+  }
+
+  load(0, state.perPage);
+}());

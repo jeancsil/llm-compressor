@@ -13,7 +13,6 @@ record_compression` re-export carries no staleness risk.
 
 import math
 import os
-from datetime import datetime, timezone
 
 import backends
 import db
@@ -21,7 +20,8 @@ import stats as _stats
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    """Naive ISO UTC, matching every other timestamp written to the DB."""
+    return db.utc_now()
 
 
 def provisional_name(session_id: str) -> str:
@@ -115,40 +115,109 @@ def rename_session(conn, session_id: str, display_name: str) -> bool:
 
 
 def get_session(conn, session_id: str) -> dict | None:
+    """Look up one session, falling back to its traffic when unnamed.
+
+    Same reason as `list_sessions`: a session id can have compressions without
+    ever getting a `sessions` row, and such a session must still open rather
+    than 404. Returns None only when the id is unknown to both tables.
+    """
     if conn is None:
         return None
     row = conn.execute("SELECT * FROM sessions WHERE session_id=?", (session_id,)).fetchone()
-    return dict(row) if row else None
+    if row:
+        return dict(row)
+    traffic = conn.execute(
+        "SELECT COUNT(*), MIN(ts), MAX(ts) FROM compressions WHERE session_id=?",
+        (session_id,),
+    ).fetchone()
+    if not traffic or not traffic[0]:
+        return None
+    return {
+        "session_id": session_id,
+        "project": None,
+        "display_name": provisional_name(session_id),
+        "name_source": "provisional",
+        "first_seen": traffic[1],
+        "last_seen": traffic[2],
+    }
 
 
 def list_sessions(conn, page: int = 1, page_size: int = 25) -> dict:
+    """One page of sessions, ordered by most recent activity.
+
+    Driven by `compressions`, LEFT JOINed to `sessions` for the name -- not the
+    other way round. `sessions` is only populated by `ensure_session`, which
+    was added long after traffic started flowing, so on a real install it can
+    be empty while `compressions` holds thousands of rows under dozens of
+    session ids. Listing from `sessions` renders a blank page in exactly the
+    case the page exists to serve. A session with no row here still lists,
+    under its provisional `session-<hex>` name.
+
+    Activity aggregates come from correlated subqueries rather than extra
+    JOINs so `compressions × rtk_events` cannot fan out and double-count.
+    `tokens_saved` is proxy savings + RTK shell savings.
+    """
     page = max(1, page)
     page_size = max(1, min(200, page_size))
     if conn is None:
         return {"items": [], "total": 0, "page": page, "page_size": page_size, "pages": 0}
-    total = conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
+
+    total = conn.execute(
+        "SELECT COUNT(*) FROM (SELECT session_id FROM compressions "
+        "UNION SELECT session_id FROM sessions)"
+    ).fetchone()[0]
     offset = (page - 1) * page_size
-    # Correlated subqueries (not multi-JOIN) so compressions × rtk_events do not
-    # fan out and double-count. tokens_saved = proxy compression savings + RTK
-    # savings, matching the spec ripple table (sessions ⋈ compressions/rtk_events).
+
     rows = conn.execute(
-        """SELECT s.session_id, s.project, s.display_name, s.name_source,
-                  s.first_seen, s.last_seen,
+        """WITH ids AS (
+               SELECT session_id FROM compressions
+               UNION
+               SELECT session_id FROM sessions
+           )
+           SELECT ids.session_id                          AS session_id,
+                  s.project                               AS project,
+                  s.display_name                          AS display_name,
+                  COALESCE(s.name_source, 'provisional')  AS name_source,
+                  COALESCE(s.first_seen,
+                           (SELECT MIN(c.ts) FROM compressions c
+                             WHERE c.session_id = ids.session_id)) AS first_seen,
+                  COALESCE((SELECT MAX(c.ts) FROM compressions c
+                             WHERE c.session_id = ids.session_id),
+                           s.last_seen)                   AS last_seen,
                   COALESCE((SELECT SUM(c.original_tokens - c.compressed_tokens)
-                            FROM compressions c WHERE c.session_id = s.session_id), 0)
+                            FROM compressions c WHERE c.session_id = ids.session_id), 0)
                   + COALESCE((SELECT SUM(r.saved_tokens)
-                              FROM rtk_events r WHERE r.session_id = s.session_id), 0)
-                    AS tokens_saved,
+                              FROM rtk_events r WHERE r.session_id = ids.session_id), 0)
+                                                          AS tokens_saved,
                   COALESCE((SELECT COUNT(*) FROM compressions c
-                            WHERE c.session_id = s.session_id), 0) AS requests
-           FROM sessions s
-           ORDER BY s.last_seen DESC
+                            WHERE c.session_id = ids.session_id), 0) AS requests,
+                  (SELECT ROUND(AVG(CAST(c.original_tokens AS REAL)
+                                    / NULLIF(c.compressed_tokens, 0)), 2)
+                     FROM compressions c WHERE c.session_id = ids.session_id) AS avg_ratio
+           FROM ids
+           LEFT JOIN sessions s ON s.session_id = ids.session_id
+           WHERE ids.session_id IS NOT NULL AND ids.session_id != ''
+           -- `last_seen` is TEXT, so DESC is a lexicographic sort and any value
+           -- that is not a full ISO-8601 timestamp sorts by its first character.
+           -- A bare time like '22:53:59' therefore beats every '2026-..' row
+           -- ('2' > '0' at offset 1) and pins itself to the top of page one
+           -- permanently -- while the UI renders it as "—" because it cannot be
+           -- parsed. Well-formed timestamps sort first, malformed ones sink.
+           ORDER BY (last_seen LIKE '____-__-__T%') DESC, last_seen DESC
            LIMIT ? OFFSET ?""",
         (page_size, offset),
     ).fetchall()
+
+    items = []
+    for r in rows:
+        item = dict(r)
+        if not item.get("display_name"):
+            item["display_name"] = provisional_name(item["session_id"])
+        items.append(item)
+
     pages = math.ceil(total / page_size) if page_size else 0
     return {
-        "items": [dict(r) for r in rows],
+        "items": items,
         "total": total,
         "page": page,
         "page_size": page_size,
@@ -171,18 +240,20 @@ def record_compression(
     role: str = "user",
     active_backend: dict | None = None,
     cache_hit: int = 0,
+    ok: int = 1,
 ):
     _stats.stats["total_original_tokens"] += original
     _stats.stats["total_compressed_tokens"] += compressed
 
     active = active_backend if active_backend is not None else backends.backend
     model_name = active.get("type", "llmlingua2") if active else "llmlingua2"
-    ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    ts = db.utc_now()
 
     if db._db_conn:
         cur = db._db_conn.execute(
-            "INSERT INTO compressions (ts, session_id, model, original_tokens, compressed_tokens, latency_ms, role, cache_hit) VALUES (?,?,?,?,?,?,?,?)",
-            (ts, session_id, model_name, original, compressed, latency_ms, role, cache_hit),
+            "INSERT INTO compressions (ts, session_id, model, original_tokens, "
+            "compressed_tokens, latency_ms, role, cache_hit, ok) VALUES (?,?,?,?,?,?,?,?,?)",
+            (ts, session_id, model_name, original, compressed, latency_ms, role, cache_hit, ok),
         )
         if original_text is not None and compressed_text is not None:
             db._db_conn.execute(
@@ -206,7 +277,11 @@ def record_compression(
 
     _stats.stats["recent_compressions"].appendleft(
         {
-            "ts": datetime.now(timezone.utc).strftime("%H:%M:%S"),
+            # Full ISO, not the bare %H:%M:%S this used to store -- the UI
+            # cannot compute "how long ago" from a time with no date, and an
+            # earlier build persisted this same string into compressions.ts,
+            # which is where the year-2000 rows came from.
+            "ts": ts,
             "session_id": session_id[:8],
             "original": original,
             "compressed": compressed,
@@ -218,10 +293,11 @@ def record_compression(
 
 def record_request(session_id: str):
     _stats.stats["total_requests"] += 1
+    now = db.utc_now()
     sess = _stats.stats["sessions"].setdefault(
         session_id,
         {
-            "first_seen": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "first_seen": now,
             "requests": 0,
             "original_tokens": 0,
             "compressed_tokens": 0,
@@ -229,4 +305,4 @@ def record_request(session_id: str):
         },
     )
     sess["requests"] += 1
-    sess["last_seen"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    sess["last_seen"] = now

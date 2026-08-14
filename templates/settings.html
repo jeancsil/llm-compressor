@@ -1,0 +1,466 @@
+<!--#STYLE-->
+.status-line {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  min-height: 20px;
+}
+
+.status-line.error { color: var(--status-critical); }
+
+/* `.stack` is a flex column, so its default `align-items: stretch` made the
+   destructive button and the theme switch span the full panel -- a 1.3k-pixel
+   delete bar reads as a banner, and the control's hit area stopped matching
+   what it looks like. Controls size to their content. */
+#deleteBtn, #themeSelector { align-self: flex-start; }
+
+.model-options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.model-option {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2);
+}
+
+.model-option input[type="radio"] {
+  margin-top: 2px;
+  cursor: pointer;
+}
+
+.model-option label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  flex: 1;
+  cursor: pointer;
+}
+
+.model-option label strong {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.model-option label .hint {
+  margin: 0;
+}
+
+.kpi-grid {
+  display: grid;
+  gap: var(--sp-3);
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  margin-top: var(--sp-3);
+}
+
+.confirmation-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  background: var(--surface-sunken);
+  border-radius: var(--radius);
+  font-size: var(--fs-sm);
+  margin-top: var(--sp-2);
+}
+
+.confirmation-row .btn {
+  flex: 0 0 auto;
+}
+
+.confirmation-text {
+  flex: 1;
+  color: var(--text-muted);
+}
+
+.observability-status {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-3);
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+table.data th, table.data td {
+  text-align: left;
+}
+
+table.data td:first-child {
+  color: var(--text-muted);
+  text-transform: capitalize;
+}
+
+<!--#BODY-->
+<div class="stack">
+  <!-- Compression model -->
+  <div class="panel">
+    <div class="panel-head">
+      <h2>Compression model</h2>
+    </div>
+    <div class="panel-body stack">
+      <div class="model-options" id="modelOptions"></div>
+      <div class="status-line" id="modelStatus" aria-live="polite"></div>
+      <div class="kpi-grid" id="modelKpis"></div>
+    </div>
+  </div>
+
+  <!-- Delete stored prompt text -->
+  <div class="panel">
+    <div class="panel-head">
+      <h2>Delete stored prompt text</h2>
+    </div>
+    <div class="panel-body stack">
+      <p style="color: var(--text-muted); margin: 0; font-size: var(--fs-sm);">
+        Each session's compression history includes the original and compressed prompt text
+        for inspection. This action permanently deletes all stored text, retaining only statistics.
+      </p>
+      <button class="btn danger" id="deleteBtn">Delete stored prompt text</button>
+      <div id="confirmDelete" style="display: none;"></div>
+      <div class="status-line" id="deleteStatus" aria-live="polite"></div>
+      <div class="hint">Compression statistics, hit ratios, and saved tokens are not affected by this deletion.</div>
+    </div>
+  </div>
+
+  <!-- Observability -->
+  <div class="panel">
+    <div class="panel-head">
+      <h2>Observability</h2>
+    </div>
+    <div class="panel-body stack" id="observabilityPanel">
+      <!-- populated by JS -->
+    </div>
+  </div>
+
+  <!-- Appearance -->
+  <div class="panel">
+    <div class="panel-head">
+      <h2>Appearance</h2>
+    </div>
+    <div class="panel-body">
+      <div class="field">
+        <label class="eyebrow">Theme</label>
+        <div class="seg" id="themeSelector">
+          <button type="button" data-theme="light" aria-pressed="false">Light</button>
+          <button type="button" data-theme="dark" aria-pressed="false">Dark</button>
+          <button type="button" data-theme="system" aria-pressed="true">System</button>
+        </div>
+      </div>
+      <div class="status-line" id="themeStatus" aria-live="polite"></div>
+    </div>
+  </div>
+</div>
+
+<!--#SCRIPT-->
+(function () {
+  'use strict';
+
+  const state = {
+    loadingModel: null,
+    confirmingDelete: false,
+  };
+
+  /* ---- Model selection ---- */
+
+  function renderModelOptions() {
+    const models = [
+      { id: 'llmlingua2', label: 'LLMLingua-2 (Default)', desc: '~47% savings, fastest, recommended' },
+      { id: 'llmlingua2-large', label: 'LLMLingua-2 Large', desc: '~52% savings, roughly 3× slower, most aggressive' },
+      { id: 'kompress', label: 'Kompress', desc: '~27% savings, precision-oriented, lower distortion' },
+      { id: 'dual', label: 'Dual', desc: 'Routes system prompts to one model, user turns to another; loads both, ~1.5 GB RAM' },
+    ];
+
+    const container = document.getElementById('modelOptions');
+    container.innerHTML = models.map(m => `
+      <div class="model-option">
+        <input type="radio" id="model-${m.id}" name="model" value="${m.id}" />
+        <label for="model-${m.id}">
+          <strong>${UI.escapeHtml(m.label)}</strong>
+          <div class="hint">${UI.escapeHtml(m.desc)}</div>
+        </label>
+      </div>
+    `).join('');
+
+    container.querySelectorAll('input[type="radio"]').forEach(radio => {
+      radio.addEventListener('change', handleModelChange);
+    });
+  }
+
+  function handleModelChange(e) {
+    const model = e.target.value;
+    setModel(model);
+  }
+
+  function setModel(model) {
+    state.loadingModel = model;
+    disableModelOptions(true);
+    updateModelStatus();
+
+    UI.postJSON('/admin/set-model', { model })
+      .then(() => {
+        // Poll until model is loaded
+        pollModelUntilLoaded();
+      })
+      .catch(err => {
+        updateModelStatus(String(err));
+        state.loadingModel = null;
+        disableModelOptions(false);
+      });
+  }
+
+  // A model load is asynchronous, so watch /stats until the backend reports it
+  // settled. This is a transient task: it retires itself once the load lands,
+  // and never signals failure for "not done yet" -- a rejected poll task backs
+  // off exponentially and fires `poll:fail`, which is the page's connection
+  // alarm, not a progress tick.
+  function pollModelUntilLoaded() {
+    const pollFn = () => UI.getJSON('/stats').then(stats => {
+      const compressor = stats.compressor || {};
+      renderModelKpis(stats);
+      if (compressor.loading || compressor.model !== state.loadingModel) return;
+
+      UI.poller.remove('model-load');
+      state.loadingModel = null;
+      disableModelOptions(false);
+      updateModelOption(compressor.model);
+      updateModelStatus();
+    });
+
+    UI.poller.add('model-load', pollFn, 1000);
+  }
+
+  function disableModelOptions(disabled) {
+    document.querySelectorAll('#modelOptions input[type="radio"]').forEach(input => {
+      input.disabled = disabled;
+    });
+  }
+
+  function updateModelOption(model) {
+    document.querySelectorAll('#modelOptions input[type="radio"]').forEach(radio => {
+      radio.checked = (radio.value === model);
+    });
+  }
+
+  function updateModelStatus(error = null) {
+    const statusEl = document.getElementById('modelStatus');
+    if (state.loadingModel) {
+      statusEl.className = 'status-line';
+      statusEl.innerHTML = `<span class="dot stale"></span>Loading <strong>${UI.escapeHtml(state.loadingModel)}</strong>…`;
+    } else if (error) {
+      statusEl.className = 'status-line error';
+      statusEl.innerHTML = `<span class="dot offline"></span>${UI.escapeHtml(error)}`;
+    } else {
+      statusEl.className = 'status-line';
+      statusEl.innerHTML = '';
+    }
+  }
+
+  function renderModelKpis(stats) {
+    const cache = stats.cache || {};
+    const deploy = cache.since_deploy || {};
+    const day = cache.last_24h || {};
+    const timeSaved = cache.time_saved_ms || 0;
+
+    const kpis = [
+      { label: 'Hit ratio', value: UI.fmtRatioPct(deploy.hit_ratio, 1) },
+      { label: '24h', value: UI.fmtRatioPct(day.hit_ratio, 1) },
+      { label: 'Time saved', value: UI.fmtMs(timeSaved) },
+    ];
+
+    const grid = document.getElementById('modelKpis');
+    grid.innerHTML = kpis.map(kpi => `
+      <div class="kpi">
+        <div class="label">${UI.escapeHtml(kpi.label)}</div>
+        <div class="value">${UI.escapeHtml(kpi.value)}</div>
+      </div>
+    `).join('');
+  }
+
+  /* ---- Delete stored text ---- */
+
+  document.getElementById('deleteBtn').addEventListener('click', () => {
+    if (state.confirmingDelete) return;
+    state.confirmingDelete = true;
+    showDeleteConfirmation();
+  });
+
+  function showDeleteConfirmation() {
+    const container = document.getElementById('confirmDelete');
+    container.style.display = 'block';
+    container.innerHTML = `
+      <div class="confirmation-row">
+        <div class="confirmation-text">
+          This permanently deletes stored prompt text from every session. Delete anyway?
+        </div>
+        <button class="btn primary" id="confirmDeleteYes">Delete</button>
+        <button class="btn" id="confirmDeleteNo">Cancel</button>
+      </div>
+    `;
+
+    document.getElementById('confirmDeleteYes').addEventListener('click', () => {
+      performDelete();
+    });
+    document.getElementById('confirmDeleteNo').addEventListener('click', () => {
+      cancelDelete();
+    });
+  }
+
+  function performDelete() {
+    const statusEl = document.getElementById('deleteStatus');
+    statusEl.className = 'status-line';
+    statusEl.textContent = '';
+
+    UI.postJSON('/admin/compression-texts', {}, 'DELETE')
+      .then(result => {
+        const deleted = result.deleted || 0;
+        statusEl.className = 'status-line';
+        statusEl.innerHTML = `<span class="dot live"></span>Deleted <strong>${UI.fmt(deleted)}</strong> text records`;
+        cancelDelete();
+      })
+      .catch(err => {
+        statusEl.className = 'status-line error';
+        statusEl.innerHTML = `<span class="dot offline"></span>${UI.escapeHtml(String(err))}`;
+        cancelDelete();
+      });
+  }
+
+  function cancelDelete() {
+    state.confirmingDelete = false;
+    document.getElementById('confirmDelete').style.display = 'none';
+    document.getElementById('deleteStatus').textContent = '';
+  }
+
+  /* ---- Observability ---- */
+
+  function loadObservabilityStatus() {
+    UI.getJSON('/admin/langfuse-status')
+      .then(data => {
+        renderObservability(data);
+      })
+      .catch(err => {
+        const panel = document.getElementById('observabilityPanel');
+        panel.innerHTML = `<div class="chip bad">${UI.escapeHtml(String(err))}</div>`;
+      });
+  }
+
+  function renderObservability(data) {
+    const panel = document.getElementById('observabilityPanel');
+    const rows = [];
+
+    // Check for enabled status
+    let enabledHtml = '';
+    if (typeof data.enabled === 'boolean') {
+      const chipClass = data.enabled ? 'good' : '';
+      const text = data.enabled ? 'Enabled' : 'Disabled';
+      enabledHtml = `<div class="observability-status"><div class="chip ${chipClass}">${text}</div></div>`;
+      delete data.enabled;
+    }
+
+    // Render remaining scalar key/values
+    let tableHtml = '';
+    const nonScalarKeys = [];
+    Object.entries(data).forEach(([key, value]) => {
+      if (typeof value === 'object' && value !== null) {
+        nonScalarKeys.push({ key, value });
+      } else {
+        rows.push([key.replace(/_/g, ' '), String(value || '—')]);
+      }
+    });
+
+    if (rows.length > 0) {
+      tableHtml = `
+        <div class="table-wrap">
+          <table class="data">
+            <tbody>
+              ${rows.map(([k, v]) => `
+                <tr>
+                  <td>${UI.escapeHtml(k)}</td>
+                  <td>${UI.escapeHtml(v)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    // Render nested objects defensively
+    let nestedHtml = '';
+    if (nonScalarKeys.length > 0) {
+      nestedHtml = '<div class="table-wrap"><table class="data"><tbody>';
+      nonScalarKeys.forEach(({ key, value }) => {
+        const serialized = JSON.stringify(value);
+        nestedHtml += `<tr><td>${UI.escapeHtml(key)}</td><td class="mono">${UI.escapeHtml(serialized)}</td></tr>`;
+      });
+      nestedHtml += '</tbody></table></div>';
+    }
+
+    panel.innerHTML = enabledHtml + tableHtml + nestedHtml;
+  }
+
+  /* ---- Theme selector ---- */
+
+  function initThemeSelector() {
+    const saved = localStorage.getItem('theme');
+    const active = saved || 'system';
+
+    document.querySelectorAll('#themeSelector button').forEach(btn => {
+      const theme = btn.getAttribute('data-theme');
+      btn.setAttribute('aria-pressed', theme === active ? 'true' : 'false');
+      btn.addEventListener('click', () => setTheme(theme));
+    });
+  }
+
+  function setTheme(theme) {
+    if (theme === 'system') {
+      localStorage.removeItem('theme');
+      document.documentElement.removeAttribute('data-theme');
+    } else {
+      localStorage.setItem('theme', theme);
+      document.documentElement.setAttribute('data-theme', theme);
+    }
+
+    // Update button states
+    document.querySelectorAll('#themeSelector button').forEach(btn => {
+      const btnTheme = btn.getAttribute('data-theme');
+      btn.setAttribute('aria-pressed', btnTheme === theme ? 'true' : 'false');
+    });
+
+    // Dispatch event
+    window.dispatchEvent(new CustomEvent('themechange', { detail: { theme } }));
+  }
+
+  /* ---- Init ---- */
+
+  function init() {
+    renderModelOptions();
+    loadObservabilityStatus();
+    initThemeSelector();
+
+    // Load initial stats
+    UI.getJSON('/stats')
+      .then(stats => {
+        const model = stats.compressor?.model || stats.model;
+        if (model) {
+          updateModelOption(model);
+        }
+        renderModelKpis(stats);
+      })
+      .catch(() => {
+        // Stats may not be available immediately
+      });
+
+    // Poll stats for updates
+    UI.poller.add('stats', () => UI.getJSON('/stats').then(stats => {
+      renderModelKpis(stats);
+    }), 5000);
+  }
+
+  init();
+}());
