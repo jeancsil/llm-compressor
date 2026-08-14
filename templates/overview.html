@@ -1,0 +1,605 @@
+<!--#STYLE-->
+.ov-head { margin-bottom: var(--sp-4); }
+.ov-head h1 { font-size: var(--fs-lg); }
+
+.model-chip {
+  text-decoration: none;
+  cursor: pointer;
+}
+.model-chip:hover { border-color: var(--border-strong); }
+.model-chip .value-name { font-family: var(--font-mono); }
+
+/* ---- flow chart panel ---- */
+#flow-chart-wrap { position: relative; padding: var(--sp-3) var(--sp-4) var(--sp-2); }
+#flow-svg { display: block; width: 100%; height: auto; }
+#flow-svg text { font-variant-numeric: tabular-nums; }
+.flow-total .eyebrow { display: block; text-align: right; }
+.flow-total .figure {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-md);
+  font-weight: 650;
+  color: var(--status-good);
+}
+
+/* ---- by-model horizontal bars ---- */
+.model-bar-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-1) 0;
+}
+.model-bar-label {
+  flex: 0 0 auto;
+  /* Wide enough for the longest real model name, `llmlingua2-large` (16ch).
+     At 9ch it truncated to "llmlingua..." -- which reads identically for
+     llmlingua2 and llmlingua2-large, so the two rows became indistinguishable.
+     The ellipsis stays as a fallback for names longer than any we ship. */
+  width: 16ch;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.model-bar-track {
+  flex: 1;
+  background: var(--surface-sunken);
+  border-radius: var(--radius-sm);
+  height: var(--sp-2);
+  overflow: hidden;
+}
+.model-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: var(--radius-sm);
+}
+.model-bar-value {
+  flex: 0 0 auto;
+  font-size: var(--fs-sm);
+  color: var(--text);
+  white-space: nowrap;
+}
+
+/* ---- cache mini stats ---- */
+.mini-stats {
+  gap: var(--sp-3);
+  padding: var(--sp-4);
+  border-bottom: 1px solid var(--border);
+}
+/* Values share a bottom edge even when a label wraps. "Hit ratio (since
+   deploy)" takes two lines while its neighbours take one, and without this the
+   four numbers sit at four different heights and stop reading as one row. */
+.mini-stat {
+  display: flex;
+  flex-direction: column;
+}
+.mini-stat .label {
+  font-size: var(--fs-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  font-weight: 600;
+}
+.mini-stat .value {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-md);
+  margin-top: auto;   /* auto, not 2px: pins the value to the cell's bottom */
+  padding-top: 2px;
+}
+
+/* ---- KPI delta ---- */
+.kpi-delta {
+  display: block;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  margin-top: 2px;
+}
+.kpi-delta.good { color: var(--status-good); }
+.kpi-delta.bad { color: var(--status-critical); }
+.kpi-delta.muted { color: var(--text-faint); font-weight: 500; }
+<!--#BODY-->
+<div class="row spread wrap ov-head">
+  <h1>Overview</h1>
+  <div class="row wrap" style="gap: var(--sp-3);">
+    <a class="chip model-chip" href="/settings" id="model-chip" aria-label="Active compression model — opens Settings">
+      <span class="dot offline" id="model-dot" aria-hidden="true"></span>
+      <span id="model-label" class="value-name" aria-live="polite">Loading&hellip;</span>
+    </a>
+    <div class="seg" id="range-seg" role="group" aria-label="Time range">
+      <button type="button" data-range="24h" aria-pressed="true">24h</button>
+      <button type="button" data-range="48h" aria-pressed="false">48h</button>
+      <button type="button" data-range="7d" aria-pressed="false">7d</button>
+      <button type="button" data-range="30d" aria-pressed="false">30d</button>
+    </div>
+  </div>
+</div>
+
+<div class="grid" style="--min: 170px;" id="kpi-grid">
+  <div class="kpi"><div class="label">Tokens saved</div><div class="value num">&mdash;</div></div>
+  <div class="kpi"><div class="label">Cost saved</div><div class="value num">&mdash;</div></div>
+  <div class="kpi"><div class="label">Avg savings %</div><div class="value num">&mdash;</div></div>
+  <div class="kpi"><div class="label">Requests</div><div class="value num">&mdash;</div></div>
+  <div class="kpi"><div class="label">P95 latency</div><div class="value num">&mdash;</div></div>
+</div>
+
+<section class="panel" id="flow-panel" style="margin-top: var(--sp-4);">
+  <div class="panel-head">
+    <div class="stack" style="gap: 2px;">
+      <h2>Token flow</h2>
+      <span class="eyebrow">Compressed vs saved per bucket &mdash; original = compressed + saved</span>
+    </div>
+    <div class="row" style="gap: var(--sp-5); align-items: flex-start;">
+      <div class="legend" id="flow-legend">
+        <span><i style="background: var(--accent-compressed);"></i>Compressed</span>
+        <span><i style="background: var(--accent-saved);"></i>Saved</span>
+      </div>
+      <div class="flow-total">
+        <span class="eyebrow">Saved this window</span>
+        <span class="figure num" id="flow-total-saved">&mdash;</span>
+      </div>
+    </div>
+  </div>
+  <div class="panel-body flush">
+    <div id="flow-chart-wrap">
+      <svg id="flow-svg" role="img" aria-label="Compressed versus saved tokens over time"></svg>
+      <div class="tip" id="flow-tip" role="tooltip"></div>
+    </div>
+    <div class="empty" id="flow-empty" hidden>No traffic in this window.</div>
+  </div>
+</section>
+
+<div class="grid" style="--min: 380px; margin-top: var(--sp-4);">
+  <section class="panel" id="model-panel">
+    <!-- The bar encodes avg savings while the rows are ordered by request
+         count, so the head has to name the encoding: without it the longest
+         bar reads as "most used", which is a different model entirely. -->
+    <div class="panel-head">
+      <h2>By model</h2>
+      <span class="hint">bar = avg savings · sorted by requests</span>
+    </div>
+    <div class="panel-body" id="model-bars"></div>
+    <div class="empty" id="model-empty" hidden>No model activity yet.</div>
+  </section>
+
+  <section class="panel" id="cache-panel">
+    <div class="panel-head"><h2>Cache</h2></div>
+    <div class="grid mini-stats" style="--min: 130px;" id="cache-mini"></div>
+    <div class="table-wrap">
+      <table class="data" id="cache-table">
+        <thead>
+          <tr>
+            <th>Role</th>
+            <th class="num">Hits / total</th>
+            <th class="num">Ratio</th>
+            <th class="num">Avg miss latency</th>
+          </tr>
+        </thead>
+        <tbody id="cache-tbody"></tbody>
+      </table>
+    </div>
+    <div class="empty" id="cache-empty" hidden>No cache activity yet.</div>
+  </section>
+</div>
+
+<section class="panel" id="recent-panel" style="margin-top: var(--sp-4);">
+  <div class="panel-head"><h2>Recent activity</h2></div>
+  <div class="table-wrap">
+    <table class="data" id="recent-table">
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>Session</th>
+          <th>Role</th>
+          <th>Model</th>
+          <th class="num">Orig &rarr; comp</th>
+          <th class="num">Savings</th>
+          <th class="num">Latency</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody id="recent-tbody"></tbody>
+    </table>
+  </div>
+  <div class="empty" id="recent-empty" hidden>No recent activity.</div>
+</section>
+<!--#SCRIPT-->
+(function () {
+  'use strict';
+
+  var VALID_RANGES = ['24h', '48h', '7d', '30d'];
+  var storedRange = localStorage.getItem('overview.range');
+  if (VALID_RANGES.indexOf(storedRange) === -1) storedRange = '24h';
+
+  var state = {
+    range: storedRange,
+    stats: null,
+    windowData: null,
+    series: null,
+  };
+
+  var lastLayout = null;
+  var crosshairEl = null;
+
+  /* ---- header: model status chip + range control ---- */
+
+  function renderModelChip(stats) {
+    var c = (stats && stats.compressor) || {};
+    var dot = document.getElementById('model-dot');
+    var label = document.getElementById('model-label');
+    dot.className = 'dot';
+    if (c.loading) {
+      dot.classList.add('stale');
+      label.textContent = 'Loading…';
+    } else if (c.model) {
+      dot.classList.add('live');
+      label.textContent = c.model;
+    } else {
+      dot.classList.add('offline');
+      label.textContent = 'Offline';
+    }
+  }
+
+  var segEl = document.getElementById('range-seg');
+  segEl.addEventListener('click', function (e) {
+    var btn = e.target.closest('button[data-range]');
+    if (!btn) return;
+    var r = btn.getAttribute('data-range');
+    if (r === state.range) return;
+    state.range = r;
+    localStorage.setItem('overview.range', r);
+    segEl.querySelectorAll('button').forEach(function (b) {
+      b.setAttribute('aria-pressed', String(b === btn));
+    });
+    UI.poller.refresh();
+  });
+  segEl.querySelectorAll('button').forEach(function (b) {
+    b.setAttribute('aria-pressed', String(b.getAttribute('data-range') === state.range));
+  });
+
+  /* ---- KPI row ---- */
+
+  function computeDelta(curr, prev, invert) {
+    if (prev === null || prev === undefined || !prev) return null;
+    var pct = ((curr - prev) / Math.abs(prev)) * 100;
+    if (!isFinite(pct)) return null;
+    var up = pct >= 0;
+    var good = invert ? !up : up;
+    return { pct: pct, up: up, good: good };
+  }
+
+  function deltaHtml(d) {
+    if (!d) return '<span class="kpi-delta muted">&mdash; vs prior window</span>';
+    var arrow = d.up ? '▲' : '▼';
+    var cls = d.good ? 'good' : 'bad';
+    var sign = d.up ? '+' : '';
+    return '<span class="kpi-delta ' + cls + '">' + arrow + ' ' + sign + UI.fmtPct(d.pct, 1) + ' vs prior window</span>';
+  }
+
+  function kpiTile(label, value, sub, deltaD) {
+    return '<div class="kpi">'
+      + '<div class="label">' + label + '</div>'
+      + '<div class="value num">' + value + '</div>'
+      + (sub ? '<div class="sub">' + sub + '</div>' : '')
+      + deltaHtml(deltaD)
+      + '</div>';
+  }
+
+  function renderKPIs(win, costPerMtok) {
+    var cur = (win && win.current) || {};
+    var prev = (win && win.previous) || {};
+    var grid = document.getElementById('kpi-grid');
+
+    var costCur = (cur.tokens_saved || 0) / 1e6 * (costPerMtok || 0);
+    var costPrev = (prev.tokens_saved || 0) / 1e6 * (costPerMtok || 0);
+
+    var html = '';
+    html += kpiTile('Tokens saved', UI.fmt(cur.tokens_saved), UI.fmtExact(cur.tokens_saved),
+      computeDelta(cur.tokens_saved, prev.tokens_saved, false));
+    html += kpiTile('Cost saved', UI.fmtCost(costCur), 'at ' + UI.fmtCost(costPerMtok || 0) + '/Mtok',
+      computeDelta(costCur, costPrev, false));
+    html += kpiTile('Avg savings %', UI.fmtPct(cur.avg_savings_pct, 1), null,
+      computeDelta(cur.avg_savings_pct, prev.avg_savings_pct, false));
+    html += kpiTile('Requests', UI.fmt(cur.requests), UI.fmtExact(cur.sessions) + ' sessions',
+      computeDelta(cur.requests, prev.requests, false));
+    html += kpiTile('P95 latency', UI.fmtMs(cur.p95_latency_ms), 'p50 ' + UI.fmtMs(cur.p50_latency_ms),
+      computeDelta(cur.p95_latency_ms, prev.p95_latency_ms, true));
+
+    grid.innerHTML = html;
+
+    var totalEl = document.getElementById('flow-total-saved');
+    totalEl.textContent = UI.fmt(cur.tokens_saved) + ' (' + UI.fmtExact(cur.tokens_saved) + ')';
+  }
+
+  /* ---- token flow chart ---- */
+
+  function bucketLabel(ts, range) {
+    var d = UI.parseTs(ts);
+    if (!d) return '';
+    if (range === '24h' || range === '48h') {
+      return d.toLocaleTimeString(undefined, { hour: 'numeric' });
+    }
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  }
+
+  function topRoundedRectPath(x, y, w, h, r) {
+    r = Math.max(0, Math.min(r, w / 2, h));
+    if (r <= 0.05) {
+      return 'M ' + x + ' ' + (y + h) + ' L ' + x + ' ' + y + ' L ' + (x + w) + ' ' + y + ' L ' + (x + w) + ' ' + (y + h) + ' Z';
+    }
+    return [
+      'M', x, y + h,
+      'L', x, y + r,
+      'A', r, r, 0, 0, 1, x + r, y,
+      'L', x + w - r, y,
+      'A', r, r, 0, 0, 1, x + w, y + r,
+      'L', x + w, y + h,
+      'Z',
+    ].join(' ');
+  }
+
+  function renderFlowChart(buckets) {
+    state.series = buckets || [];
+    var wrap = document.getElementById('flow-chart-wrap');
+    var emptyEl = document.getElementById('flow-empty');
+    var totalReq = state.series.reduce(function (s, b) { return s + (b.requests || 0); }, 0);
+
+    if (!state.series.length || totalReq === 0) {
+      wrap.hidden = true;
+      emptyEl.hidden = false;
+      lastLayout = null;
+      return;
+    }
+    wrap.hidden = false;
+    emptyEl.hidden = true;
+
+    var svg = document.getElementById('flow-svg');
+    var width = Math.max(280, wrap.clientWidth || 800);
+    var height = 260;
+    var marginLeft = 46, marginRight = 8, marginTop = 10, marginBottom = 26;
+    var plotW = width - marginLeft - marginRight;
+    var plotH = height - marginTop - marginBottom;
+    var n = state.series.length;
+    var barSlot = plotW / n;
+    var barWidth = Math.max(2, Math.min(28, barSlot - 3));
+
+    var maxVal = 0;
+    state.series.forEach(function (b) { maxVal = Math.max(maxVal, b.original_tokens || 0); });
+    if (maxVal <= 0) maxVal = 1;
+    maxVal *= 1.08;
+
+    svg.setAttribute('width', width);
+    svg.setAttribute('height', height);
+    svg.setAttribute('viewBox', '0 0 ' + width + ' ' + height);
+    svg.setAttribute('preserveAspectRatio', 'none');
+
+    var compressedColor = UI.cssVar('--accent-compressed');
+    var savedColor = UI.cssVar('--accent-saved');
+    var gridColor = UI.cssVar('--grid-line');
+    var textFaint = UI.cssVar('--text-faint');
+    var crosshairColor = UI.cssVar('--text');
+
+    var gridParts = [];
+    var ticks = 4;
+    for (var t = 0; t <= ticks; t++) {
+      var v = (maxVal / ticks) * t;
+      var y = marginTop + plotH - (v / maxVal) * plotH;
+      gridParts.push('<line x1="' + marginLeft + '" y1="' + y + '" x2="' + (width - marginRight) + '" y2="' + y + '" stroke="' + gridColor + '" stroke-width="1"/>');
+      gridParts.push('<text x="' + (marginLeft - 8) + '" y="' + (y + 3) + '" text-anchor="end" font-size="10" fill="' + textFaint + '">' + UI.fmt(v) + '</text>');
+    }
+
+    var maxLabels = Math.max(2, Math.floor(plotW / 56));
+    var step = Math.max(1, Math.ceil(n / maxLabels));
+
+    var gap = 2;
+    var barParts = [];
+    var labelParts = [];
+    state.series.forEach(function (b, i) {
+      var x = marginLeft + i * barSlot + (barSlot - barWidth) / 2;
+      var compressedH = ((b.compressed_tokens || 0) / maxVal) * plotH;
+      var savedH = ((b.total_saved || 0) / maxVal) * plotH;
+      var baseY = marginTop + plotH;
+      if (compressedH > 0.3) {
+        barParts.push('<rect x="' + x + '" y="' + (baseY - compressedH) + '" width="' + barWidth + '" height="' + compressedH + '" fill="' + compressedColor + '"/>');
+      }
+      if (savedH > 0.3) {
+        var savedTop = compressedH > 0.3 ? (baseY - compressedH - gap - savedH) : (baseY - savedH);
+        var r = Math.min(4, barWidth / 2, savedH);
+        barParts.push('<path d="' + topRoundedRectPath(x, savedTop, barWidth, savedH, r) + '" fill="' + savedColor + '"/>');
+      }
+      if (i % step === 0) {
+        labelParts.push('<text x="' + (x + barWidth / 2) + '" y="' + (height - 8) + '" text-anchor="middle" font-size="10" fill="' + textFaint + '">' + bucketLabel(b.bucket, state.range) + '</text>');
+      }
+    });
+
+    var crosshair = '<rect id="flow-crosshair" x="' + marginLeft + '" y="' + marginTop + '" width="' + barSlot + '" height="' + plotH + '" fill="' + crosshairColor + '" opacity="0" style="pointer-events:none;"/>';
+
+    svg.innerHTML = gridParts.join('') + barParts.join('') + labelParts.join('') + crosshair;
+    crosshairEl = document.getElementById('flow-crosshair');
+    lastLayout = { marginLeft: marginLeft, marginTop: marginTop, plotH: plotH, barSlot: barSlot, n: n };
+
+    svg.setAttribute('aria-label', 'Compressed versus saved tokens across ' + n + ' buckets for the selected ' + state.range + ' range.');
+  }
+
+  function tipRow(label, value) {
+    return '<div class="tip-row"><span>' + label + '</span><span class="push num">' + value + '</span></div>';
+  }
+
+  function hideHover() {
+    if (crosshairEl) crosshairEl.setAttribute('opacity', '0');
+    document.getElementById('flow-tip').style.display = 'none';
+  }
+
+  function positionTip(tip, clientX, clientY) {
+    var pad = 12;
+    var left = clientX + pad;
+    var top = clientY + pad;
+    var maxLeft = window.innerWidth - tip.offsetWidth - pad;
+    var maxTop = window.innerHeight - tip.offsetHeight - pad;
+    if (left > maxLeft) left = clientX - tip.offsetWidth - pad;
+    if (top > maxTop) top = clientY - tip.offsetHeight - pad;
+    tip.style.left = Math.max(pad, left) + 'px';
+    tip.style.top = Math.max(pad, top) + 'px';
+  }
+
+  function showHoverAt(idx, clientX, clientY) {
+    var b = state.series[idx];
+    if (!b || !lastLayout) return;
+    crosshairEl.setAttribute('x', lastLayout.marginLeft + idx * lastLayout.barSlot);
+    crosshairEl.setAttribute('opacity', '0.08');
+
+    var rows = tipRow('Original', UI.fmtExact(b.original_tokens))
+      + tipRow('Compressed', UI.fmtExact(b.compressed_tokens))
+      + tipRow('Saved', UI.fmtExact(b.total_saved))
+      + tipRow('Savings', UI.fmtPct(b.avg_savings_pct, 1))
+      + tipRow('Requests', UI.fmtExact(b.requests));
+    if (b.errors) rows += tipRow('Errors', UI.fmtExact(b.errors));
+
+    var tip = document.getElementById('flow-tip');
+    tip.innerHTML = '<div class="tip-title">' + UI.escapeHtml(UI.fmtTime(b.bucket)) + '</div>' + rows;
+    tip.style.display = 'block';
+    positionTip(tip, clientX, clientY);
+  }
+
+  var flowSvgEl = document.getElementById('flow-svg');
+  flowSvgEl.addEventListener('mousemove', function (e) {
+    if (!lastLayout) return;
+    var rect = flowSvgEl.getBoundingClientRect();
+    var scaleX = (flowSvgEl.viewBox && flowSvgEl.viewBox.baseVal && flowSvgEl.viewBox.baseVal.width)
+      ? flowSvgEl.viewBox.baseVal.width / rect.width : 1;
+    var x = (e.clientX - rect.left) * scaleX;
+    var idx = Math.floor((x - lastLayout.marginLeft) / lastLayout.barSlot);
+    if (idx < 0 || idx >= lastLayout.n) { hideHover(); return; }
+    showHoverAt(idx, e.clientX, e.clientY);
+  });
+  flowSvgEl.addEventListener('mouseleave', hideHover);
+
+  if (window.ResizeObserver) {
+    var flowWrapEl = document.getElementById('flow-chart-wrap');
+    new ResizeObserver(function () {
+      if (state.series) renderFlowChart(state.series);
+    }).observe(flowWrapEl);
+  }
+
+  window.addEventListener('themechange', function () {
+    if (state.series) renderFlowChart(state.series);
+  });
+
+  /* ---- by model ---- */
+
+  function renderByModel(rows) {
+    var container = document.getElementById('model-bars');
+    var emptyEl = document.getElementById('model-empty');
+    if (!rows || !rows.length) {
+      container.innerHTML = '';
+      emptyEl.hidden = false;
+      return;
+    }
+    emptyEl.hidden = true;
+    var sorted = rows.slice().sort(function (a, b) { return (b.requests || 0) - (a.requests || 0); });
+    container.innerHTML = sorted.map(function (r) {
+      var pct = Math.max(0, Math.min(100, r.avg_savings_pct || 0));
+      return '<div class="model-bar-row">'
+        + '<span class="model-bar-label" title="' + UI.escapeHtml(r.model) + '">' + UI.escapeHtml(r.model) + '</span>'
+        + '<div class="model-bar-track"><div class="model-bar-fill" style="width:' + Math.max(1, pct) + '%"></div></div>'
+        + '<span class="model-bar-value num">' + UI.fmtPct(r.avg_savings_pct, 1) + ' &middot; ' + UI.fmtExact(r.requests) + ' reqs</span>'
+        + '</div>';
+    }).join('');
+  }
+
+  /* ---- cache ---- */
+
+  function renderCache(cache) {
+    cache = cache || {};
+    var sinceDeploy = cache.since_deploy || {};
+    var last24h = cache.last_24h || {};
+    var mini = document.getElementById('cache-mini');
+    mini.innerHTML = ''
+      + '<div class="mini-stat"><div class="label">Hit ratio (since deploy)</div><div class="value num">' + UI.fmtRatioPct(sinceDeploy.hit_ratio, 1) + '</div></div>'
+      + '<div class="mini-stat"><div class="label">Hit ratio (24h)</div><div class="value num">' + UI.fmtRatioPct(last24h.hit_ratio, 1) + '</div></div>'
+      + '<div class="mini-stat"><div class="label">Entries</div><div class="value num">' + UI.fmtExact(cache.entries || 0) + '</div></div>'
+      + '<div class="mini-stat"><div class="label">Time saved</div><div class="value num">' + UI.fmtMs(cache.time_saved_ms || 0) + '</div></div>';
+
+    var byRole = cache.by_role || {};
+    var roles = Object.keys(byRole);
+    var tbody = document.getElementById('cache-tbody');
+    var emptyEl = document.getElementById('cache-empty');
+    if (!roles.length) {
+      tbody.innerHTML = '';
+      emptyEl.hidden = false;
+      return;
+    }
+    emptyEl.hidden = true;
+    tbody.innerHTML = roles.map(function (role) {
+      var r = byRole[role] || {};
+      return '<tr>'
+        + '<td>' + UI.escapeHtml(role) + '</td>'
+        + '<td class="num">' + UI.fmtExact(r.hits || 0) + ' / ' + UI.fmtExact(r.total || 0) + '</td>'
+        + '<td class="num">' + UI.fmtRatioPct(r.hit_ratio, 1) + '</td>'
+        + '<td class="num">' + UI.fmtMs(r.avg_miss_latency_ms) + '</td>'
+        + '</tr>';
+    }).join('');
+  }
+
+  /* ---- recent activity ---- */
+
+  function renderRecent(rows) {
+    var tbody = document.getElementById('recent-tbody');
+    var emptyEl = document.getElementById('recent-empty');
+    if (!rows || !rows.length) {
+      tbody.innerHTML = '';
+      emptyEl.hidden = false;
+      return;
+    }
+    emptyEl.hidden = true;
+    tbody.innerHTML = rows.map(function (r) {
+      var sessionCell = r.session_id
+        ? '<a href="/sessions/' + encodeURIComponent(r.session_id) + '">' + UI.escapeHtml(r.session_short || r.session_id) + '</a>'
+        : '';
+      var statusCell = '';
+      if (r.cache_hit) statusCell = '<span class="chip accent">cached</span>';
+      else if (r.ok === false) statusCell = '<span class="chip bad">failed</span>';
+      return '<tr>'
+        + '<td title="' + UI.escapeHtml(UI.fmtTime(r.ts)) + '">' + UI.escapeHtml(UI.ago(r.ts)) + '</td>'
+        + '<td>' + sessionCell + '</td>'
+        + '<td>' + UI.escapeHtml(r.role) + '</td>'
+        + '<td>' + UI.escapeHtml(r.model) + '</td>'
+        + '<td class="num">' + UI.fmtExact(r.original_tokens) + ' &rarr; ' + UI.fmtExact(r.compressed_tokens) + '</td>'
+        + '<td class="num">' + UI.fmtPct(r.savings_pct, 1) + '</td>'
+        + '<td class="num">' + UI.fmtMs(r.latency_ms) + '</td>'
+        + '<td>' + statusCell + '</td>'
+        + '</tr>';
+    }).join('');
+  }
+
+  /* ---- fetch + poll ---- */
+
+  function fetchStats() {
+    return UI.getJSON('/stats').then(function (d) {
+      state.stats = d;
+      renderModelChip(d);
+      renderByModel(d.by_model || []);
+      renderCache(d.cache || {});
+      renderRecent(d.recent || []);
+      if (state.windowData) renderKPIs(state.windowData, d.cost_per_mtok || 0);
+    });
+  }
+
+  function fetchWindow() {
+    return UI.getJSON('/stats/window?range=' + encodeURIComponent(state.range)).then(function (d) {
+      state.windowData = d;
+      renderKPIs(d, state.stats ? (state.stats.cost_per_mtok || 0) : 0);
+    });
+  }
+
+  function fetchSeries() {
+    return UI.getJSON('/stats/timeseries?range=' + encodeURIComponent(state.range)).then(function (d) {
+      renderFlowChart(d);
+    });
+  }
+
+  UI.poller.add('stats', fetchStats, 5000);
+  UI.poller.add('window', fetchWindow, 5000);
+  UI.poller.add('series', fetchSeries, 8000);
+}());

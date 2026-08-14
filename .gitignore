@@ -31,3 +31,6 @@ docs/screenshots/
 
 # Spike/scratch working files may contain live tokens — never commit
 scratchpad/
+
+# Claude Code agent worktrees (git-managed copies of this repo)
+.claude/worktrees/

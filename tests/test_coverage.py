@@ -998,7 +998,7 @@ def test_dashboard_returns_html(client: TestClient):
     r = client.get("/dashboard")
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("text/html")
-    assert "LLM Compressor" in r.text
+    assert "llm-compressor" in r.text
 
 
 # ===========================================================================

@@ -49,6 +49,59 @@ def _default_db_path() -> Path:
 DB_PATH = Path(os.environ.get("LLM_COMPRESSOR_DB") or _default_db_path())
 
 
+def _normalize_timestamps(conn) -> None:
+    """Rewrite `compressions.ts` to naive ISO-8601 UTC, once per database.
+
+    The column accumulated three incompatible formats across the app's life:
+    `+00:00`-suffixed (what `record_compression` wrote until this migration
+    landed), naive ISO, and bare `HH:MM:SS` from an early build that stored the
+    ring-buffer's display string. SQLite's `strftime`/`datetime` silently
+    return NULL for the first and bucket the third into year 2000, so every
+    time-windowed query -- the 48h chart, `date(ts) = date('now')`, the cache
+    windows -- was reading a mix of correct rows, dropped rows, and rows
+    stamped a quarter-century ago.
+
+    Offset-suffixed values convert exactly. Time-only values have no
+    recoverable date, so they are stamped NULL: excluded from time windows
+    rather than silently landing in 2000. The `meta` marker makes this a
+    one-shot; normal startup does no table scan.
+    """
+    done = conn.execute("SELECT value FROM meta WHERE key='ts_normalized'").fetchone()
+    if done:
+        return
+    # `+00:00`/`Z` suffixed -> naive UTC. Both are already UTC instants, so
+    # this is a string trim, not a shift.
+    conn.execute(
+        "UPDATE compressions SET ts = substr(ts, 1, 19) WHERE ts LIKE '%+00:00' OR ts LIKE '%Z'"
+    )
+    conn.execute(
+        "UPDATE rtk_events SET ts = substr(ts, 1, 19) WHERE ts LIKE '%+00:00' OR ts LIKE '%Z'"
+    )
+    # Bare HH:MM:SS -- no date to recover.
+    conn.execute("UPDATE compressions SET ts = NULL WHERE length(ts) = 8 AND ts LIKE '__:__:__'")
+    # `cache_since` is compared against ts with a plain string `>=`, so it has
+    # to lose its offset too or it sorts after every naive row at that instant.
+    conn.execute(
+        "UPDATE meta SET value = substr(value, 1, 19) "
+        "WHERE key = 'cache_since' AND (value LIKE '%+00:00' OR value LIKE '%Z')"
+    )
+    conn.execute(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES ('ts_normalized', ?)",
+        (datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds"),),
+    )
+    conn.commit()
+
+
+def utc_now() -> str:
+    """Naive ISO-8601 UTC -- the one timestamp format written to the database.
+
+    Naive rather than offset-aware because SQLite's date functions compare
+    against `datetime('now')`, which is itself naive UTC; an offset suffix
+    makes `strftime` return NULL and the row vanishes from every chart.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds")
+
+
 def init_db(path: str):
     import sqlite3 as _sqlite3
 
@@ -68,6 +121,14 @@ def init_db(path: str):
         """
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_ts ON compressions(ts)")
+    # The sessions listing derives every per-session aggregate (first/last seen,
+    # tokens saved, request count, mean ratio) from correlated subqueries keyed
+    # on session_id, and its ORDER BY is a computed expression, so SQLite has to
+    # evaluate all of them for every session before LIMIT can apply. Without
+    # this index each subquery is a full table scan: on a 186k-row install that
+    # is ~218M row visits for one page, and /sessions took 39s to load.
+    # Measured 39.21s -> 0.29s. The index itself builds in well under a second.
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_compressions_session ON compressions(session_id)")
     conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
     conn.execute(
         """
@@ -155,11 +216,19 @@ def init_db(path: str):
         """
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_last_seen ON sessions(last_seen)")
+    try:
+        # Compression failures used to be invisible: the exception path forwards
+        # the prompt uncompressed and recorded nothing, so an error rate could
+        # not be computed at all. 1 = compressed, 0 = fell through to passthrough.
+        conn.execute("ALTER TABLE compressions ADD COLUMN ok INTEGER DEFAULT 1")
+    except Exception:
+        pass  # column already exists
+    _normalize_timestamps(conn)
     # Mark when caching went live so hit-ratio stats can exclude the pre-feature
     # backlog of misses. Set once, never overwritten (INSERT OR IGNORE).
     conn.execute(
         "INSERT OR IGNORE INTO meta (key, value) VALUES ('cache_since', ?)",
-        (datetime.now(timezone.utc).isoformat(timespec="seconds"),),
+        (utc_now(),),
     )
     conn.commit()
     return conn

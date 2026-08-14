@@ -1,0 +1,526 @@
+<!--#STYLE-->
+#name-row { align-items: center; }
+#name-row input[type="text"] { min-width: 240px; }
+#meta-line { color: var(--text-muted); font-size: var(--fs-base); flex-wrap: wrap; gap: var(--sp-1) var(--sp-3); margin-top: 2px; }
+#meta-line .sep { color: var(--text-faint); }
+#kpi-row { margin: var(--sp-4) 0; }
+#chart-wrap svg { display: block; width: 100%; }
+#chart-wrap .empty { padding: var(--sp-6) 0; }
+.prompt-panes { display: flex; gap: var(--sp-3); flex-wrap: wrap; }
+.prompt-pane { flex: 1 1 260px; min-width: 0; }
+.prompt-pane-head {
+  display: flex; justify-content: space-between; align-items: baseline;
+  font-size: var(--fs-sm); color: var(--text-muted); font-weight: 600;
+  margin-bottom: var(--sp-1);
+}
+.prompt-text {
+  margin: 0; font-family: var(--font-mono); font-size: var(--fs-sm);
+  white-space: pre-wrap; word-break: break-word;
+  background: var(--surface-sunken); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: var(--sp-2);
+  max-height: 220px; overflow-y: auto; color: var(--text);
+}
+#compressions-table tbody tr[data-id] { cursor: pointer; }
+#compressions-table tbody tr[data-id]:hover { background: var(--surface-raised); }
+#compressions-table tbody tr[data-id]:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+tr.expanded-detail td { background: var(--surface-sunken); }
+.panel + .panel { margin-top: var(--sp-4); }
+
+/* The Command column carries arbitrarily long shell lines and wins the fight
+   for width, squeezing Time until "51s ago" breaks across two lines and every
+   row grows to match. The relative timestamp is short and fixed -- give it the
+   few pixels it needs and let the command keep wrapping. */
+#rtk-table td:first-child,
+#compressions-table td:first-child { white-space: nowrap; }
+
+<!--#BODY-->
+<div id="session-root">
+  <header class="stack" style="gap: 2px; margin-bottom: var(--sp-2)">
+    <div class="row" id="name-row">
+      <h1 id="session-heading" style="font-size: var(--fs-lg)"></h1>
+      <button type="button" class="icon-btn" id="rename-btn" aria-label="Rename session">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 20h9"></path>
+          <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"></path>
+        </svg>
+      </button>
+    </div>
+    <div class="row" id="meta-line"></div>
+  </header>
+
+  <div class="grid" id="kpi-row" style="--min: 150px"></div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <h2>Traffic</h2>
+      <div class="seg" id="range-seg" role="group" aria-label="Time range">
+        <button type="button" data-range="24h" aria-pressed="true">24h</button>
+        <button type="button" data-range="48h" aria-pressed="false">48h</button>
+        <button type="button" data-range="7d" aria-pressed="false">7d</button>
+        <button type="button" data-range="30d" aria-pressed="false">30d</button>
+      </div>
+    </div>
+    <div class="panel-body">
+      <div class="legend" id="chart-legend"></div>
+      <div id="chart-wrap" style="margin-top: var(--sp-2)">
+        <div class="empty">Loading&hellip;</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel" id="compressions-panel">
+    <div class="panel-head"><h2>Compressions</h2></div>
+    <div class="table-wrap">
+      <table class="data" id="compressions-table">
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Model</th>
+            <th class="num">Original</th>
+            <th class="num">Compressed</th>
+            <th class="num">Savings</th>
+            <th class="num">Latency</th>
+          </tr>
+        </thead>
+        <tbody id="compressions-rows">
+          <tr><td colspan="6" class="empty">Loading&hellip;</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="pager" id="compressions-pager"></div>
+  </div>
+
+  <div class="panel" id="rtk-panel" hidden>
+    <div class="panel-head"><h2>RTK commands</h2></div>
+    <div class="table-wrap">
+      <table class="data" id="rtk-table">
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Command</th>
+            <th class="num">In &rarr; Out</th>
+            <th class="num">Saved</th>
+            <th class="num">Savings</th>
+          </tr>
+        </thead>
+        <tbody id="rtk-rows"></tbody>
+      </table>
+    </div>
+    <div class="pager" id="rtk-pager"></div>
+  </div>
+</div>
+<div class="tip" id="chart-tip" role="status"></div>
+
+<!--#SCRIPT-->
+(function () {
+  'use strict';
+
+  var session = UI.bootstrap('session-data');
+  var root = document.getElementById('session-root');
+  if (!session || !session.session_id) {
+    root.innerHTML = '<div class="empty">Session data unavailable &mdash; this page could not load its record.</div>';
+    return;
+  }
+
+  var sessionId = session.session_id;
+
+  /* ---- heading + rename ---- */
+
+  var nameRowEl = document.getElementById('name-row');
+  var metaLineEl = document.getElementById('meta-line');
+  var crumbCurrentEl = document.querySelector('.crumbs .current');
+  var headingEl = document.getElementById('session-heading');
+  var renameBtn = document.getElementById('rename-btn');
+
+  var PENCIL_SVG =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+    'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"></path></svg>';
+
+  function currentName() {
+    return session.display_name || ('session-' + sessionId.slice(0, 8));
+  }
+
+  function renderHeading() {
+    headingEl.textContent = currentName();
+  }
+
+  function renderMeta() {
+    var bits = ['<span class="mono">' + UI.escapeHtml(sessionId) + '</span>'];
+    if (session.project) bits.push('<span>' + UI.escapeHtml(session.project) + '</span>');
+    bits.push('<span>First seen ' + UI.escapeHtml(UI.fmtTime(session.first_seen)) + '</span>');
+    bits.push('<span>Last seen ' + UI.escapeHtml(UI.fmtTime(session.last_seen)) + '</span>');
+    metaLineEl.innerHTML = bits.join('<span class="sep" aria-hidden="true">&middot;</span>');
+  }
+
+  function bindRenameBtn() {
+    renameBtn.addEventListener('click', enterRenameMode);
+  }
+
+  function enterRenameMode() {
+    var current = currentName();
+    nameRowEl.innerHTML =
+      '<input type="text" id="rename-input" value="' + UI.escapeHtml(current) + '" aria-label="Session name">' +
+      '<button type="button" class="btn primary" id="rename-save">Save</button>' +
+      '<button type="button" class="btn" id="rename-cancel">Cancel</button>' +
+      '<span id="rename-error" role="alert" style="color: var(--status-critical); font-size: var(--fs-sm)"></span>';
+    var input = document.getElementById('rename-input');
+    input.focus();
+    input.select();
+    document.getElementById('rename-cancel').addEventListener('click', exitRenameMode);
+    document.getElementById('rename-save').addEventListener('click', saveRename);
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') saveRename();
+      else if (e.key === 'Escape') exitRenameMode();
+    });
+  }
+
+  function exitRenameMode() {
+    nameRowEl.innerHTML =
+      '<h1 id="session-heading" style="font-size: var(--fs-lg)"></h1>' +
+      '<button type="button" class="icon-btn" id="rename-btn" aria-label="Rename session">' + PENCIL_SVG + '</button>';
+    headingEl = document.getElementById('session-heading');
+    renameBtn = document.getElementById('rename-btn');
+    bindRenameBtn();
+    renderHeading();
+  }
+
+  function saveRename() {
+    var input = document.getElementById('rename-input');
+    var errEl = document.getElementById('rename-error');
+    var name = input.value.trim();
+    UI.postJSON('/session/' + encodeURIComponent(sessionId) + '/name', { name: name }, 'PATCH')
+      .then(function (data) {
+        session.display_name = data.display_name;
+        session.name_source = data.name_source;
+        exitRenameMode();
+        if (crumbCurrentEl) crumbCurrentEl.textContent = currentName();
+        document.title = currentName() + ' · llm-compressor';
+      })
+      .catch(function (err) {
+        errEl.textContent = String((err && err.message) || err);
+      });
+  }
+
+  bindRenameBtn();
+  renderHeading();
+  renderMeta();
+
+  /* ---- KPI row ---- */
+
+  var kpiRowEl = document.getElementById('kpi-row');
+
+  function renderKpis(alltime) {
+    var savedExact = UI.fmtExact(alltime.tokens_saved || 0);
+    var tiles = [
+      ['Requests', UI.fmtExact(alltime.requests || 0), null],
+      ['Tokens saved', UI.fmt(alltime.tokens_saved || 0), savedExact],
+      ['Avg savings', UI.fmtPct(alltime.avg_savings_pct), null],
+      ['Avg ratio', alltime.avg_ratio ? Number(alltime.avg_ratio).toFixed(2) + '×' : '—', null],
+      ['p95 latency', UI.fmtMs(alltime.p95_latency_ms), null],
+    ];
+    kpiRowEl.innerHTML = tiles.map(function (t) {
+      var titleAttr = t[2] ? ' title="' + UI.escapeHtml(t[2]) + '"' : '';
+      return '<div class="kpi"><div class="label">' + t[0] + '</div>' +
+        '<div class="value"' + titleAttr + '>' + t[1] + '</div></div>';
+    }).join('');
+  }
+
+  function loadStats() {
+    return UI.getJSON('/stats?session_id=' + encodeURIComponent(sessionId)).then(function (data) {
+      renderKpis(data.alltime || {});
+    });
+  }
+
+  /* ---- chart ---- */
+
+  var RANGES = ['24h', '48h', '7d', '30d'];
+  var range = localStorage.getItem('session.range');
+  if (RANGES.indexOf(range) === -1) range = '24h';
+
+  var rangeSeg = document.getElementById('range-seg');
+  var chartWrap = document.getElementById('chart-wrap');
+  var legendEl = document.getElementById('chart-legend');
+  var tipEl = document.getElementById('chart-tip');
+  var lastSeries = [];
+
+  legendEl.innerHTML =
+    '<span><i style="background:var(--series-1)"></i>Compressed</span>' +
+    '<span><i style="background:var(--series-3)"></i>Saved</span>';
+
+  rangeSeg.querySelectorAll('button').forEach(function (btn) {
+    btn.setAttribute('aria-pressed', String(btn.getAttribute('data-range') === range));
+    btn.addEventListener('click', function () {
+      range = btn.getAttribute('data-range');
+      localStorage.setItem('session.range', range);
+      rangeSeg.querySelectorAll('button').forEach(function (b) {
+        b.setAttribute('aria-pressed', String(b === btn));
+      });
+      loadTimeseries();
+    });
+  });
+
+  function rectStr(x, y, w, h, fill) {
+    return '<rect x="' + x + '" y="' + y + '" width="' + w + '" height="' + h + '" fill="' + fill + '"></rect>';
+  }
+
+  function roundedTopPath(x, y, w, h, r, fill) {
+    r = Math.max(0, Math.min(r, w / 2, h));
+    var d = 'M' + x + ',' + (y + h) +
+      ' L' + x + ',' + (y + r) +
+      ' Q' + x + ',' + y + ' ' + (x + r) + ',' + y +
+      ' L' + (x + w - r) + ',' + y +
+      ' Q' + (x + w) + ',' + y + ' ' + (x + w) + ',' + (y + r) +
+      ' L' + (x + w) + ',' + (y + h) + ' Z';
+    return '<path d="' + d + '" fill="' + fill + '"></path>';
+  }
+
+  function xLabel(r) {
+    var d = UI.parseTs(r.bucket);
+    if (!d) return '';
+    if (range === '24h' || range === '48h') {
+      return d.toLocaleTimeString(undefined, { hour: 'numeric' });
+    }
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  }
+
+  function tipRow(label, val) {
+    return '<div class="tip-row"><span>' + UI.escapeHtml(label) + '</span>' +
+      '<span class="push num">' + val + '</span></div>';
+  }
+
+  function hideTip() { tipEl.style.display = 'none'; }
+
+  function showTip(clientX, clientY, r) {
+    var timeLabel = UI.fmtTime(r.bucket);
+    tipEl.innerHTML =
+      '<div class="tip-title">' + UI.escapeHtml(timeLabel) + '</div>' +
+      tipRow('Requests', UI.fmtExact(r.requests)) +
+      tipRow('Original', UI.fmtExact(r.original_tokens)) +
+      tipRow('Compressed', UI.fmtExact(r.compressed_tokens)) +
+      tipRow('Saved', UI.fmtExact(r.total_saved)) +
+      tipRow('Avg savings', UI.fmtPct(r.avg_savings_pct));
+    tipEl.style.display = 'block';
+    var pad = 14;
+    tipEl.style.left = (clientX + pad) + 'px';
+    tipEl.style.top = (clientY + pad) + 'px';
+  }
+
+  function drawChart(rows) {
+    if (!rows || !rows.length) {
+      chartWrap.innerHTML = '<div class="empty">No traffic in this window.</div>';
+      return;
+    }
+    var width = Math.max(chartWrap.clientWidth || 640, 320);
+    var height = 200;
+    var padL = 44, padR = 8, padT = 8, padB = 22;
+    var innerW = width - padL - padR;
+    var innerH = height - padT - padB;
+    var maxVal = 1;
+    rows.forEach(function (r) { maxVal = Math.max(maxVal, r.original_tokens || 0); });
+
+    var n = rows.length;
+    var bandW = innerW / n;
+    var barW = Math.max(2, Math.min(28, bandW * 0.6));
+    var gap = 2;
+
+    function yFor(v) { return padT + innerH - (v / maxVal) * innerH; }
+
+    var gridLines = [0, 0.25, 0.5, 0.75, 1].map(function (f) {
+      var y = padT + innerH * (1 - f);
+      var val = Math.round(maxVal * f);
+      return '<line x1="' + padL + '" x2="' + (width - padR) + '" y1="' + y + '" y2="' + y +
+        '" stroke="var(--grid-line)" stroke-width="1"></line>' +
+        '<text x="' + (padL - 6) + '" y="' + (y + 3) + '" text-anchor="end" font-size="' +
+        'var(--fs-micro)" fill="var(--text-faint)">' + UI.fmt(val) + '</text>';
+    }).join('');
+
+    var thinFactor = Math.max(1, Math.ceil(n / 8));
+    var bars = '';
+    var hitAreas = '';
+
+    rows.forEach(function (r, i) {
+      var cx = padL + bandW * i + bandW / 2;
+      var x = cx - barW / 2;
+      var compressed = Math.max(0, r.compressed_tokens || 0);
+      var saved = Math.max(0, r.total_saved || 0);
+      var yBase = yFor(0);
+      var yCompTop = yFor(compressed);
+      var compH = yBase - yCompTop;
+      var yStackTop = yFor(compressed + saved);
+      var ySavedBottom = compH > 0 ? yCompTop - gap : yBase;
+      var savedH = Math.max(0, ySavedBottom - yStackTop);
+
+      if (savedH > 0) {
+        if (compH > 0) bars += rectStr(x, yCompTop, barW, compH, 'var(--series-1)');
+        bars += roundedTopPath(x, ySavedBottom - savedH, barW, savedH, 4, 'var(--series-3)');
+      } else if (compH > 0) {
+        bars += roundedTopPath(x, yCompTop, barW, compH, 4, 'var(--series-1)');
+      }
+
+      if (i % thinFactor === 0) {
+        bars += '<text x="' + cx + '" y="' + (height - 4) + '" text-anchor="middle" font-size="' +
+          'var(--fs-micro)" fill="var(--text-faint)">' + UI.escapeHtml(xLabel(r)) + '</text>';
+      }
+
+      hitAreas += '<rect data-i="' + i + '" x="' + (padL + bandW * i) + '" y="' + padT +
+        '" width="' + bandW + '" height="' + innerH + '" fill="transparent"></rect>';
+    });
+
+    chartWrap.innerHTML =
+      '<svg role="img" aria-label="Token usage over time: compressed and saved tokens per bucket" ' +
+      'width="100%" height="' + height + '" viewBox="0 0 ' + width + ' ' + height + '" id="chart-svg">' +
+      gridLines + bars +
+      '<line id="chart-crosshair" x1="0" x2="0" y1="' + padT + '" y2="' + (padT + innerH) +
+      '" stroke="var(--border-strong)" stroke-width="1" style="display:none"></line>' +
+      hitAreas +
+      '</svg>';
+
+    var svg = document.getElementById('chart-svg');
+    var crosshair = document.getElementById('chart-crosshair');
+
+    svg.addEventListener('mousemove', function (e) {
+      var box = svg.getBoundingClientRect();
+      var scaleX = width / box.width;
+      var localX = (e.clientX - box.left) * scaleX;
+      var i = Math.floor((localX - padL) / bandW);
+      if (i < 0 || i >= n) { hideTip(); crosshair.style.display = 'none'; return; }
+      showTip(e.clientX, e.clientY, rows[i]);
+      var cx = padL + bandW * i + bandW / 2;
+      crosshair.setAttribute('x1', cx);
+      crosshair.setAttribute('x2', cx);
+      crosshair.style.display = '';
+    });
+    svg.addEventListener('mouseleave', function () {
+      hideTip();
+      crosshair.style.display = 'none';
+    });
+  }
+
+  function loadTimeseries() {
+    return UI.getJSON('/stats/timeseries?session_id=' + encodeURIComponent(sessionId) + '&range=' + range)
+      .then(function (data) {
+        lastSeries = data || [];
+        drawChart(lastSeries);
+      });
+  }
+
+  window.addEventListener('themechange', function () { drawChart(lastSeries); });
+
+  var resizeTimer = null;
+  window.addEventListener('resize', function () {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(function () { drawChart(lastSeries); }, 150);
+  });
+
+  /* ---- compressions ---- */
+
+  var compressionsState = { page: 0, perPage: 25 };
+  var compressionsRowsEl = document.getElementById('compressions-rows');
+  var compressionsPagerEl = document.getElementById('compressions-pager');
+  var expandedId = null;
+
+  function promptPane(label, text) {
+    return '<div class="prompt-pane">' +
+      '<div class="prompt-pane-head"><span>' + label + '</span>' +
+      '<span class="num" style="color:var(--text-faint)">' + UI.fmtExact(text.length) + ' chars</span></div>' +
+      '<pre class="prompt-text">' + UI.escapeHtml(text) + '</pre></div>';
+  }
+
+  function toggleExpand(tr, items) {
+    var id = Number(tr.getAttribute('data-id'));
+    var existing = compressionsRowsEl.querySelector('tr.expanded-detail');
+    if (existing) existing.remove();
+    compressionsRowsEl.querySelectorAll('tr[data-id]').forEach(function (t) {
+      t.setAttribute('aria-expanded', 'false');
+    });
+    if (expandedId === id) { expandedId = null; return; }
+    expandedId = id;
+    tr.setAttribute('aria-expanded', 'true');
+    var c = items.filter(function (x) { return x.id === id; })[0];
+    if (!c) return;
+    var detail = document.createElement('tr');
+    detail.className = 'expanded-detail';
+    if (c.original_text === null || c.original_text === undefined ||
+        c.compressed_text === null || c.compressed_text === undefined) {
+      detail.innerHTML = '<td colspan="6" class="empty">Prompt text not captured for this row.</td>';
+    } else {
+      detail.innerHTML = '<td colspan="6"><div class="prompt-panes">' +
+        promptPane('Original', c.original_text) + promptPane('Compressed', c.compressed_text) +
+        '</div></td>';
+    }
+    tr.insertAdjacentElement('afterend', detail);
+  }
+
+  function renderCompressions(items) {
+    expandedId = null;
+    if (!items.length) {
+      compressionsRowsEl.innerHTML = '<tr><td colspan="6" class="empty">No compressions recorded yet.</td></tr>';
+      return;
+    }
+    compressionsRowsEl.innerHTML = items.map(function (c) {
+      return '<tr data-id="' + c.id + '" tabindex="0" role="button" aria-expanded="false">' +
+        '<td title="' + UI.escapeHtml(UI.fmtTime(c.ts)) + '">' + UI.escapeHtml(UI.ago(c.ts)) + '</td>' +
+        '<td class="mono">' + UI.escapeHtml(c.model || '—') + '</td>' +
+        '<td class="num">' + UI.fmtExact(c.original_tokens) + '</td>' +
+        '<td class="num">' + UI.fmtExact(c.compressed_tokens) + '</td>' +
+        '<td class="num">' + UI.fmtPct(c.savings_pct) + '</td>' +
+        '<td class="num">' + UI.fmtMs(c.latency_ms) + '</td></tr>';
+    }).join('');
+    compressionsRowsEl.querySelectorAll('tr[data-id]').forEach(function (tr) {
+      tr.addEventListener('click', function () { toggleExpand(tr, items); });
+      tr.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpand(tr, items); }
+      });
+    });
+  }
+
+  function loadCompressions(page) {
+    page = page || 0;
+    return UI.getJSON('/session/' + encodeURIComponent(sessionId) + '/compressions?page=' +
+      (page + 1) + '&page_size=' + compressionsState.perPage)
+      .then(function (data) {
+        compressionsState.page = page;
+        renderCompressions(data.items || []);
+        UI.buildPager(compressionsPagerEl, { page: page, perPage: compressionsState.perPage, total: data.total || 0 }, loadCompressions);
+      });
+  }
+
+  /* ---- RTK commands ---- */
+
+  var rtkState = { page: 0, perPage: 25 };
+  var rtkPanelEl = document.getElementById('rtk-panel');
+  var rtkRowsEl = document.getElementById('rtk-rows');
+  var rtkPagerEl = document.getElementById('rtk-pager');
+
+  function loadRtk(page) {
+    page = page || 0;
+    return UI.getJSON('/session/' + encodeURIComponent(sessionId) + '/rtk-commands?page=' +
+      (page + 1) + '&page_size=' + rtkState.perPage)
+      .then(function (data) {
+        rtkState.page = page;
+        if (!data.total) { rtkPanelEl.hidden = true; return; }
+        rtkPanelEl.hidden = false;
+        rtkRowsEl.innerHTML = (data.items || []).map(function (c) {
+          return '<tr>' +
+            '<td title="' + UI.escapeHtml(UI.fmtTime(c.ts)) + '">' + UI.escapeHtml(UI.ago(c.ts)) + '</td>' +
+            '<td class="mono">' + UI.escapeHtml(c.rtk_cmd || '—') + '</td>' +
+            '<td class="num">' + UI.fmtExact(c.input_tokens) + ' → ' + UI.fmtExact(c.output_tokens) + '</td>' +
+            '<td class="num">' + UI.fmtExact(c.saved_tokens) + '</td>' +
+            '<td class="num">' + UI.fmtPct(c.savings_pct) + '</td></tr>';
+        }).join('');
+        UI.buildPager(rtkPagerEl, { page: page, perPage: rtkState.perPage, total: data.total }, loadRtk);
+      });
+  }
+
+  /* ---- boot ---- */
+
+  loadCompressions(0);
+  loadRtk(0);
+
+  // UI.poller.add fires each task immediately on registration, so these
+  // also cover the initial load — no separate call needed here.
+  UI.poller.add('session-stats', loadStats, 10000);
+  UI.poller.add('session-timeseries', loadTimeseries, 15000);
+}());

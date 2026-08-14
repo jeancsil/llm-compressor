@@ -232,6 +232,23 @@ def compress_text(text: str, session_id: str, role: str = "user") -> str:
         compressed, orig, comp = _compress_with(active, text)
     except Exception as e:
         print(f"[compressor] compression failed, forwarding original: {e}")
+        # Record the failure instead of returning silently. The prompt still
+        # goes through uncompressed -- that is the right call for the request --
+        # but a run where the compressor throws on every call used to look
+        # identical to a quiet one: no rows, no savings, no error anywhere in
+        # the UI. `ok=0` with zero savings makes the passthrough countable.
+        latency_ms = (time.perf_counter() - t0) * 1000
+        tokens = _count_tokens(text)
+        sessions.record_compression(
+            session_id,
+            tokens,
+            tokens,
+            latency_ms=latency_ms,
+            role=role,
+            active_backend=active,
+            cache_hit=0,
+            ok=0,
+        )
         return text
     latency_ms = (time.perf_counter() - t0) * 1000
     print(f"[{model_tag}] {orig} → {comp} tokens [{session_id[:8]}] role={role}")

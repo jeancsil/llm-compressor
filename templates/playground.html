@@ -1,0 +1,393 @@
+<!--#STYLE-->
+.pg-head h1 { font-size: var(--fs-lg); }
+/* The field is a flex item whose width is driven by its widest child -- the
+   two-sentence hint -- so the model <select> was stretching to ~860px to
+   present a ten-character value. Cap the block and size the control itself. */
+.pg-head .field { min-width: 220px; max-width: 420px; }
+.pg-head select { max-width: 240px; }
+
+#promptInput { width: 100%; min-height: 260px; }
+
+.pg-count { color: var(--text-muted); font-size: var(--fs-sm); }
+
+#statusLine { min-height: 20px; }
+#statusLine:empty { display: none; }
+
+#resultsPanel { margin-top: var(--sp-4); }
+#resultsPanel summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4);
+  font-weight: 600;
+  font-size: var(--fs-md);
+}
+#resultsPanel summary::-webkit-details-marker { display: none; }
+#resultsPanel summary::before {
+  content: "▸";
+  color: var(--text-faint);
+  transition: transform 0.12s ease;
+}
+#resultsPanel[open] summary::before { transform: rotate(90deg); }
+#resultsPanel summary .chip { font-weight: 500; }
+#resultsPanel[open] summary { border-bottom: 1px solid var(--border); }
+
+.diff-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--sp-3);
+}
+@media (max-width: 720px) {
+  .diff-grid { grid-template-columns: 1fr; }
+}
+
+.diff-panel h3 {
+  font-size: var(--fs-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  font-weight: 600;
+  margin-bottom: var(--sp-1);
+}
+
+.diff-pre {
+  margin: 0;
+  max-height: 420px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--sp-3);
+  color: var(--text);
+}
+
+.diff-removed {
+  text-decoration: line-through;
+  color: var(--text-faint);
+  background: var(--critical-dim);
+  border-radius: 2px;
+}
+
+<!--#BODY-->
+<div class="row spread pg-head">
+  <h1>Playground</h1>
+  <div class="field push">
+    <label for="modelSelect">Model</label>
+    <select id="modelSelect">
+      <option value="llmlingua2">llmlingua2</option>
+      <option value="llmlingua2-large">llmlingua2-large</option>
+      <option value="kompress">kompress</option>
+    </select>
+    <span class="hint">
+      This runs one backend directly against your pasted text. <code class="mono">dual</code> mode
+      routes system vs. user turns separately, which has no meaning for a single pasted prompt here.
+    </span>
+  </div>
+</div>
+
+<div class="panel" style="margin-top: var(--sp-4);">
+  <div class="panel-body">
+    <textarea id="promptInput" rows="14"
+      placeholder="Paste a real system prompt (or long user message) to see exactly what compression does to it…"></textarea>
+    <div class="row spread" style="margin-top: var(--sp-2);">
+      <span class="pg-count num" id="charCount">0 chars</span>
+      <div class="row">
+        <button type="button" class="btn" id="clearBtn">Clear</button>
+        <button type="button" class="btn primary" id="compressBtn" disabled>Compress</button>
+      </div>
+    </div>
+    <div id="statusLine" class="row" aria-live="polite"></div>
+  </div>
+</div>
+
+<details id="resultsPanel" class="panel" hidden>
+  <summary>
+    Results
+    <span class="chip accent" id="summaryChip"></span>
+  </summary>
+  <div class="panel-body">
+    <div class="grid" style="--min: 160px;">
+      <div class="kpi good">
+        <div class="label">Characters saved</div>
+        <div class="value num" id="kpiCharsValue">—</div>
+        <div class="sub" id="kpiCharsSub"></div>
+      </div>
+      <div class="kpi good">
+        <div class="label">Tokens saved (est.)</div>
+        <div class="value num" id="kpiTokensValue">—</div>
+        <div class="sub" id="kpiTokensSub"></div>
+      </div>
+      <div class="kpi">
+        <div class="label">Latency</div>
+        <div class="value num" id="kpiLatencyValue">—</div>
+      </div>
+      <div class="kpi">
+        <div class="label">Model used</div>
+        <div class="value mono" id="kpiModelValue" style="font-size: var(--fs-md);">—</div>
+      </div>
+    </div>
+
+    <div class="diff-grid" style="margin-top: var(--sp-4);">
+      <div class="diff-panel">
+        <h3>Original</h3>
+        <pre class="diff-pre" id="originalPre"></pre>
+      </div>
+      <div class="diff-panel">
+        <h3>Compressed</h3>
+        <pre class="diff-pre" id="compressedPre"></pre>
+      </div>
+    </div>
+    <div class="field" style="margin-top: var(--sp-2);">
+      <p class="hint" id="diffHint" hidden></p>
+    </div>
+  </div>
+</details>
+
+<!--#SCRIPT-->
+(function () {
+  'use strict';
+
+  var promptInput = document.getElementById('promptInput');
+  var modelSelect = document.getElementById('modelSelect');
+  var charCount = document.getElementById('charCount');
+  var compressBtn = document.getElementById('compressBtn');
+  var clearBtn = document.getElementById('clearBtn');
+  var statusLine = document.getElementById('statusLine');
+  var resultsPanel = document.getElementById('resultsPanel');
+  var summaryChip = document.getElementById('summaryChip');
+  var kpiCharsValue = document.getElementById('kpiCharsValue');
+  var kpiCharsSub = document.getElementById('kpiCharsSub');
+  var kpiTokensValue = document.getElementById('kpiTokensValue');
+  var kpiTokensSub = document.getElementById('kpiTokensSub');
+  var kpiLatencyValue = document.getElementById('kpiLatencyValue');
+  var kpiModelValue = document.getElementById('kpiModelValue');
+  var originalPre = document.getElementById('originalPre');
+  var compressedPre = document.getElementById('compressedPre');
+  var diffHint = document.getElementById('diffHint');
+
+  var VALID_MODELS = ['llmlingua2', 'llmlingua2-large', 'kompress'];
+
+  var inFlight = false;
+  var awaitingModel = null;
+  var currentText = '';
+  var currentModel = '';
+  var pollerRegistered = false;
+
+  /* ---- input meta ------------------------------------------------- */
+
+  function updateCount() {
+    var n = promptInput.value.length;
+    if (!n) {
+      charCount.textContent = '0 chars';
+    } else {
+      // Mirror the server's `max(1, chars // 4)` exactly (routes.py). Rounding
+      // here instead of flooring put "~44 tokens" above the input and "43
+      // tokens" in the KPI for the same text, under a hint that promises the
+      // two are the same estimate.
+      var tok = Math.max(1, Math.floor(n / 4));
+      charCount.textContent = UI.fmtExact(n) + ' chars · ~' + UI.fmtExact(tok) +
+        ' tokens (rough estimate — the server uses the same crude chars/4 estimate, not a real tokenizer)';
+    }
+    compressBtn.disabled = inFlight || promptInput.value.trim() === '';
+  }
+
+  /* ---- status line --------------------------------------------------- */
+
+  function setStatusIdle() { statusLine.innerHTML = ''; }
+
+  function setStatusLoading(model) {
+    statusLine.innerHTML = '<span class="dot stale"></span><span>Loading ' +
+      UI.escapeHtml(model) + '… (first load pulls the model into memory, this can take a minute)</span>';
+  }
+
+  function setStatusError(msg) {
+    statusLine.innerHTML = '<span class="chip bad">' + UI.escapeHtml(msg) + '</span>';
+  }
+
+  /* ---- busy state ------------------------------------------------- */
+
+  function setInFlight(on) {
+    inFlight = on;
+    compressBtn.disabled = on || promptInput.value.trim() === '';
+    compressBtn.textContent = on ? 'Compressing…' : 'Compress';
+    clearBtn.disabled = on;
+    modelSelect.disabled = on;
+    promptInput.disabled = on;
+  }
+
+  /* ---- word-level diff (original vs compressed) ------------------- */
+
+  /**
+   * Token-dropping backends (llmlingua2*) remove words without reordering
+   * or rewriting, so the compressed text is (close to) a subsequence of the
+   * original's words. Walk both word streams in lockstep; anything in the
+   * original that doesn't line up with the next compressed word is marked
+   * removed. Whitespace from the original is preserved verbatim so the
+   * panel reads naturally.
+   */
+  /**
+   * Compare on a punctuation-stripped, lowercased key rather than the raw word.
+   * The backends drop tokens but re-emit the survivors detached from adjacent
+   * punctuation, so the original's `question,` arrives back as `question`. An
+   * exact-equality walk misses there -- and because `j` only advances on a hit,
+   * one miss desyncs the pointer permanently and every later word is painted
+   * removed. On a real 175-char sample that stranded 5 of 11 compressed words
+   * and struck through two thirds of a prompt that had actually survived.
+   */
+  function diffKey(word) {
+    var k = word.replace(/^[^\w]+|[^\w]+$/g, '').toLowerCase();
+    return k || word;
+  }
+
+  function computeDiff(origText, compText) {
+    var origParts = origText.match(/\S+|\s+/g) || [];
+    var compWords = compText.match(/\S+/g) || [];
+    var j = 0;
+    var segments = origParts.map(function (part) {
+      if (/^\s+$/.test(part)) return { ws: true, text: part };
+      if (j < compWords.length && diffKey(part) === diffKey(compWords[j])) {
+        j++;
+        return { removed: false, text: part };
+      }
+      return { removed: true, text: part };
+    });
+    return { segments: segments, alignment: compWords.length ? j / compWords.length : 1 };
+  }
+
+  function renderDiff(segments) {
+    var out = '';
+    for (var i = 0; i < segments.length; i++) {
+      var seg = segments[i];
+      var esc = UI.escapeHtml(seg.text);
+      out += seg.ws ? esc : (seg.removed ? '<del class="diff-removed">' + esc + '</del>' : esc);
+    }
+    return out;
+  }
+
+  /* ---- results rendering ------------------------------------------- */
+
+  function renderResults(data) {
+    var savedChars = Math.max(0, (data.original_chars || 0) - (data.compressed_chars || 0));
+    var savedTokens = Math.max(0, (data.original_tokens_est || 0) - (data.compressed_tokens_est || 0));
+
+    kpiCharsValue.textContent = UI.fmtPct(data.char_pct);
+    kpiCharsSub.textContent = UI.fmtExact(savedChars) + ' of ' + UI.fmtExact(data.original_chars) + ' chars';
+    kpiTokensValue.textContent = UI.fmtPct(data.token_pct);
+    kpiTokensSub.textContent = UI.fmtExact(savedTokens) + ' of ' + UI.fmtExact(data.original_tokens_est) + ' tokens (est.)';
+    kpiLatencyValue.textContent = UI.fmtMs(data.latency_ms);
+    kpiModelValue.textContent = data.model || '—';
+    summaryChip.textContent = UI.fmtPct(data.char_pct) + ' smaller · ' + (data.model || '');
+
+    compressedPre.textContent = data.compressed || '';
+
+    /* The guard asks "is the compressed text a subsequence of the original?",
+       which is the assumption the strike-through rendering rests on -- so it
+       measures how much of the *compressed* stream lined up. Measuring the
+       fraction of the original retained instead (the obvious reading, and the
+       one this used to take) fails on healthy output: llmlingua2 advertises
+       ~47% savings, so that ratio sits at ~0.5 by construction and the diff
+       switched itself off at the model's documented operating point, telling
+       the reader a token-dropping backend "rewrites" its input. */
+    var diffOk = data.model !== 'kompress';
+    var diff = null;
+    if (diffOk) {
+      diff = computeDiff(data.original || '', data.compressed || '');
+      diffOk = diff.alignment >= 0.8;
+    }
+
+    if (diffOk) {
+      originalPre.innerHTML = renderDiff(diff.segments);
+      diffHint.hidden = true;
+    } else {
+      originalPre.textContent = data.original || '';
+      diffHint.hidden = false;
+      diffHint.textContent = 'This backend rewrites and deletes rather than dropping tokens in place, ' +
+        'so a token-level diff is not meaningful — compare the panels above.';
+    }
+
+    resultsPanel.hidden = false;
+  }
+
+  /* ---- request lifecycle ------------------------------------------- */
+
+  function ensurePoller() {
+    if (pollerRegistered) return;
+    pollerRegistered = true;
+    UI.poller.add('playground-loading-retry', function () {
+      if (!awaitingModel) return Promise.resolve();
+      return runRequest();
+    }, 3000);
+  }
+
+  function runRequest() {
+    return UI.postJSON('/play/compress', { text: currentText, model: currentModel })
+      .then(function (data) {
+        if (data && data.loading) {
+          awaitingModel = data.model || currentModel;
+          setStatusLoading(awaitingModel);
+          ensurePoller();
+          return;
+        }
+        awaitingModel = null;
+        setInFlight(false);
+        setStatusIdle();
+        renderResults(data);
+      })
+      .catch(function (err) {
+        awaitingModel = null;
+        setInFlight(false);
+        setStatusError(err && err.message ? err.message : String(err));
+      });
+  }
+
+  function startCompress() {
+    if (inFlight) return;
+    var text = promptInput.value;
+    if (!text.trim()) return;
+    currentText = text;
+    currentModel = modelSelect.value;
+    awaitingModel = null;
+    setStatusIdle();
+    setInFlight(true);
+    runRequest();
+  }
+
+  /* ---- wiring -------------------------------------------------------- */
+
+  promptInput.addEventListener('input', updateCount);
+  promptInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      startCompress();
+    }
+  });
+
+  compressBtn.addEventListener('click', startCompress);
+
+  clearBtn.addEventListener('click', function () {
+    if (inFlight) return;
+    promptInput.value = '';
+    updateCount();
+    setStatusIdle();
+    resultsPanel.hidden = true;
+    promptInput.focus();
+  });
+
+  /* ---- init: default the select to the currently active model ------ */
+
+  UI.getJSON('/stats').then(function (data) {
+    var m = data && data.compressor && data.compressor.model;
+    if (m && VALID_MODELS.indexOf(m) !== -1) {
+      modelSelect.value = m;
+    }
+  }).catch(function () { /* keep the markup default */ });
+
+  updateCount();
+}());
