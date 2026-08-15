@@ -50,6 +50,18 @@
   margin: 0;
 }
 
+.dual-submodels {
+  display: flex;
+  gap: var(--sp-4);
+  padding: var(--sp-3);
+  background: var(--surface-sunken);
+  border-radius: var(--radius);
+}
+
+.dual-submodels .field {
+  flex: 1;
+}
+
 .kpi-grid {
   display: grid;
   gap: var(--sp-3);
@@ -106,6 +118,7 @@ table.data td:first-child {
     </div>
     <div class="panel-body stack">
       <div class="model-options" id="modelOptions"></div>
+      <div class="dual-submodels" id="dualSubmodels" style="display: none;"></div>
       <div class="status-line" id="modelStatus" aria-live="polite"></div>
       <div class="kpi-grid" id="modelKpis"></div>
     </div>
@@ -164,6 +177,7 @@ table.data td:first-child {
   const state = {
     loadingModel: null,
     confirmingDelete: false,
+    dualSubmodels: { system: 'llmlingua2-large', user: 'kompress' },
   };
 
   /* ---- Model selection ---- */
@@ -194,6 +208,11 @@ table.data td:first-child {
 
   function handleModelChange(e) {
     const model = e.target.value;
+    updateDualSubmodelsVisibility(model);
+    if (model === 'dual') {
+      renderDualSubmodels();
+      disableDualSubmodels(true);
+    }
     setModel(model);
   }
 
@@ -230,6 +249,8 @@ table.data td:first-child {
       disableModelOptions(false);
       updateModelOption(compressor.model);
       updateModelStatus();
+      updateDualSubmodelsVisibility(compressor.model);
+      syncDualSubmodels(compressor);
     });
 
     UI.poller.add('model-load', pollFn, 1000);
@@ -245,6 +266,84 @@ table.data td:first-child {
     document.querySelectorAll('#modelOptions input[type="radio"]').forEach(radio => {
       radio.checked = (radio.value === model);
     });
+  }
+
+  /* ---- Dual sub-model selection ---- */
+
+  const DUAL_SUBMODEL_OPTIONS = [
+    { id: 'llmlingua2', label: 'LLMLingua-2' },
+    { id: 'llmlingua2-large', label: 'LLMLingua-2 Large' },
+    { id: 'kompress', label: 'Kompress' },
+  ];
+
+  function updateDualSubmodelsVisibility(model) {
+    document.getElementById('dualSubmodels').style.display = model === 'dual' ? 'flex' : 'none';
+  }
+
+  function renderDualSubmodels() {
+    const container = document.getElementById('dualSubmodels');
+    const optionsHtml = selected => DUAL_SUBMODEL_OPTIONS.map(o => `
+      <option value="${o.id}" ${o.id === selected ? 'selected' : ''}>${UI.escapeHtml(o.label)}</option>
+    `).join('');
+
+    container.innerHTML = `
+      <div class="field">
+        <label for="dualSystemSelect">System-prompt model</label>
+        <select id="dualSystemSelect">${optionsHtml(state.dualSubmodels.system)}</select>
+      </div>
+      <div class="field">
+        <label for="dualUserSelect">User-turn model</label>
+        <select id="dualUserSelect">${optionsHtml(state.dualSubmodels.user)}</select>
+      </div>
+    `;
+
+    document.getElementById('dualSystemSelect')
+      .addEventListener('change', e => setDualSubmodel('system', e.target.value));
+    document.getElementById('dualUserSelect')
+      .addEventListener('change', e => setDualSubmodel('user', e.target.value));
+  }
+
+  function disableDualSubmodels(disabled) {
+    ['dualSystemSelect', 'dualUserSelect'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.disabled = disabled;
+    });
+  }
+
+  function setDualSubmodel(role, value) {
+    disableDualSubmodels(true);
+    const body = {};
+    body[role] = value;
+
+    UI.postJSON('/admin/set-dual-models', body)
+      .then(() => pollDualSubmodelsUntilLoaded())
+      .catch(err => {
+        updateModelStatus(String(err));
+        disableDualSubmodels(false);
+      });
+  }
+
+  function pollDualSubmodelsUntilLoaded() {
+    const pollFn = () => UI.getJSON('/stats').then(stats => {
+      const compressor = stats.compressor || {};
+      renderModelKpis(stats);
+      if (compressor.loading) return;
+
+      UI.poller.remove('dual-submodel-load');
+      disableDualSubmodels(false);
+      syncDualSubmodels(compressor);
+    });
+
+    UI.poller.add('dual-submodel-load', pollFn, 1000);
+  }
+
+  function syncDualSubmodels(compressor) {
+    if (compressor.model !== 'dual') return;
+    state.dualSubmodels = {
+      system: compressor.model_system || state.dualSubmodels.system,
+      user: compressor.model_user || state.dualSubmodels.user,
+    };
+    renderDualSubmodels();
   }
 
   function updateModelStatus(error = null) {
@@ -446,9 +545,12 @@ table.data td:first-child {
     // Load initial stats
     UI.getJSON('/stats')
       .then(stats => {
-        const model = stats.compressor?.model || stats.model;
+        const compressor = stats.compressor || {};
+        const model = compressor.model || stats.model;
         if (model) {
           updateModelOption(model);
+          updateDualSubmodelsVisibility(model);
+          syncDualSubmodels(compressor);
         }
         renderModelKpis(stats);
       })
