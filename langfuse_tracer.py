@@ -68,23 +68,27 @@ class LangfuseTracer:
         tags: list,
     ) -> None:
         try:
-            obs = self._client.start_observation(
-                name="anthropic-call",
-                as_type="generation",
-                input={
-                    "messages": compressed_messages,
-                    "system": compressed_system,
-                },
-                output={"text": response_text},
-                model=metadata.get("anthropic_model", "unknown"),
-                metadata={
-                    **metadata,
-                    "original_messages": original_messages,
-                    "original_system": original_system,
-                    "tags": tags,
-                },
-            )
-            wrapper = obs.end()
+            with self._client.propagate_attributes(
+                session_id=metadata.get("session_id"),
+                tags=tags,
+                trace_name="anthropic-call",
+            ):
+                obs = self._client.start_observation(
+                    name="anthropic-call",
+                    as_type="generation",
+                    input={
+                        "messages": compressed_messages,
+                        "system": compressed_system,
+                    },
+                    output={"text": response_text},
+                    model=metadata.get("anthropic_model", "unknown"),
+                    metadata={
+                        **metadata,
+                        "original_messages": original_messages,
+                        "original_system": original_system,
+                    },
+                )
+                wrapper = obs.end()
             self._last_trace_id = getattr(wrapper, "trace_id", None)
         except Exception as exc:
             print(f"[langfuse] trace failed: {exc}")

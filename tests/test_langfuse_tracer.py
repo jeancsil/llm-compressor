@@ -106,9 +106,9 @@ def test_log_request_passes_tags(monkeypatch):
         await asyncio.sleep(0)
 
     asyncio.run(run())
-    kwargs = mock_lf.start_observation.call_args.kwargs
-    assert "streaming" in kwargs["metadata"]["tags"]
-    assert "llmlingua2" in kwargs["metadata"]["tags"]
+    kwargs = mock_lf.propagate_attributes.call_args.kwargs
+    assert "streaming" in kwargs["tags"]
+    assert "llmlingua2" in kwargs["tags"]
 
 
 def test_log_request_swallows_errors(monkeypatch):
