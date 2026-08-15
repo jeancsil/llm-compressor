@@ -96,17 +96,22 @@ def test_log_request_passes_tags(monkeypatch):
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-lf-test")
     mock_lf = MagicMock()
     mock_lf.start_observation.return_value = MagicMock()
+    mock_propagate = MagicMock()
 
-    with patch("langfuse.Langfuse", return_value=mock_lf):
+    with (
+        patch("langfuse.Langfuse", return_value=mock_lf),
+        patch("langfuse.propagate_attributes", mock_propagate),
+    ):
         t = make_tracer()
         t.init()
 
-    async def run():
-        await t.log_request([], [], None, None, "", {}, tags=["streaming", "llmlingua2"])
-        await asyncio.sleep(0)
+        async def run():
+            await t.log_request([], [], None, None, "", {}, tags=["streaming", "llmlingua2"])
+            await asyncio.sleep(0)
 
-    asyncio.run(run())
-    kwargs = mock_lf.propagate_attributes.call_args.kwargs
+        asyncio.run(run())
+
+    kwargs = mock_propagate.call_args.kwargs
     assert "streaming" in kwargs["tags"]
     assert "llmlingua2" in kwargs["tags"]
 

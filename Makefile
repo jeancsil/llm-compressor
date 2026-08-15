@@ -7,7 +7,7 @@ PID_FILE := .proxy.pid
 # Get keys at https://cloud.langfuse.com → Settings → API Keys
 LANGFUSE_HOST ?= https://cloud.langfuse.com
 
-.PHONY: install install-langfuse start restart stop dashboard stats rtk-stats check langfuse-status langfuse-test lint format help
+.PHONY: install install-langfuse start restart stop dashboard stats rtk-stats check langfuse-status langfuse-test lint format assets help
 
 help:
 	@echo "Usage: make <target>"
@@ -25,6 +25,7 @@ help:
 	@echo "  langfuse-test    Send a test request through the proxy"
 	@echo "  lint             Run ruff check"
 	@echo "  format           Run ruff format"
+	@echo "  assets           Regenerate README charts from the metrics database"
 	@echo ""
 	@echo "Langfuse (optional): export LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-... then make start"
 
@@ -61,7 +62,7 @@ restart: stop
 	@nohup uv run python proxy.py >> proxy.log 2>&1 & echo $$! > $(PID_FILE) && echo "Started PID $$(cat $(PID_FILE))"
 
 dashboard:
-	open $(URL)/dashboard
+	open $(URL)/overview
 
 stats:
 	@RESP=$$(curl -s $(URL)/stats); \
@@ -100,3 +101,6 @@ lint:
 
 format:
 	uv run ruff format .
+
+assets:
+	uv run python tools/gen_assets.py

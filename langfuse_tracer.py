@@ -68,7 +68,9 @@ class LangfuseTracer:
         tags: list,
     ) -> None:
         try:
-            with self._client.propagate_attributes(
+            from langfuse import propagate_attributes
+
+            with propagate_attributes(
                 session_id=metadata.get("session_id"),
                 tags=tags,
                 trace_name="anthropic-call",

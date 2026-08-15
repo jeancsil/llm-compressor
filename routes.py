@@ -203,7 +203,10 @@ async def get_window(
 async def rtk_log(request: Request):
     if db._db_conn is None:
         return JSONResponse({"error": "db not ready"}, status_code=503)
-    body = await request.json()
+    try:
+        body = await request.json()
+    except ValueError:
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
     session_id = body.get("session_id", "unknown")
     try:
         db._db_conn.execute(

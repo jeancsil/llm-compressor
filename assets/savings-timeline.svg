@@ -1,160 +1,80 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 260" width="100%">
-  <defs>
-    <linearGradient id="barGrad" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#3fb950"/>
-      <stop offset="100%" stop-color="#238636"/>
-    </linearGradient>
-    <linearGradient id="barGradHigh" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#58a6ff"/>
-      <stop offset="100%" stop-color="#1f6feb"/>
-    </linearGradient>
-  </defs>
-
-  <!-- Background -->
-  <rect width="800" height="260" fill="#0d1117" rx="0"/>
-
-  <!-- Card -->
-  <rect x="12" y="12" width="776" height="236" fill="#161b22" rx="6" stroke="#30363d" stroke-width="1"/>
-
-  <!-- Title -->
-  <text x="24" y="34" font-family="system-ui,-apple-system,sans-serif" font-size="13" font-weight="600" fill="#e6edf3">API-layer token savings per day</text>
-
-  <!-- Y-axis label -->
-  <text x="24" y="52" font-family="system-ui,-apple-system,sans-serif" font-size="10" fill="#8b949e">tokens saved (M)</text>
-
-  <!-- Grid lines and Y labels -->
-  <!-- Max value ~4.17M, scale to 4.5M -->
-  <!-- Chart area: x=56 to x=788, y=60 to y=210 -->
-  <!-- Y gridlines at 0, 1M, 2M, 3M, 4M -->
-
-  <line x1="56" y1="210" x2="788" y2="210" stroke="#30363d" stroke-width="1"/>
-  <text x="50" y="213" font-family="system-ui,-apple-system,sans-serif" font-size="9" fill="#8b949e" text-anchor="end">0</text>
-
-  <line x1="56" y1="177" x2="788" y2="177" stroke="#30363d" stroke-width="0.5" stroke-dasharray="3,3"/>
-  <text x="50" y="180" font-family="system-ui,-apple-system,sans-serif" font-size="9" fill="#8b949e" text-anchor="end">1M</text>
-
-  <line x1="56" y1="143" x2="788" y2="143" stroke="#30363d" stroke-width="0.5" stroke-dasharray="3,3"/>
-  <text x="50" y="146" font-family="system-ui,-apple-system,sans-serif" font-size="9" fill="#8b949e" text-anchor="end">2M</text>
-
-  <line x1="56" y1="110" x2="788" y2="110" stroke="#30363d" stroke-width="0.5" stroke-dasharray="3,3"/>
-  <text x="50" y="113" font-family="system-ui,-apple-system,sans-serif" font-size="9" fill="#8b949e" text-anchor="end">3M</text>
-
-  <line x1="56" y1="77" x2="788" y2="77" stroke="#30363d" stroke-width="0.5" stroke-dasharray="3,3"/>
-  <text x="50" y="80" font-family="system-ui,-apple-system,sans-serif" font-size="9" fill="#8b949e" text-anchor="end">4M</text>
-
-  <!--
-    Chart area width: 788-56 = 732px
-    24 bars, bar width + gap
-    bar width = 18, gap = 732/24 - 18 = 30.5 - 18 = 12.5 → slot = 30.5, bar=18, pad=6.25 each side
-    slot = 732/24 = 30.5
-    bar center at 56 + (i+0.5)*30.5
-    bar left at center - 9
-
-    Scale: 4.5M = 133px (from y=77 to y=210)
-    px per token = 133/4500000
-
-    Data: tokens → bar height
-    1294662 → 38.3
-    1485045 → 43.9
-    2891772 → 85.4
-    718815  → 21.2
-    4173266 → 123.3
-    2197659 → 64.9
-    1868551 → 55.2
-    176945  → 5.2
-    570490  → 16.9
-    954096  → 28.2
-    3320737 → 98.1
-    1844279 → 54.5
-    2543390 → 75.1
-    2291090 → 67.7
-    1323903 → 39.1
-    2746339 → 81.1
-    1418031 → 41.9
-    2534095 → 74.9
-    126512  → 3.7
-    550635  → 16.3
-    1739836 → 51.4
-    340860  → 10.1
-    834424  → 24.7
-    1884672 → 55.7
-  -->
-
-  <!-- Bars -->
-  <!-- i=0: 2026-05-20, 1294662 tokens, 48.1% -->
-  <rect x="57" y="172" width="18" height="38" fill="url(#barGrad)" rx="2" opacity="0.9"/>
-  <!-- i=1: 2026-05-23, 1485045, 46.3% -->
-  <rect x="87" y="166" width="18" height="44" fill="url(#barGrad)" rx="2" opacity="0.9"/>
-  <!-- i=2: 2026-05-24, 2891772, 47.4% -->
-  <rect x="118" y="125" width="18" height="85" fill="url(#barGrad)" rx="2" opacity="0.9"/>
-  <!-- i=3: 2026-05-29, 718815, 48.7% -->
-  <rect x="148" y="189" width="18" height="21" fill="url(#barGrad)" rx="2" opacity="0.9"/>
-  <!-- i=4: 2026-05-30, 4173266, 49.2% — peak, use blue -->
-  <rect x="179" y="87" width="18" height="123" fill="url(#barGradHigh)" rx="2" opacity="0.9"/>
-  <!-- i=5: 2026-05-31, 2197659, 49.4% -->
-  <rect x="209" y="145" width="18" height="65" fill="url(#barGrad)" rx="2" opacity="0.9"/>
-  <!-- i=6: 2026-06-01, 1868551, 49.5% -->
-  <rect x="240" y="155" width="18" height="55" fill="url(#barGrad)" rx="2" opacity="0.9"/>
-  <!-- i=7: 2026-06-03, 176945, 48.4% -->
-  <rect x="270" y="205" width="18" height="5" fill="url(#barGrad)" rx="2" opacity="0.9"/>
-  <!-- i=8: 2026-06-04, 570490, 50.6% -->
-  <rect x="301" y="193" width="18" height="17" fill="url(#barGrad)" rx="2" opacity="0.9"/>
-  <!-- i=9: 2026-06-05, 954096, 49.6% -->
-  <rect x="331" y="182" width="18" height="28" fill="url(#barGrad)" rx="2" opacity="0.9"/>
-  <!-- i=10: 2026-06-06, 3320737, 50.0% — second peak -->
-  <rect x="362" y="112" width="18" height="98" fill="url(#barGradHigh)" rx="2" opacity="0.9"/>
-  <!-- i=11: 2026-06-10, 1844279, 50.1% -->
-  <rect x="392" y="155" width="18" height="55" fill="url(#barGrad)" rx="2" opacity="0.9"/>
-  <!-- i=12: 2026-06-11, 2543390, 49.0% -->
-  <rect x="423" y="135" width="18" height="75" fill="url(#barGrad)" rx="2" opacity="0.9"/>
-  <!-- i=13: 2026-06-12, 2291090, 45.0% -->
-  <rect x="453" y="142" width="18" height="68" fill="url(#barGrad)" rx="2" opacity="0.9"/>
-  <!-- i=14: 2026-06-13, 1323903, 50.1% -->
-  <rect x="484" y="171" width="18" height="39" fill="url(#barGrad)" rx="2" opacity="0.9"/>
-  <!-- i=15: 2026-06-14, 2746339, 45.4% -->
-  <rect x="514" y="129" width="18" height="81" fill="url(#barGrad)" rx="2" opacity="0.9"/>
-  <!-- i=16: 2026-06-17, 1418031, 35.9% -->
-  <rect x="545" y="168" width="18" height="42" fill="url(#barGrad)" rx="2" opacity="0.9"/>
-  <!-- i=17: 2026-06-18, 2534095, 42.4% -->
-  <rect x="575" y="135" width="18" height="75" fill="url(#barGrad)" rx="2" opacity="0.9"/>
-  <!-- i=18: 2026-06-19, 126512, 30.3% -->
-  <rect x="606" y="206" width="18" height="4" fill="url(#barGrad)" rx="2" opacity="0.9"/>
-  <!-- i=19: 2026-06-20, 550635, 44.8% -->
-  <rect x="636" y="194" width="18" height="16" fill="url(#barGrad)" rx="2" opacity="0.9"/>
-  <!-- i=20: 2026-06-21, 1739836, 49.9% -->
-  <rect x="667" y="159" width="18" height="51" fill="url(#barGrad)" rx="2" opacity="0.9"/>
-  <!-- i=21: 2026-06-22, 340860, 51.7% -->
-  <rect x="697" y="200" width="18" height="10" fill="url(#barGrad)" rx="2" opacity="0.9"/>
-  <!-- i=22: 2026-06-23, 834424, 28.1% -->
-  <rect x="728" y="185" width="18" height="25" fill="url(#barGrad)" rx="2" opacity="0.9"/>
-  <!-- i=23: 2026-06-24, 1884672, 27.5% -->
-  <rect x="758" y="154" width="18" height="56" fill="url(#barGrad)" rx="2" opacity="0.9"/>
-
-  <!-- X-axis date labels — show every 4th to avoid crowding -->
-  <!-- May labels -->
-  <text x="66" y="225" font-family="system-ui,-apple-system,sans-serif" font-size="8" fill="#8b949e" text-anchor="middle">May 20</text>
-  <text x="157" y="225" font-family="system-ui,-apple-system,sans-serif" font-size="8" fill="#8b949e" text-anchor="middle">May 29</text>
-  <text x="218" y="225" font-family="system-ui,-apple-system,sans-serif" font-size="8" fill="#8b949e" text-anchor="middle">May 31</text>
-  <!-- Jun labels -->
-  <text x="279" y="225" font-family="system-ui,-apple-system,sans-serif" font-size="8" fill="#8b949e" text-anchor="middle">Jun 3</text>
-  <text x="371" y="225" font-family="system-ui,-apple-system,sans-serif" font-size="8" fill="#8b949e" text-anchor="middle">Jun 6</text>
-  <text x="432" y="225" font-family="system-ui,-apple-system,sans-serif" font-size="8" fill="#8b949e" text-anchor="middle">Jun 11</text>
-  <text x="493" y="225" font-family="system-ui,-apple-system,sans-serif" font-size="8" fill="#8b949e" text-anchor="middle">Jun 13</text>
-  <text x="523" y="225" font-family="system-ui,-apple-system,sans-serif" font-size="8" fill="#8b949e" text-anchor="middle">Jun 14</text>
-  <text x="584" y="225" font-family="system-ui,-apple-system,sans-serif" font-size="8" fill="#8b949e" text-anchor="middle">Jun 18</text>
-  <text x="676" y="225" font-family="system-ui,-apple-system,sans-serif" font-size="8" fill="#8b949e" text-anchor="middle">Jun 21</text>
-  <text x="767" y="225" font-family="system-ui,-apple-system,sans-serif" font-size="8" fill="#8b949e" text-anchor="middle">Jun 24</text>
-
-  <!-- Legend -->
-  <rect x="24" y="238" width="10" height="10" fill="url(#barGrad)" rx="2"/>
-  <text x="38" y="247" font-family="system-ui,-apple-system,sans-serif" font-size="9" fill="#8b949e">daily savings</text>
-  <rect x="110" y="238" width="10" height="10" fill="url(#barGradHigh)" rx="2"/>
-  <text x="124" y="247" font-family="system-ui,-apple-system,sans-serif" font-size="9" fill="#8b949e">peak day</text>
-
-  <!-- Annotation for peak -->
-  <text x="188" y="83" font-family="system-ui,-apple-system,sans-serif" font-size="9" fill="#58a6ff" text-anchor="middle">4.17M</text>
-
-  <!-- Total saved callout -->
-  <text x="760" y="34" font-family="system-ui,-apple-system,sans-serif" font-size="11" fill="#3fb950" font-weight="600" text-anchor="end">43.9M tokens saved</text>
-  <text x="760" y="48" font-family="system-ui,-apple-system,sans-serif" font-size="9" fill="#8b949e" text-anchor="end">avg 46.1% compression · 24 sessions</text>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 260" width="100%" role="img" aria-label="API-layer token savings per day">
+  <rect width="800" height="260" fill="#0d1117"/>
+  <text x="400" y="22" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="13" fill="#e6edf3">API-layer token savings per day</text>
+  <line x1="56" y1="214.0" x2="784" y2="214.0" stroke="#30363d" stroke-width="1" opacity="0.5"/>
+  <text x="48" y="218.0" text-anchor="end" font-family="system-ui, -apple-system, sans-serif" font-size="10" fill="#8b949e">0</text>
+  <line x1="56" y1="158.0" x2="784" y2="158.0" stroke="#30363d" stroke-width="1" opacity="0.5"/>
+  <text x="48" y="162.0" text-anchor="end" font-family="system-ui, -apple-system, sans-serif" font-size="10" fill="#8b949e">5.0M</text>
+  <line x1="56" y1="102.0" x2="784" y2="102.0" stroke="#30363d" stroke-width="1" opacity="0.5"/>
+  <text x="48" y="106.0" text-anchor="end" font-family="system-ui, -apple-system, sans-serif" font-size="10" fill="#8b949e">10.0M</text>
+  <line x1="56" y1="46.0" x2="784" y2="46.0" stroke="#30363d" stroke-width="1" opacity="0.5"/>
+  <text x="48" y="50.0" text-anchor="end" font-family="system-ui, -apple-system, sans-serif" font-size="10" fill="#8b949e">15.0M</text>
+  <rect x="57.9" y="199.5" width="8.9" height="14.5" fill="#3fb950" rx="1"><title>2026-05-20: 1.3M tokens saved</title></rect>
+  <rect x="70.7" y="197.4" width="8.9" height="16.6" fill="#3fb950" rx="1"><title>2026-05-23: 1.5M tokens saved</title></rect>
+  <rect x="83.5" y="181.6" width="8.9" height="32.4" fill="#3fb950" rx="1"><title>2026-05-24: 2.9M tokens saved</title></rect>
+  <rect x="96.2" y="205.9" width="8.9" height="8.1" fill="#3fb950" rx="1"><title>2026-05-29: 719K tokens saved</title></rect>
+  <rect x="109.0" y="167.3" width="8.9" height="46.7" fill="#3fb950" rx="1"><title>2026-05-30: 4.2M tokens saved</title></rect>
+  <rect x="121.8" y="189.4" width="8.9" height="24.6" fill="#3fb950" rx="1"><title>2026-05-31: 2.2M tokens saved</title></rect>
+  <rect x="134.5" y="193.1" width="8.9" height="20.9" fill="#3fb950" rx="1"><title>2026-06-01: 1.9M tokens saved</title></rect>
+  <rect x="147.3" y="212.0" width="8.9" height="2.0" fill="#3fb950" rx="1"><title>2026-06-03: 177K tokens saved</title></rect>
+  <rect x="160.1" y="207.6" width="8.9" height="6.4" fill="#3fb950" rx="1"><title>2026-06-04: 570K tokens saved</title></rect>
+  <rect x="172.9" y="203.3" width="8.9" height="10.7" fill="#3fb950" rx="1"><title>2026-06-05: 954K tokens saved</title></rect>
+  <rect x="185.6" y="176.8" width="8.9" height="37.2" fill="#3fb950" rx="1"><title>2026-06-06: 3.3M tokens saved</title></rect>
+  <rect x="198.4" y="193.3" width="8.9" height="20.7" fill="#3fb950" rx="1"><title>2026-06-10: 1.8M tokens saved</title></rect>
+  <rect x="211.2" y="185.5" width="8.9" height="28.5" fill="#3fb950" rx="1"><title>2026-06-11: 2.5M tokens saved</title></rect>
+  <rect x="224.0" y="188.3" width="8.9" height="25.7" fill="#3fb950" rx="1"><title>2026-06-12: 2.3M tokens saved</title></rect>
+  <rect x="236.7" y="199.2" width="8.9" height="14.8" fill="#3fb950" rx="1"><title>2026-06-13: 1.3M tokens saved</title></rect>
+  <rect x="249.5" y="183.2" width="8.9" height="30.8" fill="#3fb950" rx="1"><title>2026-06-14: 2.7M tokens saved</title></rect>
+  <rect x="262.3" y="198.1" width="8.9" height="15.9" fill="#3fb950" rx="1"><title>2026-06-17: 1.4M tokens saved</title></rect>
+  <rect x="275.0" y="185.6" width="8.9" height="28.4" fill="#3fb950" rx="1"><title>2026-06-18: 2.5M tokens saved</title></rect>
+  <rect x="287.8" y="212.6" width="8.9" height="1.4" fill="#3fb950" rx="1"><title>2026-06-19: 127K tokens saved</title></rect>
+  <rect x="300.6" y="207.8" width="8.9" height="6.2" fill="#3fb950" rx="1"><title>2026-06-20: 551K tokens saved</title></rect>
+  <rect x="313.4" y="194.5" width="8.9" height="19.5" fill="#3fb950" rx="1"><title>2026-06-21: 1.7M tokens saved</title></rect>
+  <rect x="326.1" y="210.2" width="8.9" height="3.8" fill="#3fb950" rx="1"><title>2026-06-22: 341K tokens saved</title></rect>
+  <rect x="338.9" y="204.7" width="8.9" height="9.3" fill="#3fb950" rx="1"><title>2026-06-23: 834K tokens saved</title></rect>
+  <rect x="351.7" y="162.3" width="8.9" height="51.7" fill="#3fb950" rx="1"><title>2026-06-24: 4.6M tokens saved</title></rect>
+  <rect x="364.4" y="207.2" width="8.9" height="6.8" fill="#3fb950" rx="1"><title>2026-06-25: 608K tokens saved</title></rect>
+  <rect x="377.2" y="187.4" width="8.9" height="26.6" fill="#3fb950" rx="1"><title>2026-06-26: 2.4M tokens saved</title></rect>
+  <rect x="390.0" y="186.6" width="8.9" height="27.4" fill="#3fb950" rx="1"><title>2026-06-27: 2.4M tokens saved</title></rect>
+  <rect x="402.8" y="211.2" width="8.9" height="2.8" fill="#3fb950" rx="1"><title>2026-06-28: 251K tokens saved</title></rect>
+  <rect x="415.5" y="192.3" width="8.9" height="21.7" fill="#3fb950" rx="1"><title>2026-06-29: 1.9M tokens saved</title></rect>
+  <rect x="428.3" y="178.7" width="8.9" height="35.3" fill="#3fb950" rx="1"><title>2026-06-30: 3.2M tokens saved</title></rect>
+  <rect x="441.1" y="166.1" width="8.9" height="47.9" fill="#3fb950" rx="1"><title>2026-07-05: 4.3M tokens saved</title></rect>
+  <rect x="453.8" y="70.4" width="8.9" height="143.6" fill="#388bfd" rx="1"><title>2026-07-06: 12.8M tokens saved</title></rect>
+  <rect x="466.6" y="185.8" width="8.9" height="28.2" fill="#3fb950" rx="1"><title>2026-07-07: 2.5M tokens saved</title></rect>
+  <rect x="479.4" y="165.0" width="8.9" height="49.0" fill="#3fb950" rx="1"><title>2026-07-08: 4.4M tokens saved</title></rect>
+  <rect x="492.2" y="186.7" width="8.9" height="27.3" fill="#3fb950" rx="1"><title>2026-07-09: 2.4M tokens saved</title></rect>
+  <rect x="504.9" y="188.9" width="8.9" height="25.1" fill="#3fb950" rx="1"><title>2026-07-11: 2.2M tokens saved</title></rect>
+  <rect x="517.7" y="157.7" width="8.9" height="56.3" fill="#3fb950" rx="1"><title>2026-07-12: 5.0M tokens saved</title></rect>
+  <rect x="530.5" y="133.6" width="8.9" height="80.4" fill="#3fb950" rx="1"><title>2026-07-13: 7.2M tokens saved</title></rect>
+  <rect x="543.2" y="118.1" width="8.9" height="95.9" fill="#3fb950" rx="1"><title>2026-07-14: 8.6M tokens saved</title></rect>
+  <rect x="556.0" y="206.3" width="8.9" height="7.7" fill="#3fb950" rx="1"><title>2026-07-16: 691K tokens saved</title></rect>
+  <rect x="568.8" y="202.8" width="8.9" height="11.2" fill="#3fb950" rx="1"><title>2026-07-17: 1.0M tokens saved</title></rect>
+  <rect x="581.6" y="209.9" width="8.9" height="4.1" fill="#3fb950" rx="1"><title>2026-07-18: 370K tokens saved</title></rect>
+  <rect x="594.3" y="186.3" width="8.9" height="27.7" fill="#3fb950" rx="1"><title>2026-07-19: 2.5M tokens saved</title></rect>
+  <rect x="607.1" y="206.7" width="8.9" height="7.3" fill="#3fb950" rx="1"><title>2026-07-21: 648K tokens saved</title></rect>
+  <rect x="619.9" y="212.8" width="8.9" height="1.2" fill="#3fb950" rx="1"><title>2026-07-24: 103K tokens saved</title></rect>
+  <rect x="632.7" y="213.3" width="8.9" height="0.7" fill="#3fb950" rx="1"><title>2026-07-26: 60K tokens saved</title></rect>
+  <rect x="645.4" y="213.7" width="8.9" height="0.5" fill="#3fb950" rx="1"><title>2026-07-29: 23K tokens saved</title></rect>
+  <rect x="658.2" y="201.4" width="8.9" height="12.6" fill="#3fb950" rx="1"><title>2026-07-30: 1.1M tokens saved</title></rect>
+  <rect x="671.0" y="213.0" width="8.9" height="1.0" fill="#3fb950" rx="1"><title>2026-07-31: 90K tokens saved</title></rect>
+  <rect x="683.7" y="196.5" width="8.9" height="17.5" fill="#3fb950" rx="1"><title>2026-08-01: 1.6M tokens saved</title></rect>
+  <rect x="696.5" y="98.8" width="8.9" height="115.2" fill="#3fb950" rx="1"><title>2026-08-02: 10.3M tokens saved</title></rect>
+  <rect x="709.3" y="194.6" width="8.9" height="19.4" fill="#3fb950" rx="1"><title>2026-08-03: 1.7M tokens saved</title></rect>
+  <rect x="722.1" y="207.8" width="8.9" height="6.2" fill="#3fb950" rx="1"><title>2026-08-06: 555K tokens saved</title></rect>
+  <rect x="734.8" y="208.1" width="8.9" height="5.9" fill="#3fb950" rx="1"><title>2026-08-10: 529K tokens saved</title></rect>
+  <rect x="747.6" y="194.7" width="8.9" height="19.3" fill="#3fb950" rx="1"><title>2026-08-13: 1.7M tokens saved</title></rect>
+  <rect x="760.4" y="204.2" width="8.9" height="9.8" fill="#3fb950" rx="1"><title>2026-08-14: 877K tokens saved</title></rect>
+  <rect x="773.1" y="208.9" width="8.9" height="5.1" fill="#3fb950" rx="1"><title>2026-08-15: 455K tokens saved</title></rect>
+  <text x="62.3859649122807" y="232" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="9" fill="#8b949e">May 20</text>
+  <text x="151.78947368421055" y="232" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="9" fill="#8b949e">Jun 3</text>
+  <text x="241.19298245614038" y="232" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="9" fill="#8b949e">Jun 13</text>
+  <text x="330.5964912280702" y="232" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="9" fill="#8b949e">Jun 22</text>
+  <text x="420.00000000000006" y="232" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="9" fill="#8b949e">Jun 29</text>
+  <text x="509.40350877192986" y="232" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="9" fill="#8b949e">Jul 11</text>
+  <text x="598.8070175438596" y="232" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="9" fill="#8b949e">Jul 19</text>
+  <text x="688.2105263157895" y="232" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="9" fill="#8b949e">Aug 1</text>
+  <text x="777.6140350877193" y="232" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="9" fill="#8b949e">Aug 15</text>
+  <text x="56" y="250" text-anchor="start" font-family="system-ui, -apple-system, sans-serif" font-size="10" fill="#388bfd">peak Jul 6 · 12.8M</text>
+  <text x="784" y="250" text-anchor="end" font-family="system-ui, -apple-system, sans-serif" font-size="10" fill="#8b949e">127.1M tokens saved · avg 45.2% · 236 sessions</text>
+  </svg>
