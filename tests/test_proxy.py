@@ -447,12 +447,12 @@ def test_stats_by_model(tmp_path, monkeypatch):
 
 
 def test_no_utcnow_in_source():
-    """Task 1: Verify that datetime.utcnow is not used in proxy.py."""
+    """Task 1: Verify that datetime.utcnow is not used anywhere in the package."""
     from pathlib import Path
 
-    src = Path(__file__).parent.parent / "src" / "llm_compressor" / "proxy.py"
-    source = src.read_text()
-    assert "utcnow" not in source, "Found deprecated datetime.utcnow in proxy.py"
+    pkg = Path(__file__).parent.parent / "src" / "llm_compressor"
+    offenders = [p.name for p in pkg.glob("*.py") if "utcnow" in p.read_text()]
+    assert not offenders, f"Found deprecated datetime.utcnow in: {offenders}"
 
 
 # ---------------------------------------------------------------------------
