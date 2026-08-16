@@ -5,14 +5,9 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from pathlib import Path
 
 PORT = "9099"
 _PROXY_URL = f"http://127.0.0.1:{PORT}"
-
-
-def _proxy_path() -> Path:
-    return Path(__file__).parent / "proxy.py"
 
 
 def wait_for_proxy(port: str = PORT, timeout: float = 30.0) -> bool:
@@ -39,7 +34,7 @@ def main() -> None:
     # Forward all env vars the proxy needs; ANTHROPIC_BASE_URL will be overridden
     proxy_env = os.environ.copy()
     proxy_process = subprocess.Popen(
-        [sys.executable, str(_proxy_path())],
+        [sys.executable, "-m", "llm_compressor.proxy"],
         env=proxy_env,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,

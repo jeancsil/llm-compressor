@@ -18,10 +18,16 @@ dependencies = [
 ]
 
 [project.scripts]
-llm-compressor = "cli:main"
+llm-compressor = "llm_compressor.cli:main"
 
 [tool.setuptools]
-py-modules = ["cli", "proxy", "langfuse_tracer"]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+llm_compressor = ["templates/*.html", "templates/*.js"]
 
 [dependency-groups]
 dev = [
