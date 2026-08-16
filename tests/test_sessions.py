@@ -1,5 +1,5 @@
-import proxy
-import sessions as S
+from llm_compressor import proxy
+from llm_compressor import sessions as S
 
 
 def _conn(tmp_path):
@@ -40,7 +40,7 @@ def test_session_detail_bootstraps_the_session_record(client):
     # parses an inert <script type="application/json"> block. The old build
     # interpolated json.dumps() into an executable <script> as window.SESSION,
     # which made every user-settable display name an XSS vector.
-    import proxy
+    from llm_compressor import proxy
 
     proxy._db_conn.execute(
         "INSERT INTO sessions (session_id, display_name, name_source, first_seen, last_seen)"
@@ -56,7 +56,7 @@ def test_session_detail_bootstraps_the_session_record(client):
 
 
 def test_session_detail_escapes_a_hostile_display_name(client):
-    import proxy
+    from llm_compressor import proxy
 
     proxy._db_conn.execute(
         "INSERT INTO sessions (session_id, display_name, name_source, first_seen, last_seen)"
@@ -69,7 +69,7 @@ def test_session_detail_escapes_a_hostile_display_name(client):
 
 
 def test_legacy_dashboard_url_redirects_to_the_session_page(client):
-    import proxy
+    from llm_compressor import proxy
 
     proxy._db_conn.execute(
         "INSERT INTO sessions (session_id, display_name, name_source, first_seen, last_seen)"
@@ -214,7 +214,7 @@ def test_list_sessions_savings_combine_compressions_and_rtk(tmp_path):
 
 def test_messages_registers_session_provisionally(client, monkeypatch):
     # /v1/messages proxies to Anthropic; stub httpx so no network is hit.
-    import proxy
+    from llm_compressor import proxy
 
     class _Resp:
         status_code = 200
@@ -262,7 +262,7 @@ def test_messages_registers_session_provisionally(client, monkeypatch):
 
 
 def test_session_compressions_keyed_by_session_id(client):
-    import proxy
+    from llm_compressor import proxy
 
     proxy._db_conn.execute(
         "INSERT INTO sessions (session_id, display_name, name_source, first_seen, last_seen)"
@@ -280,7 +280,7 @@ def test_session_compressions_keyed_by_session_id(client):
 
 
 def test_admin_sessions_lists_named_sessions(client):
-    import proxy
+    from llm_compressor import proxy
 
     proxy._db_conn.execute(
         "INSERT INTO sessions (session_id, display_name, name_source, first_seen, last_seen)"
@@ -300,7 +300,7 @@ def test_dashboard_404_on_missing_session(client):
 
 
 def test_rename_endpoint_sets_manual(client):
-    import proxy
+    from llm_compressor import proxy
 
     proxy._db_conn.execute(
         "INSERT INTO sessions (session_id, display_name, name_source, first_seen, last_seen)"
@@ -316,7 +316,7 @@ def test_rename_endpoint_sets_manual(client):
 
 
 def test_rename_endpoint_rejects_empty(client):
-    import proxy
+    from llm_compressor import proxy
 
     proxy._db_conn.execute(
         "INSERT INTO sessions (session_id, first_seen, last_seen) VALUES ('sidE','t','t')"

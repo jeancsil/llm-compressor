@@ -12,7 +12,7 @@ def test_health(client: TestClient):
 
 
 def test_init_db_creates_table(tmp_path):
-    from proxy import init_db
+    from llm_compressor.proxy import init_db
 
     conn = init_db(str(tmp_path / "metrics.db"))
     cur = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='compressions'")
@@ -32,7 +32,7 @@ def test_init_db_creates_table(tmp_path):
 
 
 def test_migrate_imports_rows(tmp_path):
-    from proxy import init_db, migrate_from_json
+    from llm_compressor.proxy import init_db, migrate_from_json
 
     stats_json = tmp_path / "stats.json"
     stats_json.write_text(
@@ -71,7 +71,7 @@ def test_migrate_imports_rows(tmp_path):
 
 
 def test_migrate_is_idempotent(tmp_path):
-    from proxy import init_db, migrate_from_json
+    from llm_compressor.proxy import init_db, migrate_from_json
 
     stats_json = tmp_path / "stats.json"
     stats_json.write_text(
@@ -98,7 +98,7 @@ def test_migrate_is_idempotent(tmp_path):
 
 
 def test_migrate_no_json(tmp_path):
-    from proxy import init_db, migrate_from_json
+    from llm_compressor.proxy import init_db, migrate_from_json
 
     conn = init_db(str(tmp_path / "metrics.db"))
     migrate_from_json(conn, json_path=str(tmp_path / "nonexistent.json"))
@@ -106,7 +106,7 @@ def test_migrate_no_json(tmp_path):
 
 
 def test_load_stats_from_db(tmp_path):
-    from proxy import init_db, load_stats_from_db, stats
+    from llm_compressor.proxy import init_db, load_stats_from_db, stats
 
     conn = init_db(str(tmp_path / "metrics.db"))
     conn.executemany(
@@ -134,7 +134,7 @@ def test_load_stats_from_db(tmp_path):
 def test_recover_stats_from_backup(tmp_path):
     from collections import deque
 
-    from proxy import (
+    from llm_compressor.proxy import (
         init_db,
         load_stats_from_db,
         migrate_from_json,
@@ -205,8 +205,8 @@ def test_record_compression_writes_to_db(tmp_path):
 
             sys.modules[dep] = _mock.MagicMock()
 
-    import proxy as proxy
-    from proxy import init_db
+    from llm_compressor import proxy as proxy
+    from llm_compressor.proxy import init_db
 
     conn = init_db(str(tmp_path / "metrics.db"))
     proxy._db_conn = conn
@@ -233,10 +233,11 @@ def test_compress_text_records_latency(tmp_path, monkeypatch):
         if dep not in sys.modules:
             monkeypatch.setitem(sys.modules, dep, MagicMock())
 
-    monkeypatch.delitem(sys.modules, "proxy", raising=False)
+    monkeypatch.delitem(sys.modules, "llm_compressor.proxy", raising=False)
+    monkeypatch.delattr("llm_compressor.proxy", raising=False)
 
-    import proxy as proxy
-    from proxy import init_db
+    from llm_compressor import proxy as proxy
+    from llm_compressor.proxy import init_db
     from tests.conftest import make_mock_llmlingua
 
     conn = init_db(str(tmp_path / "metrics.db"))
@@ -246,7 +247,7 @@ def test_compress_text_records_latency(tmp_path, monkeypatch):
         "compressor": make_mock_llmlingua(),
         "rate": 0.5,
     }
-    # compression._cache isn't reset by reimporting "proxy" alone (it now lives
+    # compression._cache isn't reset by reimporting "llm_compressor.proxy" alone (it now lives
     # in a separate module); a prior test's client fixture may have left it
     # pointing at an already-closed connection, so reset it explicitly.
     proxy._cache = None
@@ -275,7 +276,7 @@ def test_load_backend_llmlingua2(monkeypatch):
     }
 
     monkeypatch.setattr("llmlingua.PromptCompressor", mock_cls)
-    from proxy import load_backend
+    from llm_compressor.proxy import load_backend
 
     b = load_backend()
     assert b["type"] == "llmlingua2"
@@ -289,7 +290,8 @@ def test_load_backend_kompress_raises_without_package(monkeypatch):
     import pytest
 
     monkeypatch.setenv("COMPRESSOR_MODEL", "kompress")
-    monkeypatch.delitem(sys.modules, "proxy", raising=False)
+    monkeypatch.delitem(sys.modules, "llm_compressor.proxy", raising=False)
+    monkeypatch.delattr("llm_compressor.proxy", raising=False)
 
     with mock.patch.dict(
         sys.modules,
@@ -299,7 +301,7 @@ def test_load_backend_kompress_raises_without_package(monkeypatch):
             "headroom.transforms.kompress_compressor": None,
         },
     ):
-        import proxy as proxy
+        from llm_compressor import proxy as proxy
 
         monkeypatch.setattr(proxy, "_load_backend", proxy.load_backend)
         with pytest.raises((RuntimeError, ImportError)):
@@ -322,10 +324,11 @@ def test_timeseries_structure(tmp_path, monkeypatch):
         if dep not in sys.modules:
             monkeypatch.setitem(sys.modules, dep, MagicMock())
 
-    monkeypatch.delitem(sys.modules, "proxy", raising=False)
+    monkeypatch.delitem(sys.modules, "llm_compressor.proxy", raising=False)
+    monkeypatch.delattr("llm_compressor.proxy", raising=False)
 
-    import proxy as proxy
-    from proxy import init_db
+    from llm_compressor import proxy as proxy
+    from llm_compressor.proxy import init_db
 
     conn = init_db(str(tmp_path / "metrics.db"))
 
@@ -401,10 +404,11 @@ def test_stats_by_model(tmp_path, monkeypatch):
         if dep not in sys.modules:
             monkeypatch.setitem(sys.modules, dep, MagicMock())
 
-    monkeypatch.delitem(sys.modules, "proxy", raising=False)
+    monkeypatch.delitem(sys.modules, "llm_compressor.proxy", raising=False)
+    monkeypatch.delattr("llm_compressor.proxy", raising=False)
 
-    import proxy as proxy
-    from proxy import init_db
+    from llm_compressor import proxy as proxy
+    from llm_compressor.proxy import init_db
 
     db_path = tmp_path / "metrics.db"
     monkeypatch.setattr(proxy, "DB_PATH", db_path)
@@ -446,7 +450,7 @@ def test_no_utcnow_in_source():
     """Task 1: Verify that datetime.utcnow is not used in proxy.py."""
     from pathlib import Path
 
-    src = Path(__file__).parent.parent / "proxy.py"
+    src = Path(__file__).parent.parent / "src" / "llm_compressor" / "proxy.py"
     source = src.read_text()
     assert "utcnow" not in source, "Found deprecated datetime.utcnow in proxy.py"
 
@@ -464,9 +468,10 @@ def test_chunk_text_short_returns_single(monkeypatch):
         if dep not in sys.modules:
             monkeypatch.setitem(sys.modules, dep, MagicMock())
 
-    monkeypatch.delitem(sys.modules, "proxy", raising=False)
+    monkeypatch.delitem(sys.modules, "llm_compressor.proxy", raising=False)
+    monkeypatch.delattr("llm_compressor.proxy", raising=False)
 
-    import proxy as proxy
+    from llm_compressor import proxy as proxy
     from tests.conftest import make_mock_llmlingua
 
     mock_backend = {"type": "llmlingua2", "compressor": make_mock_llmlingua(), "rate": 0.5}
@@ -485,9 +490,10 @@ def test_chunk_text_splits_long_paragraphs(monkeypatch):
         if dep not in sys.modules:
             monkeypatch.setitem(sys.modules, dep, MagicMock())
 
-    monkeypatch.delitem(sys.modules, "proxy", raising=False)
+    monkeypatch.delitem(sys.modules, "llm_compressor.proxy", raising=False)
+    monkeypatch.delattr("llm_compressor.proxy", raising=False)
 
-    import proxy as proxy
+    from llm_compressor import proxy as proxy
     from tests.conftest import make_mock_llmlingua
 
     mock_backend = {"type": "llmlingua2", "compressor": make_mock_llmlingua(), "rate": 0.5}
@@ -510,9 +516,10 @@ def test_compress_llmlingua2_multi_chunk(monkeypatch):
         if dep not in sys.modules:
             monkeypatch.setitem(sys.modules, dep, MagicMock())
 
-    monkeypatch.delitem(sys.modules, "proxy", raising=False)
+    monkeypatch.delitem(sys.modules, "llm_compressor.proxy", raising=False)
+    monkeypatch.delattr("llm_compressor.proxy", raising=False)
 
-    import proxy as proxy
+    from llm_compressor import proxy as proxy
     from tests.conftest import MOCK_COMPRESS_RESULT, make_mock_llmlingua
 
     mock_compressor = make_mock_llmlingua()
@@ -547,7 +554,7 @@ def test_load_backend_llmlingua2_large(monkeypatch):
     }
 
     monkeypatch.setattr("llmlingua.PromptCompressor", mock_cls)
-    from proxy import load_backend
+    from llm_compressor.proxy import load_backend
 
     b = load_backend()
     assert b["type"] == "llmlingua2-large"
@@ -574,7 +581,7 @@ def test_session_compressions_pagination(client):
     assert r.status_code == 200
     assert r.json()["total"] == 0
 
-    from proxy import _db_conn
+    from llm_compressor.proxy import _db_conn
 
     session_id = "session-123"
 
@@ -629,14 +636,14 @@ def test_langfuse_status_enabled(client, monkeypatch):
 
     mock_client = MagicMock()
     with patch("langfuse.Langfuse", return_value=mock_client):
-        import langfuse_tracer
+        from llm_compressor import langfuse_tracer
 
         langfuse_tracer.tracer.init()
     resp = client.get("/admin/langfuse-status")
     assert resp.status_code == 200
     assert resp.json()["enabled"] is True
     # cleanup
-    import langfuse_tracer
+    from llm_compressor import langfuse_tracer
 
     langfuse_tracer.tracer._client = None
 
@@ -649,7 +656,7 @@ def test_session_rtk_commands_pagination(client):
     assert r.status_code == 200
     assert r.json()["total"] == 0
 
-    from proxy import _db_conn
+    from llm_compressor.proxy import _db_conn
 
     session_id = "rtk-session-123"
 
@@ -705,7 +712,7 @@ def test_session_rtk_commands_pagination(client):
 def test_stats_session_filter(client: TestClient):
     import sys
 
-    proxy = sys.modules["proxy"]
+    proxy = sys.modules["llm_compressor.proxy"]
 
     proxy.record_compression("session-A", 500, 300, 50.0)
     proxy.record_compression("session-B", 400, 200, 40.0)
@@ -720,7 +727,7 @@ def test_stats_session_filter(client: TestClient):
 def test_stats_no_filter_returns_all(client: TestClient):
     import sys
 
-    proxy = sys.modules["proxy"]
+    proxy = sys.modules["llm_compressor.proxy"]
 
     proxy.record_compression("session-A", 500, 300, 50.0)
     proxy.record_compression("session-B", 400, 200, 40.0)
@@ -733,7 +740,7 @@ def test_stats_no_filter_returns_all(client: TestClient):
 def test_timeseries_session_filter(client: TestClient):
     import sys
 
-    proxy = sys.modules["proxy"]
+    proxy = sys.modules["llm_compressor.proxy"]
 
     proxy.record_compression("session-A", 500, 300, 50.0)
     proxy.record_compression("session-B", 400, 200, 40.0)

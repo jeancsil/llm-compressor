@@ -2,7 +2,7 @@ import pytest
 
 
 def test_render_injects_shell_tokens_and_theme_script():
-    import templates
+    from llm_compressor import templates
 
     html = templates.render("overview.html", title="Overview", nav="overview")
 
@@ -26,7 +26,7 @@ def test_render_injects_shell_tokens_and_theme_script():
 
 
 def test_render_marks_only_the_current_nav_item():
-    import templates
+    from llm_compressor import templates
 
     html = templates.render("sessions.html", title="Sessions", nav="sessions")
 
@@ -41,14 +41,14 @@ def test_render_marks_only_the_current_nav_item():
 
 
 def test_render_rejects_an_unknown_nav_slot():
-    import templates
+    from llm_compressor import templates
 
     with pytest.raises(ValueError, match="unknown nav slot"):
         templates.render("overview.html", title="Overview", nav="dashbaord")
 
 
 def test_split_regions_separates_style_body_script():
-    import templates
+    from llm_compressor import templates
 
     style, body, script = templates._split_regions(
         "<!--#STYLE-->\n.a { color: red }\n<!--#BODY-->\n<p>hi</p>\n<!--#SCRIPT-->\nvar x = 1;\n"
@@ -59,14 +59,14 @@ def test_split_regions_separates_style_body_script():
 
 
 def test_split_regions_tolerates_a_body_only_page():
-    import templates
+    from llm_compressor import templates
 
     style, body, script = templates._split_regions("<!--#BODY-->\n<p>hi</p>")
     assert (style, body, script) == ("", "<p>hi</p>", "")
 
 
 def test_json_script_cannot_break_out_of_its_tag():
-    import templates
+    from llm_compressor import templates
 
     tag = templates.json_script("session-data", {"name": "</script><img src=x onerror=alert(1)>"})
 
@@ -80,7 +80,7 @@ def test_json_script_cannot_break_out_of_its_tag():
 
 
 def test_crumbs_marks_the_last_entry_current_and_escapes_labels():
-    import templates
+    from llm_compressor import templates
 
     out = templates.crumbs(("Sessions", "/sessions"), ("<b>evil</b>", None))
 
@@ -90,7 +90,7 @@ def test_crumbs_marks_the_last_entry_current_and_escapes_labels():
 
 
 def test_render_places_head_extras_in_the_document_head():
-    import templates
+    from llm_compressor import templates
 
     head = templates.json_script("session-data", {"session_id": "abc"})
     html = templates.render(
