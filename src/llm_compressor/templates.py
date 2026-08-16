@@ -20,7 +20,7 @@ import json
 import os
 from pathlib import Path
 
-from tokens import THEME_TOGGLE_SCRIPT, TOKENS_CSS
+from llm_compressor.tokens import THEME_TOGGLE_SCRIPT, TOKENS_CSS
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 

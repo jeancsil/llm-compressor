@@ -22,7 +22,7 @@ import os
 
 from llmlingua import PromptCompressor
 
-import db
+from llm_compressor import db
 
 # Module-level globals populated by lifespan() / the admin endpoints in proxy.py.
 backend = None

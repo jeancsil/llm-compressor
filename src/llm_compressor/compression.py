@@ -28,7 +28,7 @@ import time
 from collections import OrderedDict
 from datetime import datetime, timezone
 
-import backends
+from llm_compressor import backends
 
 # Module-level global populated by lifespan() in proxy.py.
 _cache = None  # CompressionCache, set in lifespan
@@ -207,7 +207,7 @@ def compress_text(text: str, session_id: str, role: str = "user") -> str:
     # match the established local-import convention for sessions.py used
     # elsewhere in this codebase (proxy.py's proxy_messages/session_dashboard
     # routes) and to avoid re-litigating import-order safety here.
-    import sessions
+    from llm_compressor import sessions
 
     if _cache is not None:
         hit = _cache.get(key)

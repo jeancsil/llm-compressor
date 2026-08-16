@@ -14,9 +14,9 @@ record_compression` re-export carries no staleness risk.
 import math
 import os
 
-import backends
-import db
-import stats as _stats
+from llm_compressor import backends
+from llm_compressor import db
+from llm_compressor import stats as _stats
 
 
 def _now() -> str:

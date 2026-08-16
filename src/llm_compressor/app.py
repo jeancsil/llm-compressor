@@ -22,15 +22,15 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-import backends
-import compression
-import db
-from compression import CACHE_MAX_ROWS, CACHE_MEM_SIZE
+from llm_compressor import backends
+from llm_compressor import compression
+from llm_compressor import db
+from llm_compressor.compression import CACHE_MAX_ROWS, CACHE_MEM_SIZE
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    import langfuse_tracer  # local: see module docstring — avoids stale-tracer binding
+    from llm_compressor import langfuse_tracer  # local: see module docstring — avoids stale-tracer binding
 
     db._migrate_db_location()
     db._db_conn = db.init_db(str(db.DB_PATH))
