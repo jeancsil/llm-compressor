@@ -222,7 +222,7 @@ Every compression is logged with its `role` (`system` or `user`). The recent-act
 To query the database directly:
 
 ```bash
-sqlite3 "$(python3 -c 'import db; print(db.DB_PATH)')" \
+sqlite3 "$(python3 -c 'from llm_compressor import db; print(db.DB_PATH)')" \
   "SELECT role, model, COUNT(*), ROUND(AVG((1.0 - compressed_tokens*1.0/original_tokens)*100),1) AS avg_savings_pct
    FROM compressions GROUP BY role, model"
 ```
@@ -368,4 +368,4 @@ make assets    # regenerate the README charts from your metrics database
 uv run pytest  # test suite
 ```
 
-The app is split by concern: `app.py` (FastAPI app + lifespan), `routes.py` (all endpoints), `compression.py` (compression + cache), `backends.py` (model loading and selection), `db.py` (schema and migrations), `sessions.py`, `stats.py`, `naming.py`, `templates.py`, and `langfuse_tracer.py`. `proxy.py` is a thin re-export shim kept for the test suite and as the `python proxy.py` entrypoint.
+The app is split by concern: `app.py` (FastAPI app + lifespan), `routes.py` (all endpoints), `compression.py` (compression + cache), `backends.py` (model loading and selection), `db.py` (schema and migrations), `sessions.py`, `stats.py`, `naming.py`, `templates.py`, and `langfuse_tracer.py`. `proxy.py` is a thin re-export shim kept for the test suite and as the `python -m llm_compressor.proxy` entrypoint.

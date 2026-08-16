@@ -61,10 +61,15 @@ def client(tmp_path, monkeypatch):
             monkeypatch.setitem(sys.modules, dep, MagicMock())
 
     # Remove cached modules so reload picks up the patched deps and fresh env.
-    for module_name in ("proxy", "langfuse_tracer"):
+    # Also clear the stale `llm_compressor.<mod>` attribute left on the parent
+    # package by the previous import: `from llm_compressor import X` resolves
+    # via `hasattr(llm_compressor, "X")` first, so without this the sys.modules
+    # delitem above is silently ignored and the stale module keeps being reused.
+    for module_name in ("llm_compressor.proxy", "llm_compressor.langfuse_tracer"):
         monkeypatch.delitem(sys.modules, module_name, raising=False)
+        monkeypatch.delattr(module_name, raising=False)
 
-    import proxy  # noqa: PLC0415
+    from llm_compressor import proxy  # noqa: PLC0415
 
     # Patch _load_backend to return a mock backend dict
     mock_compressor = make_mock_llmlingua()

@@ -3,9 +3,10 @@
 Real code lives in db.py / backends.py / compression.py / stats.py /
 sessions.py / templates.py / app.py / routes.py. This module exists so
 `import proxy` / `proxy.app` / `from proxy import X` keep working for the
-test suite, `cli.py`'s entrypoint, and `python proxy.py` — which is the
-actual server entrypoint (see Makefile's `make start` and `cli.py`'s `wrap`
-subcommand, both of which launch `python proxy.py` as a subprocess).
+test suite, `cli.py`'s entrypoint, and `python -m llm_compressor.proxy` —
+which is the actual server entrypoint (see Makefile's `make start` and
+`cli.py`'s `wrap` subcommand, both of which launch `python -m
+llm_compressor.proxy` as a subprocess).
 """
 
 import os
@@ -17,13 +18,15 @@ import types as _types
 import httpx  # noqa: F401  (re-export: tests patch proxy.httpx.AsyncClient)
 import uvicorn
 
-import backends
-import compression
-import db
-import routes  # noqa: E402,F401  (registers @app.* endpoints on `app`)
-import stats as _stats
-from app import app  # noqa: F401
-from compression import (  # re-export
+from llm_compressor import (
+    backends,
+    compression,
+    db,
+    routes,  # noqa: E402,F401  (registers @app.* endpoints on `app`)
+)
+from llm_compressor import stats as _stats
+from llm_compressor.app import app  # noqa: F401
+from llm_compressor.compression import (  # re-export
     _CHUNK_MAX_CHARS,
     CHUNK_MAX_TOKENS,
     CompressionCache,
@@ -51,10 +54,12 @@ from compression import (  # re-export
 # monkeypatched the same way in test_coverage.py's rtk tests, so both must
 # forward through the shim like `_cache`/`_compress_with` rather than be a
 # plain static re-export.
-from db import init_db, load_stats_from_db  # re-export
-from routes import build_headers  # noqa: E402,F401  (proxy.build_headers, plain re-export)
-from sessions import record_compression, record_request  # re-export
-from stats import _cache_stats, read_rtk_stats, stats  # re-export
+from llm_compressor.db import init_db, load_stats_from_db  # re-export
+from llm_compressor.routes import (
+    build_headers,  # noqa: E402,F401  (proxy.build_headers, plain re-export)
+)
+from llm_compressor.sessions import record_compression, record_request  # re-export
+from llm_compressor.stats import _cache_stats, read_rtk_stats, stats  # re-export
 
 # Declares the compression.py/sessions.py/stats.py/routes.py re-exports
 # above as intentional public surface so ruff's F401 (unused-import) doesn't

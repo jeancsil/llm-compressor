@@ -4,7 +4,7 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 ## What this is
 
-FastAPI proxy that intercepts Anthropic API calls and compresses prompts via LLMLingua-2 (or kompress) before forwarding. Single-file app: `proxy.py`.
+FastAPI proxy that intercepts Anthropic API calls and compresses prompts via LLMLingua-2 (or kompress) before forwarding. Installable package at `src/llm_compressor/` (entry point `llm_compressor.cli:main`; `proxy.py` re-exports the FastAPI app and doubles as the `python -m llm_compressor.proxy` server entrypoint).
 
 ## Common tasks
 

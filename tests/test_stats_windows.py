@@ -9,8 +9,8 @@ outside the window compared greater and was included anyway.
 
 from datetime import datetime, timedelta, timezone
 
-import proxy
-import stats as S
+from llm_compressor import proxy
+from llm_compressor import stats as S
 
 
 def _ts(hours_ago: float) -> str:
@@ -42,7 +42,7 @@ def test_cutoff_renders_the_columns_own_timestamp_format():
 
 
 def test_timeseries_excludes_a_row_older_than_the_range(tmp_path, monkeypatch):
-    import db
+    from llm_compressor import db
 
     conn = proxy.init_db(str(tmp_path / "m.db"))
     monkeypatch.setattr(db, "_db_conn", conn)
@@ -59,7 +59,7 @@ def test_timeseries_excludes_a_row_older_than_the_range(tmp_path, monkeypatch):
 
 
 def test_timeseries_range_widths_are_actually_different(tmp_path, monkeypatch):
-    import db
+    from llm_compressor import db
 
     conn = proxy.init_db(str(tmp_path / "m.db"))
     monkeypatch.setattr(db, "_db_conn", conn)
@@ -77,7 +77,7 @@ def test_window_summary_does_not_double_count_into_previous(tmp_path, monkeypatc
     With a mis-rendered boundary both halves matched the same rows, so every
     delta arrow on the overview read ~0% no matter what the traffic did.
     """
-    import db
+    from llm_compressor import db
 
     conn = proxy.init_db(str(tmp_path / "m.db"))
     monkeypatch.setattr(db, "_db_conn", conn)
@@ -97,7 +97,7 @@ def test_cache_24h_window_keeps_a_row_on_the_boundary(tmp_path, monkeypatch):
     '...T12:00:00+00:00' sorts above '...T12:00:00', so a row landing exactly on
     the boundary fell out of the 24h cache ratio.
     """
-    import db
+    from llm_compressor import db
 
     conn = proxy.init_db(str(tmp_path / "m.db"))
     monkeypatch.setattr(db, "_db_conn", conn)
@@ -116,7 +116,7 @@ def test_timeseries_zero_fills_quiet_buckets(tmp_path, monkeypatch):
     silently rescales the x-axis: quiet periods vanish and the axis can appear
     to run backwards where a whole day was skipped.
     """
-    import db
+    from llm_compressor import db
 
     conn = proxy.init_db(str(tmp_path / "m.db"))
     monkeypatch.setattr(db, "_db_conn", conn)
@@ -143,7 +143,7 @@ def test_timeseries_zero_fills_quiet_buckets(tmp_path, monkeypatch):
 
 
 def test_timeseries_lattice_matches_sql_bucket_width_for_coarse_ranges(tmp_path, monkeypatch):
-    import db
+    from llm_compressor import db
 
     conn = proxy.init_db(str(tmp_path / "m.db"))
     monkeypatch.setattr(db, "_db_conn", conn)

@@ -89,8 +89,9 @@ def _stub_heavy_deps(monkeypatch):
 def _fresh_proxy(monkeypatch):
     """Import a freshly-initialised proxy module with heavy deps stubbed."""
     _stub_heavy_deps(monkeypatch)
-    monkeypatch.delitem(sys.modules, "proxy", raising=False)
-    import proxy as _proxy
+    monkeypatch.delitem(sys.modules, "llm_compressor.proxy", raising=False)
+    monkeypatch.delattr("llm_compressor.proxy", raising=False)
+    from llm_compressor import proxy as _proxy
 
     return _proxy
 
@@ -103,7 +104,7 @@ def _fresh_proxy(monkeypatch):
 def test_migrate_from_json_error_path(tmp_path, monkeypatch):
     """migrate_from_json swallows errors gracefully when JSON is corrupt."""
     _stub_heavy_deps(monkeypatch)
-    from proxy import init_db, migrate_from_json
+    from llm_compressor.proxy import init_db, migrate_from_json
 
     conn = init_db(str(tmp_path / "metrics.db"))
     bad = tmp_path / "stats.json"
@@ -120,7 +121,7 @@ def test_migrate_from_json_error_path(tmp_path, monkeypatch):
 def test_recover_stats_from_backup_no_file(tmp_path, monkeypatch):
     """recover_stats_from_backup returns early when backup file is absent."""
     _stub_heavy_deps(monkeypatch)
-    from proxy import init_db, recover_stats_from_backup
+    from llm_compressor.proxy import init_db, recover_stats_from_backup
 
     conn = init_db(str(tmp_path / "metrics.db"))
     recover_stats_from_backup(conn, bak_path=str(tmp_path / "nonexistent.bak"))
@@ -135,7 +136,7 @@ def test_recover_stats_from_backup_no_file(tmp_path, monkeypatch):
 def test_recover_stats_from_backup_corrupt_json(tmp_path, monkeypatch):
     """recover_stats_from_backup swallows errors on corrupt backup."""
     _stub_heavy_deps(monkeypatch)
-    from proxy import init_db, recover_stats_from_backup
+    from llm_compressor.proxy import init_db, recover_stats_from_backup
 
     conn = init_db(str(tmp_path / "metrics.db"))
     bak = tmp_path / "stats.json.bak"
@@ -152,7 +153,7 @@ def test_recover_stats_from_backup_corrupt_json(tmp_path, monkeypatch):
 def test_load_stats_from_db_meta_exception(tmp_path, monkeypatch):
     """load_stats_from_db falls back gracefully when meta table is absent."""
     _stub_heavy_deps(monkeypatch)
-    from proxy import init_db, load_stats_from_db, stats
+    from llm_compressor.proxy import init_db, load_stats_from_db, stats
 
     conn = init_db(str(tmp_path / "metrics.db"))
     conn.execute("DROP TABLE meta")
@@ -322,8 +323,9 @@ def test_pick_backend_dual_mode(monkeypatch):
 def test_lifespan_teardown_torch_exception(tmp_path, monkeypatch):
     """Lifespan teardown swallows torch exceptions gracefully."""
     _stub_heavy_deps(monkeypatch)
-    monkeypatch.delitem(sys.modules, "proxy", raising=False)
-    import proxy
+    monkeypatch.delitem(sys.modules, "llm_compressor.proxy", raising=False)
+    monkeypatch.delattr("llm_compressor.proxy", raising=False)
+    from llm_compressor import proxy
 
     # Make torch.backends.mps.is_available raise during teardown
     bad_torch = MagicMock()
@@ -754,7 +756,7 @@ def test_build_headers(client: TestClient):
     """build_headers filters hop-by-hop headers and forces content-type."""
     from starlette.requests import Request
 
-    proxy = sys.modules["proxy"]
+    proxy = sys.modules["llm_compressor.proxy"]
     scope = {
         "type": "http",
         "method": "GET",
@@ -783,7 +785,7 @@ def test_build_headers(client: TestClient):
 
 def test_stats_while_loading(client: TestClient):
     """GET /stats shows loading=True when backend_loading is set."""
-    proxy = sys.modules["proxy"]
+    proxy = sys.modules["llm_compressor.proxy"]
     proxy.backend_loading = "llmlingua2-large"
     try:
         d = client.get("/stats").json()
@@ -795,7 +797,7 @@ def test_stats_while_loading(client: TestClient):
 
 def test_stats_dual_backend(client: TestClient):
     """GET /stats shows dual model info when backend type is dual."""
-    proxy = sys.modules["proxy"]
+    proxy = sys.modules["llm_compressor.proxy"]
     orig = proxy.backend
     try:
         proxy.backend = {"type": "dual"}
@@ -812,7 +814,7 @@ def test_stats_dual_aggregates_across_submodels(client: TestClient):
     Characterization test guarding the de-duplicated stats SQL: dual mode must
     sum across kompress + llmlingua2 + llmlingua2-large rows, not match model='dual'.
     """
-    proxy = sys.modules["proxy"]
+    proxy = sys.modules["llm_compressor.proxy"]
     orig = proxy.backend
     conn = proxy._db_conn
     conn.executemany(
@@ -849,7 +851,7 @@ def test_stats_dual_aggregates_across_submodels(client: TestClient):
 
 def test_stats_kompress_backend(client: TestClient):
     """GET /stats shows kompress info when backend type is kompress."""
-    proxy = sys.modules["proxy"]
+    proxy = sys.modules["llm_compressor.proxy"]
     orig = proxy.backend
     try:
         proxy.backend = {"type": "kompress", "threshold": 0.4}
@@ -868,7 +870,7 @@ def test_stats_kompress_backend(client: TestClient):
 
 def test_stats_includes_rtk_data(client: TestClient):
     """GET /stats returns rtk key when rtk_events has rows."""
-    proxy = sys.modules["proxy"]
+    proxy = sys.modules["llm_compressor.proxy"]
     conn = proxy._db_conn
     ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
     conn.execute(
@@ -889,7 +891,7 @@ def test_stats_includes_rtk_data(client: TestClient):
 
 def test_timeseries_with_model_filter(client: TestClient):
     """GET /stats/timeseries?model=llmlingua2 filters to that model."""
-    proxy = sys.modules["proxy"]
+    proxy = sys.modules["llm_compressor.proxy"]
     conn = proxy._db_conn
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
     conn.execute(
@@ -946,7 +948,7 @@ def test_rtk_log_idempotent_duplicate_id(client: TestClient):
 
 def test_rtk_log_db_error(client: TestClient, monkeypatch):
     """POST /rtk/log returns 500 when the DB write fails."""
-    proxy = sys.modules["proxy"]
+    proxy = sys.modules["llm_compressor.proxy"]
     orig_conn = proxy._db_conn
 
     bad_conn = MagicMock()
@@ -978,7 +980,7 @@ def test_rtk_log_db_error(client: TestClient, monkeypatch):
 
 def test_session_dashboard_db_not_ready(client: TestClient, monkeypatch):
     """GET /dashboard/<session_id> returns 503 when _db_conn is None."""
-    proxy = sys.modules["proxy"]
+    proxy = sys.modules["llm_compressor.proxy"]
     orig = proxy._db_conn
     monkeypatch.setattr(proxy, "_db_conn", None)
     try:
@@ -1035,7 +1037,7 @@ def test_play_compress_unknown_model(client: TestClient):
 
 def test_play_compress_no_backend_no_loading(client: TestClient, monkeypatch):
     """POST /play/compress returns 503 when backend is None and nothing is loading."""
-    proxy = sys.modules["proxy"]
+    proxy = sys.modules["llm_compressor.proxy"]
     orig_backend = proxy.backend
     orig_loading = proxy.backend_loading
     monkeypatch.setattr(proxy, "backend", None)
@@ -1050,7 +1052,7 @@ def test_play_compress_no_backend_no_loading(client: TestClient, monkeypatch):
 
 def test_play_compress_triggers_model_switch(client: TestClient, monkeypatch):
     """POST /play/compress with a different model triggers async load, returns 202."""
-    proxy = sys.modules["proxy"]
+    proxy = sys.modules["llm_compressor.proxy"]
     orig_backend = proxy.backend
     orig_loading = proxy.backend_loading
     # Stub loader so no real model loads in the background thread
@@ -1074,7 +1076,7 @@ def test_play_compress_triggers_model_switch(client: TestClient, monkeypatch):
 
 def test_play_compress_same_model_already_loading(client: TestClient, monkeypatch):
     """POST /play/compress returns 202 when the requested model is already loading."""
-    proxy = sys.modules["proxy"]
+    proxy = sys.modules["llm_compressor.proxy"]
     orig_backend = proxy.backend
     orig_loading = proxy.backend_loading
     monkeypatch.setattr(proxy, "backend_loading", "llmlingua2-large")
@@ -1089,7 +1091,7 @@ def test_play_compress_same_model_already_loading(client: TestClient, monkeypatc
 
 def test_play_compress_different_model_already_loading(client: TestClient, monkeypatch):
     """POST /play/compress returns 202 when a different model is loading."""
-    proxy = sys.modules["proxy"]
+    proxy = sys.modules["llm_compressor.proxy"]
     orig_backend = proxy.backend
     orig_loading = proxy.backend_loading
     monkeypatch.setattr(proxy, "backend_loading", "kompress")
@@ -1104,7 +1106,7 @@ def test_play_compress_different_model_already_loading(client: TestClient, monke
 
 def test_play_compress_no_model_but_loading(client: TestClient, monkeypatch):
     """POST /play/compress with no model while something is loading returns 202."""
-    proxy = sys.modules["proxy"]
+    proxy = sys.modules["llm_compressor.proxy"]
     orig_backend = proxy.backend
     orig_loading = proxy.backend_loading
     monkeypatch.setattr(proxy, "backend_loading", "llmlingua2")
@@ -1130,7 +1132,7 @@ def test_set_model_unknown_returns_400(client: TestClient):
 
 def test_set_model_triggers_load(client: TestClient, monkeypatch):
     """POST /admin/set-model starts async load and returns loading status."""
-    proxy = sys.modules["proxy"]
+    proxy = sys.modules["llm_compressor.proxy"]
     orig_backend = proxy.backend
     orig_loading = proxy.backend_loading
     monkeypatch.setattr(
@@ -1149,7 +1151,7 @@ def test_set_model_triggers_load(client: TestClient, monkeypatch):
 
 def test_set_model_clears_dual_globals(client: TestClient, monkeypatch):
     """POST /admin/set-model clears dual_mode when switching away from dual."""
-    proxy = sys.modules["proxy"]
+    proxy = sys.modules["llm_compressor.proxy"]
     orig_dual = proxy.dual_mode
     orig_bu = proxy.backend_user
     orig_bs = proxy.backend_system
@@ -1202,7 +1204,7 @@ def test_set_dual_models_invalid_user_returns_400(client: TestClient):
 
 def test_set_dual_models_persists_when_not_dual(client: TestClient, monkeypatch):
     """When dual mode is inactive, the endpoint updates globals + DB and returns ok."""
-    proxy = sys.modules["proxy"]
+    proxy = sys.modules["llm_compressor.proxy"]
     orig_sys, orig_usr, orig_dual = proxy.dual_model_system, proxy.dual_model_user, proxy.dual_mode
     monkeypatch.setattr(proxy, "dual_mode", False)
     try:
@@ -1230,7 +1232,7 @@ def test_set_dual_models_persists_when_not_dual(client: TestClient, monkeypatch)
 
 def test_set_dual_models_reloads_when_dual(client: TestClient, monkeypatch):
     """When dual mode is active, the endpoint triggers a reload and returns loading."""
-    proxy = sys.modules["proxy"]
+    proxy = sys.modules["llm_compressor.proxy"]
     orig_sys, orig_usr, orig_dual = proxy.dual_model_system, proxy.dual_model_user, proxy.dual_mode
     orig_backend, orig_loading = proxy.backend, proxy.backend_loading
     monkeypatch.setattr(proxy, "dual_mode", True)
@@ -1304,7 +1306,7 @@ def test_clear_compression_texts_by_session(client: TestClient):
 
 
 def test_get_sessions_db_not_ready(client: TestClient, monkeypatch):
-    proxy = sys.modules["proxy"]
+    proxy = sys.modules["llm_compressor.proxy"]
     orig = proxy._db_conn
     monkeypatch.setattr(proxy, "_db_conn", None)
     try:
@@ -1329,7 +1331,7 @@ def test_get_session_compressions_unknown_session_is_empty(client: TestClient):
 
 def test_get_session_compressions_with_data(client: TestClient):
     """GET /session/<session_id>/compressions returns compression rows for that session."""
-    proxy = sys.modules["proxy"]
+    proxy = sys.modules["llm_compressor.proxy"]
 
     proxy.record_compression("sess-comps", 200, 120, 50.0)
 
@@ -1673,7 +1675,7 @@ def test_split_into_segments_multiline_paragraph(monkeypatch):
 
 def test_timeseries_db_not_ready(client: TestClient, monkeypatch):
     """GET /stats/timeseries returns [] when _db_conn is None."""
-    proxy = sys.modules["proxy"]
+    proxy = sys.modules["llm_compressor.proxy"]
     orig = proxy._db_conn
     monkeypatch.setattr(proxy, "_db_conn", None)
     try:
@@ -1691,7 +1693,7 @@ def test_timeseries_db_not_ready(client: TestClient, monkeypatch):
 
 def test_rtk_log_db_not_ready(client: TestClient, monkeypatch):
     """POST /rtk/log returns 503 when _db_conn is None."""
-    proxy = sys.modules["proxy"]
+    proxy = sys.modules["llm_compressor.proxy"]
     orig = proxy._db_conn
     monkeypatch.setattr(proxy, "_db_conn", None)
     try:
@@ -1725,7 +1727,7 @@ def test_play_compress_triggers_kompress_load(client: TestClient, monkeypatch):
     """play_compress load thread runs _load_kompress_backend for kompress model."""
     import threading
 
-    proxy = sys.modules["proxy"]
+    proxy = sys.modules["llm_compressor.proxy"]
     orig_backend = proxy.backend
     orig_loading = proxy.backend_loading
 
@@ -1746,7 +1748,7 @@ def test_play_compress_triggers_dual_load(client: TestClient, monkeypatch):
     """play_compress load thread runs _load_dual_backend for dual model."""
     import threading
 
-    proxy = sys.modules["proxy"]
+    proxy = sys.modules["llm_compressor.proxy"]
     orig_backend = proxy.backend
     orig_loading = proxy.backend_loading
 
@@ -1767,7 +1769,7 @@ def test_play_compress_load_thread_exception(client: TestClient, monkeypatch):
     """play_compress load thread swallows exceptions and clears backend_loading."""
     import threading
 
-    proxy = sys.modules["proxy"]
+    proxy = sys.modules["llm_compressor.proxy"]
     orig_backend = proxy.backend
     orig_loading = proxy.backend_loading
 
@@ -1794,7 +1796,7 @@ def test_play_compress_load_thread_exception(client: TestClient, monkeypatch):
 
 def test_play_compress_backend_raises(client: TestClient, monkeypatch):
     """POST /play/compress returns 500 when compress_backend raises."""
-    proxy = sys.modules["proxy"]
+    proxy = sys.modules["llm_compressor.proxy"]
     monkeypatch.setattr(
         proxy, "compress_backend", lambda text: (_ for _ in ()).throw(RuntimeError("boom"))
     )
@@ -1812,7 +1814,7 @@ def test_set_model_dual(client: TestClient, monkeypatch):
     """POST /admin/set-model with model=dual triggers the load_dual thread."""
     import threading
 
-    proxy = sys.modules["proxy"]
+    proxy = sys.modules["llm_compressor.proxy"]
     orig_backend = proxy.backend
     orig_loading = proxy.backend_loading
     orig_bu = proxy.backend_user
@@ -1843,7 +1845,7 @@ def test_set_model_kompress_load_thread(client: TestClient, monkeypatch):
     """POST /admin/set-model with model=kompress runs _load_kompress_backend."""
     import threading
 
-    proxy = sys.modules["proxy"]
+    proxy = sys.modules["llm_compressor.proxy"]
     orig_backend = proxy.backend
     orig_loading = proxy.backend_loading
 
@@ -1869,7 +1871,7 @@ def test_set_model_load_thread_exception(client: TestClient, monkeypatch):
     """set_model load thread swallows loader exceptions and clears backend_loading."""
     import threading
 
-    proxy = sys.modules["proxy"]
+    proxy = sys.modules["llm_compressor.proxy"]
     orig_backend = proxy.backend
     orig_loading = proxy.backend_loading
 
@@ -1896,7 +1898,7 @@ def test_set_model_load_thread_exception(client: TestClient, monkeypatch):
 
 def test_clear_compression_texts_db_not_ready(client: TestClient, monkeypatch):
     """DELETE /admin/compression-texts returns 503 when _db_conn is None."""
-    proxy = sys.modules["proxy"]
+    proxy = sys.modules["llm_compressor.proxy"]
     orig = proxy._db_conn
     monkeypatch.setattr(proxy, "_db_conn", None)
     try:
@@ -1913,7 +1915,7 @@ def test_clear_compression_texts_db_not_ready(client: TestClient, monkeypatch):
 
 def test_get_session_compressions_db_not_ready(client: TestClient, monkeypatch):
     """GET /session/<session_id>/compressions returns 503 when _db_conn is None."""
-    proxy = sys.modules["proxy"]
+    proxy = sys.modules["llm_compressor.proxy"]
     orig = proxy._db_conn
     monkeypatch.setattr(proxy, "_db_conn", None)
     try:
@@ -1934,7 +1936,7 @@ def test_get_session_compressions_db_not_ready(client: TestClient, monkeypatch):
 
 def test_stats_rtk_per_session(client: TestClient):
     """GET /stats decorates session entries with rtk_commands when both exist."""
-    proxy = sys.modules["proxy"]
+    proxy = sys.modules["llm_compressor.proxy"]
     conn = proxy._db_conn
     ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -1967,7 +1969,7 @@ def test_set_model_dual_load_exception(client: TestClient, monkeypatch):
     """set_model dual load_dual thread swallows _load_dual_backend exceptions."""
     import threading
 
-    proxy = sys.modules["proxy"]
+    proxy = sys.modules["llm_compressor.proxy"]
     orig_backend = proxy.backend
     orig_loading = proxy.backend_loading
     orig_bu = proxy.backend_user
@@ -1997,7 +1999,7 @@ def test_set_model_dual_load_exception(client: TestClient, monkeypatch):
 
 def test_get_session_rtk_commands_db_not_ready(client: TestClient, monkeypatch):
     """GET /session/<session_id>/rtk-commands returns 503 when _db_conn is None."""
-    proxy = sys.modules["proxy"]
+    proxy = sys.modules["llm_compressor.proxy"]
     orig = proxy._db_conn
     monkeypatch.setattr(proxy, "_db_conn", None)
     try:
@@ -2016,7 +2018,7 @@ def test_get_session_rtk_commands_unknown_session_is_empty(client: TestClient):
 
 def test_get_session_rtk_commands_with_data(client: TestClient):
     """GET /session/<session_id>/rtk-commands returns rtk rows for that session."""
-    proxy = sys.modules["proxy"]
+    proxy = sys.modules["llm_compressor.proxy"]
 
     ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
     proxy._db_conn.execute(

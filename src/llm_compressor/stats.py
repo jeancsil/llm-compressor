@@ -40,8 +40,7 @@ from collections import deque
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-import backends
-import db
+from llm_compressor import backends, db
 
 # ---------------------------------------------------------------------------
 # In-memory stats aggregate

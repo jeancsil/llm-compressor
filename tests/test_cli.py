@@ -3,16 +3,7 @@ import sys
 import threading
 from unittest.mock import MagicMock, patch
 
-from cli import _proxy_path, wait_for_proxy
-
-# --- _proxy_path ---
-
-
-def test_proxy_path_points_to_existing_file():
-    p = _proxy_path()
-    assert p.name == "proxy.py"
-    assert p.exists()
-
+from llm_compressor.cli import wait_for_proxy
 
 # --- wait_for_proxy ---
 
@@ -52,7 +43,7 @@ def test_wait_for_proxy_returns_false_on_timeout():
 
 def _run_cli(*args):
     return subprocess.run(
-        [sys.executable, str(_proxy_path().parent / "cli.py"), *args],
+        [sys.executable, "-m", "llm_compressor.cli", *args],
         capture_output=True,
         text=True,
     )
@@ -82,13 +73,13 @@ def test_main_starts_proxy_and_runs_agent():
     agent_result.returncode = 0
 
     with (
-        patch("cli.subprocess.Popen", return_value=proxy_mock) as mock_popen,
-        patch("cli.wait_for_proxy", return_value=True),
-        patch("cli.subprocess.run", return_value=agent_result) as mock_run,
+        patch("llm_compressor.cli.subprocess.Popen", return_value=proxy_mock) as mock_popen,
+        patch("llm_compressor.cli.wait_for_proxy", return_value=True),
+        patch("llm_compressor.cli.subprocess.run", return_value=agent_result) as mock_run,
         patch("sys.argv", ["llm-compressor", "wrap", "echo", "hello"]),
         patch("sys.exit") as mock_exit,
     ):
-        import cli
+        import llm_compressor.cli as cli
 
         cli.main()
 
@@ -104,12 +95,12 @@ def test_main_proxy_unhealthy_exits_1():
     proxy_mock.poll.return_value = None
 
     with (
-        patch("cli.subprocess.Popen", return_value=proxy_mock),
-        patch("cli.wait_for_proxy", return_value=False),
+        patch("llm_compressor.cli.subprocess.Popen", return_value=proxy_mock),
+        patch("llm_compressor.cli.wait_for_proxy", return_value=False),
         patch("sys.argv", ["llm-compressor", "wrap", "claude"]),
         patch("sys.exit") as mock_exit,
     ):
-        import cli
+        import llm_compressor.cli as cli
 
         try:
             cli.main()
@@ -124,13 +115,13 @@ def test_main_agent_not_found_exits_1():
     proxy_mock.poll.return_value = None
 
     with (
-        patch("cli.subprocess.Popen", return_value=proxy_mock),
-        patch("cli.wait_for_proxy", return_value=True),
-        patch("cli.subprocess.run", side_effect=FileNotFoundError),
+        patch("llm_compressor.cli.subprocess.Popen", return_value=proxy_mock),
+        patch("llm_compressor.cli.wait_for_proxy", return_value=True),
+        patch("llm_compressor.cli.subprocess.run", side_effect=FileNotFoundError),
         patch("sys.argv", ["llm-compressor", "wrap", "nonexistent-cmd"]),
         patch("sys.exit") as mock_exit,
     ):
-        import cli
+        import llm_compressor.cli as cli
 
         try:
             cli.main()

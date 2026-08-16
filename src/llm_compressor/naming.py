@@ -5,7 +5,7 @@ import re
 
 import httpx
 
-import sessions
+from llm_compressor import sessions
 
 _STRIP = [
     re.compile(r"<system-reminder>.*?</system-reminder>", re.S),

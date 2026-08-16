@@ -1,9 +1,9 @@
 import asyncio
 from unittest.mock import patch
 
-import naming as N
-import proxy
-import sessions as S
+from llm_compressor import naming as N
+from llm_compressor import proxy
+from llm_compressor import sessions as S
 
 
 def test_clean_strips_system_reminder():
@@ -89,7 +89,7 @@ def test_haiku_topic_builds_claude_code_shape_and_finalizes():
             captured["headers"] = headers
             return _Resp()
 
-    with patch("naming.httpx.AsyncClient", _Client):
+    with patch("llm_compressor.naming.httpx.AsyncClient", _Client):
         slug = asyncio.run(N.haiku_topic("add css fix", {"authorization": "Bearer x"}))
     assert slug == "fix-dashboard-css"
     # first system block is the Claude Code identity string
@@ -113,7 +113,7 @@ def test_haiku_topic_swallows_errors_returns_empty():
         async def post(self, *a, **k):
             raise RuntimeError("401")
 
-    with patch("naming.httpx.AsyncClient", _Boom):
+    with patch("llm_compressor.naming.httpx.AsyncClient", _Boom):
         assert asyncio.run(N.haiku_topic("x", {})) == ""
 
 

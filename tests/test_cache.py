@@ -6,8 +6,9 @@ def _import_proxy(monkeypatch):
     for dep in ("llmlingua", "torch", "transformers"):
         if dep not in sys.modules:
             monkeypatch.setitem(sys.modules, dep, MagicMock())
-    monkeypatch.delitem(sys.modules, "proxy", raising=False)
-    import proxy
+    monkeypatch.delitem(sys.modules, "llm_compressor.proxy", raising=False)
+    monkeypatch.delattr("llm_compressor.proxy", raising=False)
+    from llm_compressor import proxy
 
     return proxy
 
@@ -206,7 +207,7 @@ def test_cache_stats_session_id_scopes_windows_and_by_role(tmp_path, monkeypatch
     ins("b", recent, 1)
     conn.commit()
 
-    import stats as stats_mod
+    from llm_compressor import stats as stats_mod
 
     scoped = stats_mod._cache_stats("a")
     assert scoped["last_24h"] == {"hits": 2, "total": 3, "hit_ratio": round(2 / 3, 4)}
@@ -231,7 +232,7 @@ def test_cache_stats_entries_stays_global_when_session_scoped(tmp_path, monkeypa
     )
     conn.commit()
 
-    import stats as stats_mod
+    from llm_compressor import stats as stats_mod
 
     scoped = stats_mod._cache_stats("some-session-with-no-rows")
     assert scoped["entries"] == 1  # global cache size, unaffected by session_id
@@ -239,7 +240,7 @@ def test_cache_stats_entries_stays_global_when_session_scoped(tmp_path, monkeypa
 
 
 def test_stats_endpoint_passes_session_id_to_cache_stats(client, monkeypatch):
-    import routes
+    from llm_compressor import routes
 
     captured = {}
     real_cache_stats = routes._cache_stats

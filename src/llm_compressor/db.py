@@ -323,7 +323,7 @@ def load_stats_from_db(conn) -> None:
     # Task 13 Step 6 moves it into stats.py. Reach back via a local import
     # (avoids a circular top-level import, since proxy.py imports this module)
     # and mutate the same dict object proxy.stats already points at.
-    import proxy as _proxy
+    from llm_compressor import proxy as _proxy
 
     stats = _proxy.stats
 

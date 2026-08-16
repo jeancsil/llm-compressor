@@ -27,14 +27,13 @@ import httpx
 from fastapi import Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 
-import backends
-import compression
-import db
-import stats as _stats
-import templates
-from app import app
-from sessions import record_request  # re-export target for tests: proxy.record_request
-from stats import _cache_stats, stats
+from llm_compressor import backends, compression, db, templates
+from llm_compressor import stats as _stats
+from llm_compressor.app import app
+from llm_compressor.sessions import (
+    record_request,  # re-export target for tests: proxy.record_request
+)
+from llm_compressor.stats import _cache_stats, stats
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 ANTHROPIC_BASE = "https://api.anthropic.com"
@@ -254,7 +253,7 @@ async def sessions_page():
 
 @app.get("/sessions/{session_id}", response_class=HTMLResponse)
 async def session_detail(session_id: str):
-    import sessions as _sessions  # local import ok; module is light
+    from llm_compressor import sessions as _sessions  # local import ok; module is light
 
     if db._db_conn is None:
         return HTMLResponse("<h1>DB not ready</h1>", status_code=503)
@@ -549,14 +548,16 @@ async def clear_compression_texts(request: Request):
 
 @app.get("/admin/sessions")
 async def get_sessions(page: int = 1, page_size: int = 25):
-    import sessions as _sessions  # local import ok; module is light
+    from llm_compressor import sessions as _sessions  # local import ok; module is light
 
     return _sessions.list_sessions(db._db_conn, page, page_size)
 
 
 @app.get("/admin/langfuse-status")
 async def langfuse_status():
-    import langfuse_tracer  # local: see app.py's docstring — avoids stale-tracer binding
+    from llm_compressor import (
+        langfuse_tracer,  # local: see app.py's docstring — avoids stale-tracer binding
+    )
 
     return JSONResponse(content=langfuse_tracer.tracer.status())
 
@@ -567,7 +568,7 @@ async def rename_session_endpoint(session_id: str, request: Request):
     name = (body.get("name") or "").strip()
     if not name:
         return JSONResponse({"error": "name required"}, status_code=400)
-    import sessions
+    from llm_compressor import sessions
 
     ok = sessions.rename_session(db._db_conn, session_id, name)
     if not ok:
@@ -663,11 +664,13 @@ async def list_models(request: Request):
 
 @app.post("/v1/messages")
 async def proxy_messages(request: Request):
-    import langfuse_tracer  # local: see app.py's docstring — avoids stale-tracer binding
+    from llm_compressor import (
+        langfuse_tracer,  # local: see app.py's docstring — avoids stale-tracer binding
+    )
 
     session_id = request.headers.get("x-claude-code-session-id", "unknown")
-    import naming as _naming
-    import sessions as _sessions  # local import ok; module is light
+    from llm_compressor import naming as _naming
+    from llm_compressor import sessions as _sessions  # local import ok; module is light
 
     _sessions.ensure_session(db._db_conn, session_id)
     record_request(session_id)

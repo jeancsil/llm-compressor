@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 
 
 def make_tracer():
-    import langfuse_tracer as mod
+    from llm_compressor import langfuse_tracer as mod
 
     return mod.LangfuseTracer()
 
