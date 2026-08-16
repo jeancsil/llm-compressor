@@ -27,13 +27,12 @@ import httpx
 from fastapi import Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 
-from llm_compressor import backends
-from llm_compressor import compression
-from llm_compressor import db
+from llm_compressor import backends, compression, db, templates
 from llm_compressor import stats as _stats
-from llm_compressor import templates
 from llm_compressor.app import app
-from llm_compressor.sessions import record_request  # re-export target for tests: proxy.record_request
+from llm_compressor.sessions import (
+    record_request,  # re-export target for tests: proxy.record_request
+)
 from llm_compressor.stats import _cache_stats, stats
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -556,7 +555,9 @@ async def get_sessions(page: int = 1, page_size: int = 25):
 
 @app.get("/admin/langfuse-status")
 async def langfuse_status():
-    from llm_compressor import langfuse_tracer  # local: see app.py's docstring — avoids stale-tracer binding
+    from llm_compressor import (
+        langfuse_tracer,  # local: see app.py's docstring — avoids stale-tracer binding
+    )
 
     return JSONResponse(content=langfuse_tracer.tracer.status())
 
@@ -663,7 +664,9 @@ async def list_models(request: Request):
 
 @app.post("/v1/messages")
 async def proxy_messages(request: Request):
-    from llm_compressor import langfuse_tracer  # local: see app.py's docstring — avoids stale-tracer binding
+    from llm_compressor import (
+        langfuse_tracer,  # local: see app.py's docstring — avoids stale-tracer binding
+    )
 
     session_id = request.headers.get("x-claude-code-session-id", "unknown")
     from llm_compressor import naming as _naming
