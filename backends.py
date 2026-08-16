@@ -36,7 +36,7 @@ dual_model_user = "kompress"  # persisted in meta table
 KNOWN_MODELS = ("llmlingua2", "llmlingua2-large", "kompress", "dual")
 DUAL_SUBMODELS = ("llmlingua2", "llmlingua2-large", "kompress")
 
-LLMLINGUA2_MODELS = {
+LLMLINGUA2_MODELS: dict[str, str] = {
     "llmlingua2": "microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank",
     "llmlingua2-large": "microsoft/llmlingua-2-xlm-roberta-large-meetingbank",
 }
