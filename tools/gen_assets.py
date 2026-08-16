@@ -21,9 +21,7 @@ import sqlite3
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-import db as _db  # noqa: E402
+from llm_compressor import db as _db
 
 ASSETS = Path(__file__).resolve().parent.parent / "assets"
 
