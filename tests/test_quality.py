@@ -855,3 +855,26 @@ def test_gate_backfills_compression_quality_on_warm_hit_with_verdict(monkeypatch
         (comp_id,),
     ).fetchone()
     assert tuple(row) == (1.0, "Drifted", "meaning drifted", 1)
+
+
+def test_gate_keeps_compressed_on_timeout(monkeypatch, fresh_db):
+    """Gate timeout (GATE_TIMEOUT exceeded) falls back to forwarding compressed.
+
+    Monkeypatches GATE_TIMEOUT to 0.01 seconds and makes judge_now sleep
+    longer, so the timeout branch is exercised. Asserts that the returned
+    text is the COMPRESSED text (not the original), confirming the fallback
+    is savings-first."""
+    _stub_compress(monkeypatch)
+
+    # Make the judge call slow enough to exceed the timeout
+    async def slow_judge_now(*args, **kwargs):
+        await asyncio.sleep(0.1)  # Sleep longer than timeout
+        return {"score": 2.0, "label": "Preserved"}
+
+    monkeypatch.setattr(quality.judge, "judge_now", slow_judge_now)
+    monkeypatch.setattr(quality.judge, "_client", object())  # enabled
+    monkeypatch.setattr(quality, "GATE_TIMEOUT", 0.01)  # Very short timeout
+
+    text = "word " * 60
+    out = asyncio.run(compression.compress_text(text, "sess"))
+    assert out == "COMPRESSED"  # timeout -> savings-first fallback

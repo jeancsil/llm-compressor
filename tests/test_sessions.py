@@ -376,3 +376,51 @@ def test_listing_uses_session_id_index(tmp_path):
         )
     )
     assert "idx_compressions_session" in plan, plan
+
+
+def test_list_sessions_gated_count_aggregate(tmp_path, monkeypatch):
+    """The gated_count aggregate in list_sessions correctly counts gated=1 rows.
+
+    Mirrors test_list_sessions_savings_combine_compressions_and_rtk setup.
+    Records a mix of gated and non-gated compressions, then asserts the
+    returned item's gated_count matches the number of gated rows.
+    """
+    from llm_compressor import db
+
+    c = _conn(tmp_path)
+    monkeypatch.setattr(db, "_db_conn", c)
+    S.ensure_session(c, "sidGated")
+    # Record 3 non-gated compressions (gated=0, the default)
+    for i in range(3):
+        S.record_compression(
+            "sidGated",
+            original=100,
+            compressed=50,
+            original_text="x" * 300,
+            compressed_text="y" * 100,
+        )
+    # Record 2 gated compressions (gated=1)
+    for i in range(2):
+        S.record_compression(
+            "sidGated",
+            original=100,
+            compressed=50,
+            gated=1,
+            original_text="x" * 300,
+            compressed_text="y" * 100,
+        )
+    item = next(i for i in S.list_sessions(c, 1, 25)["items"] if i["session_id"] == "sidGated")
+    assert item["gated_count"] == 2
+
+    # Test a session with no gated rows reports 0
+    S.ensure_session(c, "sidNoGate")
+    for i in range(5):
+        S.record_compression(
+            "sidNoGate",
+            original=100,
+            compressed=50,
+            original_text="x" * 300,
+            compressed_text="y" * 100,
+        )
+    item = next(i for i in S.list_sessions(c, 1, 25)["items"] if i["session_id"] == "sidNoGate")
+    assert item["gated_count"] == 0
