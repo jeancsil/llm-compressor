@@ -71,8 +71,31 @@ def test_cache_memory_lru_evicts_but_disk_retains(tmp_path, monkeypatch):
     cache.put("b", "B", 1, 1, "m", 0.5)
     cache.put("c", "C", 1, 1, "m", 0.5)  # evicts "a" from memory
     assert "a" not in cache._mem
-    assert cache.get("a") == ("A", 1, 1)  # served from disk, re-promoted
+    # Disk-served entry is 7-tuple wide (quality_* columns tag along, unjudged
+    # here so they're NULL/default) -- see CompressionCache.get().
+    assert cache.get("a") == ("A", 1, 1, None, None, 0, None)  # served from disk, re-promoted
     assert "a" in cache._mem
+
+
+def test_cache_update_quality_patches_resident_entry(tmp_path, monkeypatch):
+    proxy = _import_proxy(monkeypatch)
+    conn = proxy.init_db(str(tmp_path / "m.db"))
+    cache = proxy.CompressionCache(conn, max_mem=10, max_rows=50000)
+    cache.put("a", "A", 1, 1, "m", 0.5)
+
+    cache.update_quality("a", 2.0, "Preserved", "meaning fully preserved", 0)
+
+    assert cache._mem["a"] == ("A", 1, 1, 2.0, "Preserved", 0, "meaning fully preserved")
+
+
+def test_cache_update_quality_noop_when_key_not_resident(tmp_path, monkeypatch):
+    proxy = _import_proxy(monkeypatch)
+    conn = proxy.init_db(str(tmp_path / "m.db"))
+    cache = proxy.CompressionCache(conn, max_mem=10, max_rows=50000)
+
+    cache.update_quality("missing", 2.0, "Preserved", "detail", 0)  # must not raise
+
+    assert "missing" not in cache._mem
 
 
 def test_cache_disk_row_cap_evicts_least_recently_hit(tmp_path, monkeypatch):

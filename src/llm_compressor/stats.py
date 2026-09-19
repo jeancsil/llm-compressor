@@ -223,8 +223,11 @@ def _aggregate_stats(scope: str, args: tuple, *, today: bool, with_ratio: bool) 
                COUNT(DISTINCT session_id) AS sessions,
                COALESCE(SUM(original_tokens), 0) AS original_tokens,
                COALESCE(SUM(compressed_tokens), 0) AS compressed_tokens,
-               COALESCE(SUM(CASE WHEN ok = 0 THEN 1 ELSE 0 END), 0) AS errors{ratio_col}
+               COALESCE(SUM(CASE WHEN ok = 0 THEN 1 ELSE 0 END), 0) AS errors,
+               ROUND(AVG(cq.score), 2) AS avg_quality,
+               COALESCE(SUM(CASE WHEN cq.flagged = 1 THEN 1 ELSE 0 END), 0) AS quality_flagged_count{ratio_col}
         FROM compressions
+        LEFT JOIN compression_quality cq ON cq.compression_id = compressions.id
         WHERE {where}
         """,
         args,
@@ -241,10 +244,12 @@ def _aggregate_stats(scope: str, args: tuple, *, today: bool, with_ratio: bool) 
         "compressed_tokens": (row[6] if row else 0) or 0,
         "errors": errors,
         "error_rate": round(errors / requests, 4) if requests else 0.0,
+        "avg_quality": (row[8] if row else 0.0) or 0.0,
+        "quality_flagged_count": (row[9] if row else 0) or 0,
     }
     out.update(_latency_percentiles(where, args))
     if with_ratio:
-        out["avg_ratio"] = (row[8] if row else 0.0) or 0.0
+        out["avg_ratio"] = (row[10] if row else 0.0) or 0.0
     return out
 
 

@@ -248,16 +248,18 @@ def record_compression(
     model_name = active.get("type", "llmlingua2") if active else "llmlingua2"
     ts = db.utc_now()
 
+    compression_id = None
     if db._db_conn:
         cur = db._db_conn.execute(
             "INSERT INTO compressions (ts, session_id, model, original_tokens, "
             "compressed_tokens, latency_ms, role, cache_hit, ok) VALUES (?,?,?,?,?,?,?,?,?)",
             (ts, session_id, model_name, original, compressed, latency_ms, role, cache_hit, ok),
         )
+        compression_id = cur.lastrowid
         if original_text is not None and compressed_text is not None:
             db._db_conn.execute(
                 "INSERT INTO compression_texts (compression_id, original_text, compressed_text) VALUES (?,?,?)",
-                (cur.lastrowid, original_text, compressed_text),
+                (compression_id, original_text, compressed_text),
             )
         db._db_conn.commit()
 
@@ -288,6 +290,8 @@ def record_compression(
             "latency_ms": round(latency_ms, 1),
         }
     )
+
+    return compression_id
 
 
 def record_request(session_id: str):

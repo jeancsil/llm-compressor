@@ -116,7 +116,22 @@ class LangfuseTracer:
                 expected_output=run_outputs,
             )
         except Exception as exc:
-            print(f"[langfuse] add_to_dataset failed: {exc}")
+            from langfuse.api.commons.errors.not_found_error import NotFoundError
+
+            if not isinstance(exc, NotFoundError):
+                print(f"[langfuse] add_to_dataset failed: {exc}")
+                return
+            # Dataset doesn't exist yet — create it (idempotent) and retry once.
+            try:
+                self._client.create_dataset(name=dataset_name)
+                self._client.create_dataset_item(
+                    dataset_name=dataset_name,
+                    input=run_inputs,
+                    expected_output=run_outputs,
+                )
+                print(f"[langfuse] created missing dataset '{dataset_name}' and wrote item")
+            except Exception as retry_exc:
+                print(f"[langfuse] add_to_dataset failed after creating dataset: {retry_exc}")
 
     async def attach_feedback(
         self,

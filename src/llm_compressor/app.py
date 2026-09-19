@@ -30,6 +30,7 @@ from llm_compressor.compression import CACHE_MAX_ROWS, CACHE_MEM_SIZE
 async def lifespan(app: FastAPI):
     from llm_compressor import (
         langfuse_tracer,  # local: see module docstring — avoids stale-tracer binding
+        quality,  # local: same reason
     )
 
     db._migrate_db_location()
@@ -42,6 +43,7 @@ async def lifespan(app: FastAPI):
     db.load_stats_from_db(db._db_conn)
     backends.backend = backends.load_backend()
     langfuse_tracer.tracer.init()
+    quality.judge.init()
     # print handled inside tracer.init()
     yield
     # Flush langfuse traces before shutdown

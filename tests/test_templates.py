@@ -89,6 +89,23 @@ def test_crumbs_marks_the_last_entry_current_and_escapes_labels():
     assert "<b>evil</b>" not in out
 
 
+def test_session_detail_quality_chip_marks_middle_level_as_warn():
+    """The middle judged level ("Drifted", rounded score 1) must render as
+    `chip warn`, distinct from the top level's `chip good` -- see
+    qualityChip() in session_detail.html. Only the bottom level (rounded
+    score 0, low-confidence/flagged) escalates further to `chip bad`."""
+    from llm_compressor import templates
+
+    html = templates.render(
+        "session_detail.html", title="x", nav="sessions", head="", breadcrumb=""
+    )
+
+    chip_fn = html[html.index("function qualityChip") : html.index("function qualityInfoButton")]
+    assert "Math.round(c.score) === 1" in chip_fn
+    assert "'chip warn'" in chip_fn or 'class="chip warn"' in chip_fn
+    assert "Drifted" in chip_fn
+
+
 def test_render_places_head_extras_in_the_document_head():
     from llm_compressor import templates
 

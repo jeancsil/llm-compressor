@@ -151,6 +151,16 @@ table.data td:first-child {
     </div>
   </div>
 
+  <!-- Quality -->
+  <div class="panel">
+    <div class="panel-head">
+      <h2>Quality</h2>
+    </div>
+    <div class="panel-body stack" id="qualityPanel">
+      <!-- populated by JS -->
+    </div>
+  </div>
+
   <!-- Appearance -->
   <div class="panel">
     <div class="panel-head">
@@ -448,8 +458,19 @@ table.data td:first-child {
       });
   }
 
-  function renderObservability(data) {
-    const panel = document.getElementById('observabilityPanel');
+  function loadQualityStatus() {
+    UI.getJSON('/admin/quality-status')
+      .then(data => {
+        renderObservability(data, 'qualityPanel');
+      })
+      .catch(err => {
+        const panel = document.getElementById('qualityPanel');
+        panel.innerHTML = `<div class="chip bad">${UI.escapeHtml(String(err))}</div>`;
+      });
+  }
+
+  function renderObservability(data, targetId = 'observabilityPanel') {
+    const panel = document.getElementById(targetId);
     const rows = [];
 
     // Check for enabled status
@@ -540,6 +561,7 @@ table.data td:first-child {
   function init() {
     renderModelOptions();
     loadObservabilityStatus();
+    loadQualityStatus();
     initThemeSelector();
 
     // Load initial stats

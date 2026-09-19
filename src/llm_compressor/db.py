@@ -92,6 +92,50 @@ def _normalize_timestamps(conn) -> None:
     conn.commit()
 
 
+def _migrate_quality_label_detail_split(conn) -> None:
+    """One-time backfill for the label/detail split (see quality.py's SHORT_LABELS
+    comment). Before that split, `compression_quality.label` and
+    `compression_cache.quality_label` held TypeSafe's full criteria sentence --
+    what's now `detail` -- because the `detail` column didn't exist yet. A row
+    written before the split therefore has `detail IS NULL` with the long
+    sentence still sitting in `label`. The frontend renders `label` as the
+    inline chip text (`detail` is only a hover tooltip), so an unmigrated row
+    blows out the Quality column with a full sentence instead of a short chip
+    like "Drifted". The `meta` marker makes this a one-shot, like
+    `_normalize_timestamps` above.
+    """
+    done = conn.execute(
+        "SELECT value FROM meta WHERE key='quality_label_detail_migrated'"
+    ).fetchone()
+    if done:
+        return
+    from llm_compressor.quality import SHORT_LABELS
+
+    for compression_id, score, old_label in conn.execute(
+        "SELECT compression_id, score, label FROM compression_quality "
+        "WHERE detail IS NULL AND label IS NOT NULL"
+    ).fetchall():
+        short = SHORT_LABELS.get(round(score)) if score is not None else None
+        conn.execute(
+            "UPDATE compression_quality SET label = ?, detail = ? WHERE compression_id = ?",
+            (short if short is not None else old_label, old_label, compression_id),
+        )
+    for key, score, old_label in conn.execute(
+        "SELECT key, quality_score, quality_label FROM compression_cache "
+        "WHERE quality_detail IS NULL AND quality_label IS NOT NULL"
+    ).fetchall():
+        short = SHORT_LABELS.get(round(score)) if score is not None else None
+        conn.execute(
+            "UPDATE compression_cache SET quality_label = ?, quality_detail = ? WHERE key = ?",
+            (short if short is not None else old_label, old_label, key),
+        )
+    conn.execute(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES ('quality_label_detail_migrated', ?)",
+        (datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds"),),
+    )
+    conn.commit()
+
+
 def utc_now() -> str:
     """Naive ISO-8601 UTC -- the one timestamp format written to the database.
 
@@ -184,6 +228,43 @@ def init_db(path: str):
         """
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_cache_last_hit ON compression_cache(last_hit)")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS compression_quality (
+            compression_id INTEGER PRIMARY KEY REFERENCES compressions(id),
+            score           REAL,
+            label           TEXT,
+            detail          TEXT,
+            confidence      REAL,
+            flagged         INTEGER NOT NULL DEFAULT 0,
+            judged_at       TEXT
+        )
+        """
+    )
+    try:
+        conn.execute("ALTER TABLE compression_cache ADD COLUMN quality_score REAL")
+        conn.execute("ALTER TABLE compression_cache ADD COLUMN quality_label TEXT")
+        conn.execute("ALTER TABLE compression_cache ADD COLUMN quality_flagged INTEGER DEFAULT 0")
+    except Exception:
+        pass  # columns already exist
+    try:
+        conn.execute("ALTER TABLE compression_quality ADD COLUMN detail TEXT")
+    except Exception:
+        pass  # column already exists
+    try:
+        conn.execute("ALTER TABLE compression_cache ADD COLUMN quality_detail TEXT")
+    except Exception:
+        pass  # column already exists
+    try:
+        # Display-only JSON blob (probabilities/usage/model) from the judge
+        # response -- see quality.py's `meta` comment. Not on compression_cache:
+        # the info-button panel it feeds reads from the compressions listing
+        # (keyed by compression_id), and a cache entry can be judged from any
+        # one of many compression rows sharing it, so there's no single "the"
+        # meta to store per cache key the way score/label/detail are.
+        conn.execute("ALTER TABLE compression_quality ADD COLUMN meta TEXT")
+    except Exception:
+        pass  # column already exists
     try:
         conn.execute("ALTER TABLE trackers ADD COLUMN closed_at TEXT")
     except Exception:
@@ -224,6 +305,7 @@ def init_db(path: str):
     except Exception:
         pass  # column already exists
     _normalize_timestamps(conn)
+    _migrate_quality_label_detail_split(conn)
     # Mark when caching went live so hit-ratio stats can exclude the pre-feature
     # backlog of misses. Set once, never overwritten (INSERT OR IGNORE).
     conn.execute(

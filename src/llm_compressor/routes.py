@@ -17,6 +17,7 @@ first test.
 """
 
 import copy
+import json
 import math
 import os
 import threading
@@ -562,6 +563,43 @@ async def langfuse_status():
     return JSONResponse(content=langfuse_tracer.tracer.status())
 
 
+@app.get("/admin/quality-status")
+async def quality_status():
+    from llm_compressor import quality  # local import ok; module is light
+
+    return JSONResponse(content=quality.judge.status())
+
+
+@app.post("/admin/quality/judge/{compression_id}")
+async def judge_compression_now(compression_id: int):
+    """On-demand judging for the per-row "Judge" button in the session detail
+    view. Unlike the sampled fire-and-forget path in compress_text(), this is
+    awaited directly so the frontend gets the verdict back in the response
+    instead of polling for it. No cache_key is threaded through here -- this
+    judges the one compression row, not the shared cache entry behind it (if
+    any); a matching cache hit is still eligible for its own sampled roll."""
+    if db._db_conn is None:
+        return JSONResponse({"error": "db not ready"}, status_code=503)
+    from llm_compressor import quality  # local import ok; module is light
+
+    if not quality.judge.enabled:
+        return JSONResponse({"error": "quality judging not enabled"}, status_code=503)
+
+    row = db._db_conn.execute(
+        "SELECT original_text, compressed_text FROM compression_texts WHERE compression_id=?",
+        (compression_id,),
+    ).fetchone()
+    if row is None:
+        return JSONResponse({"error": "compression text not found"}, status_code=404)
+
+    result = await quality.judge.judge_now(
+        compression_id, row["original_text"], row["compressed_text"]
+    )
+    if result is None:
+        return JSONResponse({"error": "judging failed"}, status_code=502)
+    return JSONResponse(content=result)
+
+
 @app.patch("/session/{session_id}/name")
 async def rename_session_endpoint(session_id: str, request: Request):
     body = await request.json()
@@ -574,6 +612,24 @@ async def rename_session_endpoint(session_id: str, request: Request):
     if not ok:
         return JSONResponse({"error": "session not found"}, status_code=404)
     return JSONResponse({"ok": True, "display_name": name, "name_source": "manual"})
+
+
+def _row_with_parsed_meta(row) -> dict:
+    """`dict(row)`, but with `meta` decoded from its stored JSON-text form.
+
+    `compression_quality.meta` is written as `json.dumps(...)` (quality.py's
+    `_judge`, a display-only blob -- see its comment) or is NULL for
+    never-judged rows and rows judged before the column existed. The frontend
+    (qualityMetaPanel() in session_detail.html) wants a plain object either
+    way, so unjudged/pre-migration rows fall back to `{}` rather than null.
+    """
+    d = dict(row)
+    raw = d.get("meta")
+    try:
+        d["meta"] = json.loads(raw) if raw else {}
+    except (TypeError, ValueError):
+        d["meta"] = {}
+    return d
 
 
 @app.get("/session/{session_id}/compressions")
@@ -594,10 +650,12 @@ async def get_session_compressions(session_id: str, page: int = 1, page_size: in
         """
         SELECT c.id, c.ts, c.model, c.original_tokens, c.compressed_tokens,
                ROUND((c.original_tokens - c.compressed_tokens) * 100.0 / c.original_tokens, 1) AS savings_pct,
-               c.latency_ms,
+               c.latency_ms, c.role,
+               cq.score, cq.label, cq.detail, cq.confidence, cq.flagged, cq.meta,
                ct.original_text, ct.compressed_text
         FROM compressions c
         LEFT JOIN compression_texts ct ON ct.compression_id = c.id
+        LEFT JOIN compression_quality cq ON cq.compression_id = c.id
         WHERE c.session_id = ?
         ORDER BY c.id DESC
         LIMIT ? OFFSET ?
@@ -607,7 +665,7 @@ async def get_session_compressions(session_id: str, page: int = 1, page_size: in
     pages = math.ceil(total / page_size) if page_size > 0 else 0
     return JSONResponse(
         {
-            "items": [dict(r) for r in rows],
+            "items": [_row_with_parsed_meta(r) for r in rows],
             "total": total,
             "page": page,
             "page_size": page_size,

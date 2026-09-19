@@ -23,6 +23,7 @@ proxy.py imports both compression.py and sessions.py at top level).
 import hashlib
 import json
 import os
+import random
 import re
 import time
 from collections import OrderedDict
@@ -63,12 +64,13 @@ class CompressionCache:
             return self._mem[key]
         if self._conn is not None:
             row = self._conn.execute(
-                "SELECT compressed_text, original_tokens, compressed_tokens "
+                "SELECT compressed_text, original_tokens, compressed_tokens, "
+                "quality_score, quality_label, quality_flagged, quality_detail "
                 "FROM compression_cache WHERE key = ?",
                 (key,),
             ).fetchone()
             if row is not None:
-                entry = (row[0], row[1], row[2])
+                entry = (row[0], row[1], row[2], row[3], row[4], row[5], row[6])
                 self._mem_put(key, entry)
                 self._touch(key)
                 return entry
@@ -88,6 +90,29 @@ class CompressionCache:
             )
             self._evict_disk()
             self._conn.commit()
+
+    def update_quality(self, key: str, score, label, detail, flagged) -> None:
+        """Patch a resident entry's quality fields in place after judging finishes.
+        Only touches `_mem`; the disk row is already updated by quality.py's
+        caller. Without this, an entry that's already in memory stays a stale
+        (unjudged) tuple for the rest of the process's life -- get() never
+        re-reads disk for a key it already has -- so every future hit on a hot
+        key would keep re-rolling CACHE_SAMPLE_RATE and re-judging it forever.
+        A no-op if the key isn't resident (already evicted, or never cached
+        in-process); the disk row is still correct for the next cold load."""
+        entry = self._mem.get(key)
+        if entry is None:
+            return
+        compressed_text, original_tokens, compressed_tokens = entry[0], entry[1], entry[2]
+        self._mem[key] = (
+            compressed_text,
+            original_tokens,
+            compressed_tokens,
+            score,
+            label,
+            flagged,
+            detail,
+        )
 
     def _mem_put(self, key, entry):
         self._mem[key] = entry
@@ -207,14 +232,23 @@ def compress_text(text: str, session_id: str, role: str = "user") -> str:
     # match the established local-import convention for sessions.py used
     # elsewhere in this codebase (proxy.py's proxy_messages/session_dashboard
     # routes) and to avoid re-litigating import-order safety here.
-    from llm_compressor import sessions
+    from llm_compressor import quality, sessions
 
     if _cache is not None:
         hit = _cache.get(key)
         if hit is not None:
-            compressed, orig, comp = hit
+            # `hit` is 3-tuple wide for an entry that was `put()` this run (no
+            # quality data yet) and 7-tuple wide once promoted from disk, where
+            # the cache table's quality_* columns are carried along -- see
+            # CompressionCache.get(). Unpack the quality fields defensively
+            # rather than assuming every hit has all seven elements.
+            compressed, orig, comp = hit[0], hit[1], hit[2]
+            q_score = hit[3] if len(hit) > 3 else None
+            q_label = hit[4] if len(hit) > 4 else None
+            q_flagged = hit[5] if len(hit) > 5 else None
+            q_detail = hit[6] if len(hit) > 6 else None
             print(f"[cache] hit {orig} → {comp} tokens [{session_id[:8]}] role={role}")
-            sessions.record_compression(
+            compression_id = sessions.record_compression(
                 session_id,
                 orig,
                 comp,
@@ -225,6 +259,28 @@ def compress_text(text: str, session_id: str, role: str = "user") -> str:
                 active_backend=active,
                 cache_hit=1,
             )
+            if compression_id is not None and q_score is not None:
+                try:
+                    from llm_compressor import db
+
+                    if db._db_conn is not None:
+                        db._db_conn.execute(
+                            "INSERT OR REPLACE INTO compression_quality "
+                            "(compression_id, score, label, detail, flagged, judged_at) "
+                            "VALUES (?,?,?,?,?,?)",
+                            (compression_id, q_score, q_label, q_detail, q_flagged, db.utc_now()),
+                        )
+                        db._db_conn.commit()
+                except Exception as e:
+                    print(f"[quality] failed to copy cached verdict: {e}")
+            elif compression_id is not None and random.random() < quality.CACHE_SAMPLE_RATE:
+                # This key has no verdict yet (q_score is None). Cache hits
+                # dominate traffic, so sampling only the rare miss (as before)
+                # leaves the pre-existing cache permanently "Unjudged" -- roll
+                # a separate, lower-probability dice here to backfill it over
+                # time. Self-limiting: once this key is judged, update_quality()
+                # patches this process's mem entry so it stops rolling again.
+                quality.judge.judge(compression_id, text, compressed, cache_key=key)
             return compressed
 
     t0 = time.perf_counter()
@@ -252,7 +308,7 @@ def compress_text(text: str, session_id: str, role: str = "user") -> str:
         return text
     latency_ms = (time.perf_counter() - t0) * 1000
     print(f"[{model_tag}] {orig} → {comp} tokens [{session_id[:8]}] role={role}")
-    sessions.record_compression(
+    compression_id = sessions.record_compression(
         session_id,
         orig,
         comp,
@@ -263,6 +319,8 @@ def compress_text(text: str, session_id: str, role: str = "user") -> str:
         active_backend=active,
         cache_hit=0,
     )
+    if compression_id is not None and random.random() < quality.SAMPLE_RATE:
+        quality.judge.judge(compression_id, text, compressed, cache_key=key)
     if _cache is not None:
         _cache.put(key, compressed, orig, comp, model_tag, rate)
     return compressed

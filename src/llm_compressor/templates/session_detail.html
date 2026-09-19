@@ -25,6 +25,7 @@
 #compressions-table tbody tr[data-id]:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 tr.expanded-detail td { background: var(--surface-sunken); }
 .panel + .panel { margin-top: var(--sp-4); }
+#compressions-controls input[type="search"] { min-width: 220px; }
 
 /* The Command column carries arbitrarily long shell lines and wins the fight
    for width, squeezing Time until "51s ago" breaks across two lines and every
@@ -32,6 +33,46 @@ tr.expanded-detail td { background: var(--surface-sunken); }
    few pixels it needs and let the command keep wrapping. */
 #rtk-table td:first-child,
 #compressions-table td:first-child { white-space: nowrap; }
+
+/* Compact inline variant for the per-row "Judge" button in the Quality
+   column -- no .btn.small exists globally (tokens.py's .btn is sized for
+   panel-head/toolbar use), so this stays scoped to this page. */
+.quality-judge-btn {
+  padding: 1px 7px;
+  font-size: var(--fs-sm);
+  border-radius: 8px;
+}
+
+/* Compact circular (i) button revealing the quality-detail sentence inline
+   -- .icon-btn is sized for the 28px header toolbar, too big to sit next to
+   a table chip, so this scopes it down. */
+.quality-info-btn {
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  vertical-align: middle;
+  font-size: 10px;
+  font-style: italic;
+  font-family: Georgia, serif;
+  line-height: 1;
+  border-radius: 50%;
+  border-color: var(--border);
+}
+.quality-detail-text {
+  margin-top: var(--sp-1);
+  max-width: 32ch;
+  white-space: normal;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+.quality-meta-text {
+  margin-top: 2px;
+  max-width: 32ch;
+  white-space: normal;
+  font-size: var(--fs-sm);
+  color: var(--text-faint);
+}
+.quality-meta-text .sep { margin: 0 var(--sp-1); }
 
 <!--#BODY-->
 <div id="session-root">
@@ -70,21 +111,29 @@ tr.expanded-detail td { background: var(--surface-sunken); }
   </div>
 
   <div class="panel" id="compressions-panel">
-    <div class="panel-head"><h2>Compressions</h2></div>
+    <div class="panel-head">
+      <h2>Compressions</h2>
+      <div class="row" id="compressions-controls">
+        <input type="search" id="compressions-search" placeholder="Search original/compressed text&hellip;" aria-label="Search compression text">
+        <button type="button" class="btn" id="expand-all-btn" aria-pressed="false">Expand all</button>
+      </div>
+    </div>
     <div class="table-wrap">
       <table class="data" id="compressions-table">
         <thead>
           <tr>
             <th>Time</th>
             <th>Model</th>
+            <th>Role</th>
             <th class="num">Original</th>
             <th class="num">Compressed</th>
             <th class="num">Savings</th>
             <th class="num">Latency</th>
+            <th>Quality</th>
           </tr>
         </thead>
         <tbody id="compressions-rows">
-          <tr><td colspan="6" class="empty">Loading&hellip;</td></tr>
+          <tr><td colspan="8" class="empty">Loading&hellip;</td></tr>
         </tbody>
       </table>
     </div>
@@ -218,6 +267,7 @@ tr.expanded-detail td { background: var(--surface-sunken); }
       ['Tokens saved', UI.fmt(alltime.tokens_saved || 0), savedExact],
       ['Avg savings', UI.fmtPct(alltime.avg_savings_pct), null],
       ['Avg ratio', alltime.avg_ratio ? Number(alltime.avg_ratio).toFixed(2) + '×' : '—', null],
+      ['Avg quality', alltime.avg_quality ? Number(alltime.avg_quality).toFixed(2) : '—', null],
       ['p95 latency', UI.fmtMs(alltime.p95_latency_ms), null],
     ];
     kpiRowEl.innerHTML = tiles.map(function (t) {
@@ -419,7 +469,29 @@ tr.expanded-detail td { background: var(--surface-sunken); }
   var compressionsState = { page: 0, perPage: 25 };
   var compressionsRowsEl = document.getElementById('compressions-rows');
   var compressionsPagerEl = document.getElementById('compressions-pager');
-  var expandedId = null;
+  var compressionsSearchEl = document.getElementById('compressions-search');
+  var expandAllBtn = document.getElementById('expand-all-btn');
+  var lastCompressionItems = [];
+  // id -> true/false: an explicit per-row override, set by clicking a row.
+  // A row with no entry here falls back to the `expandAll` default, so
+  // "Expand all" is a bulk default rather than a lock -- individual rows
+  // stay clickable and can still be collapsed (or re-expanded) on their own.
+  var expandedIds = {};
+  var expandAll = false;  // default expanded state for rows with no override
+  // id -> true/false: whether the quality-detail sentence (behind the (i)
+  // button in the Quality column) is currently shown inline for that row.
+  // Independent of expandedIds above -- toggling a row's prompt-pane detail
+  // doesn't affect this, and vice versa.
+  var expandedDetailIds = {};
+  var compressionsQuery = '';
+
+  var ROLE_LABEL = { user: 'User', system: 'System' };
+
+  function roleChip(role) {
+    var r = role || 'user';
+    var label = ROLE_LABEL[r] || (r.charAt(0).toUpperCase() + r.slice(1));
+    return '<span class="chip' + (r === 'system' ? ' accent' : '') + '">' + UI.escapeHtml(label) + '</span>';
+  }
 
   function promptPane(label, text) {
     return '<div class="prompt-pane">' +
@@ -428,53 +500,201 @@ tr.expanded-detail td { background: var(--surface-sunken); }
       '<pre class="prompt-text">' + UI.escapeHtml(text) + '</pre></div>';
   }
 
-  function toggleExpand(tr, items) {
-    var id = Number(tr.getAttribute('data-id'));
-    var existing = compressionsRowsEl.querySelector('tr.expanded-detail');
-    if (existing) existing.remove();
-    compressionsRowsEl.querySelectorAll('tr[data-id]').forEach(function (t) {
-      t.setAttribute('aria-expanded', 'false');
-    });
-    if (expandedId === id) { expandedId = null; return; }
-    expandedId = id;
-    tr.setAttribute('aria-expanded', 'true');
-    var c = items.filter(function (x) { return x.id === id; })[0];
-    if (!c) return;
-    var detail = document.createElement('tr');
-    detail.className = 'expanded-detail';
+  function detailRowHtml(c) {
     if (c.original_text === null || c.original_text === undefined ||
         c.compressed_text === null || c.compressed_text === undefined) {
-      detail.innerHTML = '<td colspan="6" class="empty">Prompt text not captured for this row.</td>';
-    } else {
-      detail.innerHTML = '<td colspan="6"><div class="prompt-panes">' +
-        promptPane('Original', c.original_text) + promptPane('Compressed', c.compressed_text) +
-        '</div></td>';
+      return '<tr class="expanded-detail"><td colspan="8" class="empty">Prompt text not captured for this row.</td></tr>';
     }
-    tr.insertAdjacentElement('afterend', detail);
+    return '<tr class="expanded-detail"><td colspan="8"><div class="prompt-panes">' +
+      promptPane('Original', c.original_text) + promptPane('Compressed', c.compressed_text) +
+      '</div></td></tr>';
+  }
+
+  // Set from /admin/quality-status at boot; gates whether the per-row
+  // "Judge" button renders at all (no point offering it with no API key).
+  var qualityEnabled = false;
+
+  function qualityChip(c) {
+    // `c.label` is the short chip text (e.g. "Preserved"); `c.detail` is
+    // TypeSafe's full criteria sentence for that verdict. The `title` attr
+    // still carries it as a native hover tooltip (cheap, works everywhere
+    // hover does), but hover alone isn't discoverable on touch and isn't
+    // keyboard-operable -- qualityInfoButton() below gives it a real,
+    // visible affordance too.
+    var titleAttr = c.detail ? ' title="' + UI.escapeHtml(c.detail) + '"' : '';
+    if (c.flagged) {
+      return '<span class="chip bad"' + titleAttr + '>' + UI.escapeHtml(c.label || 'Flagged') + '</span>';
+    }
+    if (c.score === null || c.score === undefined) {
+      return '<span class="chip">Unjudged</span>';
+    }
+    if (Math.round(c.score) === 1) {
+      return '<span class="chip warn"' + titleAttr + '>' + UI.escapeHtml(c.label || 'Drifted') + '</span>';
+    }
+    return '<span class="chip good"' + titleAttr + '>' + UI.escapeHtml(c.label || 'OK') + '</span>';
+  }
+
+  function qualityInfoButton(c) {
+    // Nothing to reveal for unjudged rows (qualityChip already skips the
+    // title attr there too).
+    if (!c.detail) return '';
+    var expanded = !!expandedDetailIds[c.id];
+    return ' <button type="button" class="icon-btn quality-info-btn" data-detail-id="' + c.id +
+      '" aria-expanded="' + expanded + '" aria-label="' +
+      (expanded ? 'Hide' : 'Show') + ' quality detail">i</button>';
+  }
+
+  // Mirrors quality.py's SHORT_LABELS -- keys the judge's per-level
+  // `probabilities` map (string keys, since that's how they round-trip
+  // through JSON) to the same short chip text used elsewhere on this page.
+  var QUALITY_LEVEL_LABELS = { '0': 'Lost', '1': 'Drifted', '2': 'Preserved' };
+
+  function qualityMetaText(c) {
+    var meta = c.meta;
+    if (!meta) return '';
+    var bits = [];
+    if (c.confidence !== null && c.confidence !== undefined) {
+      bits.push('Confidence ' + UI.fmtPct(Number(c.confidence) * 100, 0));
+    }
+    if (meta.probabilities && Object.keys(meta.probabilities).length) {
+      var probBits = Object.keys(meta.probabilities).sort().map(function (k) {
+        var pct = UI.fmtPct(Number(meta.probabilities[k]) * 100, 0);
+        return UI.escapeHtml(QUALITY_LEVEL_LABELS[k] || k) + ' ' + pct;
+      });
+      bits.push(probBits.join(' · '));
+    }
+    if (meta.usage && (meta.usage.input_tokens || meta.usage.output_tokens)) {
+      bits.push(UI.fmtExact(meta.usage.input_tokens) + ' → ' + UI.fmtExact(meta.usage.output_tokens) + ' tokens (judge)');
+    }
+    if (meta.model) {
+      bits.push(UI.escapeHtml(meta.model));
+    }
+    if (!bits.length) return '';
+    return '<div class="quality-meta-text">' + bits.join('<span class="sep" aria-hidden="true">&middot;</span>') + '</div>';
+  }
+
+  function qualityDetailText(c) {
+    if (!c.detail || !expandedDetailIds[c.id]) return '';
+    return '<div class="quality-detail-text">' + UI.escapeHtml(c.detail) + '</div>' + qualityMetaText(c);
+  }
+
+  function qualityCell(c) {
+    var chip = qualityChip(c) + qualityInfoButton(c) + qualityDetailText(c);
+    if (!qualityEnabled || c.score !== null && c.score !== undefined) {
+      return chip;
+    }
+    // Unjudged and judging is available -- offer an on-demand verdict
+    // instead of waiting on the sampled backfill to eventually roll this row.
+    return chip + ' <button type="button" class="btn quality-judge-btn" data-judge-id="' +
+      c.id + '">Judge</button>';
+  }
+
+  function isExpanded(id) {
+    return typeof expandedIds[id] === 'boolean' ? expandedIds[id] : expandAll;
+  }
+
+  function matchesSearch(c) {
+    if (!compressionsQuery) return true;
+    return (c.original_text && c.original_text.toLowerCase().indexOf(compressionsQuery) !== -1) ||
+      (c.compressed_text && c.compressed_text.toLowerCase().indexOf(compressionsQuery) !== -1);
+  }
+
+  function toggleExpand(id) {
+    expandedIds[id] = !isExpanded(id);
+    renderCompressions(lastCompressionItems);
+  }
+
+  function toggleQualityDetail(id) {
+    expandedDetailIds[id] = !expandedDetailIds[id];
+    renderCompressions(lastCompressionItems);
+  }
+
+  function toggleExpandAll() {
+    expandAll = !expandAll;
+    expandedIds = {};
+    expandAllBtn.setAttribute('aria-pressed', String(expandAll));
+    expandAllBtn.textContent = expandAll ? 'Collapse all' : 'Expand all';
+    renderCompressions(lastCompressionItems);
   }
 
   function renderCompressions(items) {
-    expandedId = null;
+    lastCompressionItems = items;
     if (!items.length) {
-      compressionsRowsEl.innerHTML = '<tr><td colspan="6" class="empty">No compressions recorded yet.</td></tr>';
+      compressionsRowsEl.innerHTML = '<tr><td colspan="8" class="empty">No compressions recorded yet.</td></tr>';
       return;
     }
-    compressionsRowsEl.innerHTML = items.map(function (c) {
-      return '<tr data-id="' + c.id + '" tabindex="0" role="button" aria-expanded="false">' +
+    var visible = items.filter(matchesSearch);
+    if (!visible.length) {
+      compressionsRowsEl.innerHTML = '<tr><td colspan="8" class="empty">No rows match &ldquo;' +
+        UI.escapeHtml(compressionsSearchEl.value.trim()) + '&rdquo;.</td></tr>';
+      return;
+    }
+    compressionsRowsEl.innerHTML = visible.map(function (c) {
+      var expanded = isExpanded(c.id);
+      var row = '<tr data-id="' + c.id + '" tabindex="0" role="button" aria-expanded="' + expanded + '">' +
         '<td title="' + UI.escapeHtml(UI.fmtTime(c.ts)) + '">' + UI.escapeHtml(UI.ago(c.ts)) + '</td>' +
         '<td class="mono">' + UI.escapeHtml(c.model || '—') + '</td>' +
+        '<td>' + roleChip(c.role) + '</td>' +
         '<td class="num">' + UI.fmtExact(c.original_tokens) + '</td>' +
         '<td class="num">' + UI.fmtExact(c.compressed_tokens) + '</td>' +
         '<td class="num">' + UI.fmtPct(c.savings_pct) + '</td>' +
-        '<td class="num">' + UI.fmtMs(c.latency_ms) + '</td></tr>';
+        '<td class="num">' + UI.fmtMs(c.latency_ms) + '</td>' +
+        '<td>' + qualityCell(c) + '</td></tr>';
+      return row + (expanded ? detailRowHtml(c) : '');
     }).join('');
     compressionsRowsEl.querySelectorAll('tr[data-id]').forEach(function (tr) {
-      tr.addEventListener('click', function () { toggleExpand(tr, items); });
+      var id = Number(tr.getAttribute('data-id'));
+      tr.addEventListener('click', function () { toggleExpand(id); });
       tr.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpand(tr, items); }
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpand(id); }
+      });
+    });
+    // Attached alongside the row listeners above (fresh on every render, same
+    // as those) rather than delegated from compressionsRowsEl -- a delegated
+    // listener there would fire *after* the row's own click listener above
+    // (bubbling button -> td -> tr -> compressionsRowsEl), so stopPropagation
+    // at the container would already be too late to stop toggleExpand().
+    compressionsRowsEl.querySelectorAll('.quality-judge-btn').forEach(function (btn) {
+      btn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        judgeRow(Number(btn.getAttribute('data-judge-id')), btn);
+      });
+    });
+    compressionsRowsEl.querySelectorAll('.quality-info-btn').forEach(function (btn) {
+      btn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        toggleQualityDetail(Number(btn.getAttribute('data-detail-id')));
       });
     });
   }
+
+  function judgeRow(id, btn) {
+    if (btn) { btn.disabled = true; btn.textContent = 'Judging…'; }
+    UI.postJSON('/admin/quality/judge/' + id, {})
+      .then(function (result) {
+        var item = lastCompressionItems.find(function (c) { return c.id === id; });
+        if (item) {
+          item.score = result.score;
+          item.label = result.label;
+          item.detail = result.detail;
+          item.confidence = result.confidence;
+          item.flagged = result.flagged;
+          item.meta = result.meta;
+        }
+        renderCompressions(lastCompressionItems);
+      })
+      .catch(function (err) {
+        if (btn) { btn.disabled = false; btn.textContent = 'Judge'; }
+        console.error('[quality] on-demand judge failed:', err);
+      });
+  }
+
+  compressionsSearchEl.addEventListener('input', function () {
+    compressionsQuery = compressionsSearchEl.value.trim().toLowerCase();
+    renderCompressions(lastCompressionItems);
+  });
+
+  expandAllBtn.addEventListener('click', toggleExpandAll);
 
   function loadCompressions(page) {
     page = page || 0;
@@ -482,6 +702,8 @@ tr.expanded-detail td { background: var(--surface-sunken); }
       (page + 1) + '&page_size=' + compressionsState.perPage)
       .then(function (data) {
         compressionsState.page = page;
+        expandedIds = {};
+        expandedDetailIds = {};
         renderCompressions(data.items || []);
         UI.buildPager(compressionsPagerEl, { page: page, perPage: compressionsState.perPage, total: data.total || 0 }, loadCompressions);
       });
@@ -516,8 +738,20 @@ tr.expanded-detail td { background: var(--surface-sunken); }
 
   /* ---- boot ---- */
 
+  function loadQualityStatus() {
+    return UI.getJSON('/admin/quality-status')
+      .then(function (data) {
+        qualityEnabled = !!(data && data.enabled);
+        // Re-render so already-loaded Unjudged rows pick up the Judge button
+        // once status resolves (it fires after loadCompressions below).
+        renderCompressions(lastCompressionItems);
+      })
+      .catch(function () { qualityEnabled = false; });
+  }
+
   loadCompressions(0);
   loadRtk(0);
+  loadQualityStatus();
 
   // UI.poller.add fires each task immediately on registration, so these
   // also cover the initial load — no separate call needed here.
