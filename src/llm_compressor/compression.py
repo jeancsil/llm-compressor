@@ -264,7 +264,7 @@ async def compress_text(text: str, session_id: str, role: str = "user") -> str:
         raw = verdict.get("score") if verdict else None
         gated = 1 if quality.gate_decision(raw) == "block" else 0
         forwarded = text if gated else compressed
-        sessions.record_compression(
+        compression_id = sessions.record_compression(
             session_id,
             orig,
             comp,
@@ -276,6 +276,14 @@ async def compress_text(text: str, session_id: str, role: str = "user") -> str:
             cache_hit=cache_hit,
             gated=gated,
         )
+        if verdict is not None and compression_id is not None:
+            # Backfill compression_quality for THIS row so the per-row quality
+            # chip (LEFT JOIN on compression_id -- routes.py) reflects the
+            # verdict the gate already obtained, whether fresh from Jev
+            # (judge_now was called with compression_id=None, so it couldn't
+            # write this row itself) or backfilled from a warm cache hit's
+            # already-stored verdict (the instant-gate branch below).
+            _record_gate_verdict(compression_id, verdict)
         return forwarded
 
     if _cache is not None:
@@ -288,10 +296,22 @@ async def compress_text(text: str, session_id: str, role: str = "user") -> str:
             # rather than assuming every hit has all seven elements.
             compressed, orig, comp = hit[0], hit[1], hit[2]
             q_score = hit[3] if len(hit) > 3 else None
+            q_label = hit[4] if len(hit) > 4 else None
+            q_flagged = hit[5] if len(hit) > 5 else None
+            q_detail = hit[6] if len(hit) > 6 else None
             print(f"[cache] hit {orig} → {comp} tokens [{session_id[:8]}] role={role}")
             if q_score is not None:
                 # Warm hit WITH a stored verdict: gate instantly, no Jev call.
-                return await _finish(compressed, orig, comp, 1, {"score": q_score})
+                # Carry the cache row's label/detail/flagged along too, not
+                # just the score, so the backfilled compression_quality row
+                # (see _finish) gets the real verdict instead of defaults.
+                synthetic_verdict = {
+                    "score": q_score,
+                    "label": q_label,
+                    "detail": q_detail,
+                    "flagged": q_flagged,
+                }
+                return await _finish(compressed, orig, comp, 1, synthetic_verdict)
             # Warm hit WITHOUT a verdict (pre-gate row / never judged): judge
             # once now, then gate. The verdict lands in compression_cache
             # (see judge_now/_judge) so the *next* hit takes the branch above.
@@ -331,6 +351,44 @@ async def compress_text(text: str, session_id: str, role: str = "user") -> str:
         _cache.put(key, compressed, orig, comp, model_tag, rate)
     verdict = await _verdict_for(compressed, key)
     return await _finish(compressed, orig, comp, 0, verdict, latency_ms=latency_ms)
+
+
+def _record_gate_verdict(compression_id: int, verdict: dict) -> None:
+    """Best-effort: persist `verdict` to `compression_quality` for the row
+    `compress_text()`'s gate just recorded, keyed on its real compression_id.
+
+    `judge_now(None, ...)` (the gate's call, in `_verdict_for` above) cannot
+    write this row itself -- the compression row doesn't exist yet when it's
+    called. This is the other half: once `sessions.record_compression()` has
+    returned a real id, back-fill `compression_quality` so the per-row
+    quality chip (`routes.py`'s `LEFT JOIN compression_quality ON
+    compression_id`) reflects the verdict the gate already obtained, whether
+    freshly judged or carried over from a warm cache hit's stored verdict.
+    Mirrors quality.py's own INSERT; never raises into the proxy path.
+    """
+    try:
+        from llm_compressor import db
+
+        if db._db_conn is None:
+            return
+        db._db_conn.execute(
+            "INSERT OR REPLACE INTO compression_quality "
+            "(compression_id, score, label, detail, confidence, flagged, judged_at, meta) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (
+                compression_id,
+                verdict.get("score"),
+                verdict.get("label"),
+                verdict.get("detail"),
+                verdict.get("confidence"),
+                verdict.get("flagged") or 0,
+                db.utc_now(),
+                json.dumps(verdict.get("meta") or {}),
+            ),
+        )
+        db._db_conn.commit()
+    except Exception as exc:
+        print(f"[quality] failed to persist gate verdict: {exc}")
 
 
 def _compress_with(active: dict, text: str):

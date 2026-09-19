@@ -794,3 +794,64 @@ def test_gate_records_ungated_row_on_allow(monkeypatch, fresh_db):
         "SELECT original_tokens, compressed_tokens, gated FROM compressions ORDER BY id DESC LIMIT 1"
     ).fetchone()
     assert tuple(row) == (100, 40, 0)
+
+
+# --- fix-up: compression_quality must be backfilled for auto-judged rows,
+# both on a fresh miss and on the instant-gate (warm-hit-with-verdict) branch,
+# or the per-row quality chip (LEFT JOIN on compression_id) never sees the
+# verdict the gate already obtained. ---
+
+
+def test_gate_backfills_compression_quality_on_miss(monkeypatch, fresh_db):
+    """judge_now(None, ...) can't write compression_quality itself (no
+    compression_id exists yet when it's called from the gate) -- _finish must
+    back-fill it once sessions.record_compression() hands back a real id."""
+    _stub_compress(monkeypatch)
+    _stub_judge(
+        monkeypatch,
+        {
+            "score": 2.0,
+            "label": "Preserved",
+            "detail": "meaning fully preserved",
+            "confidence": 0.9,
+            "flagged": 0,
+            "meta": {"model": "jev-latest"},
+        },
+    )
+    asyncio.run(compression.compress_text("word " * 60, "sess"))
+
+    comp_id = fresh_db.execute("SELECT id FROM compressions ORDER BY id DESC LIMIT 1").fetchone()[
+        0
+    ]
+    row = fresh_db.execute(
+        "SELECT score, label, detail, confidence, flagged FROM compression_quality "
+        "WHERE compression_id=?",
+        (comp_id,),
+    ).fetchone()
+    assert tuple(row) == (2.0, "Preserved", "meaning fully preserved", 0.9, 0)
+
+
+def test_gate_backfills_compression_quality_on_warm_hit_with_verdict(monkeypatch, fresh_db):
+    """Same fix, exercised via the instant-gate branch (a cache hit whose row
+    already carries a stored verdict, so no Jev call happens). The synthetic
+    verdict built from the cache row must carry label/detail/flagged -- not
+    just score -- so the backfilled compression_quality row has the real
+    verdict, not defaults."""
+    cache = compression.CompressionCache(fresh_db, max_mem=10, max_rows=100)
+    monkeypatch.setattr(compression, "_cache", cache)
+
+    text = "word " * 60
+    key = compression._cache_key(text, "llmlingua2", 0.5)
+    cache.put(key, "COMPRESSED", 100, 40, "llmlingua2", 0.5)
+    cache.update_quality(key, 1.0, "Drifted", "meaning drifted", 1)  # warm verdict: Drifted
+
+    asyncio.run(compression.compress_text(text, "sess"))
+
+    comp_id = fresh_db.execute("SELECT id FROM compressions ORDER BY id DESC LIMIT 1").fetchone()[
+        0
+    ]
+    row = fresh_db.execute(
+        "SELECT score, label, detail, flagged FROM compression_quality WHERE compression_id=?",
+        (comp_id,),
+    ).fetchone()
+    assert tuple(row) == (1.0, "Drifted", "meaning drifted", 1)
