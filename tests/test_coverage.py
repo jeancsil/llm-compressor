@@ -63,6 +63,7 @@ Coverage gaps addressed (by proxy.py line range):
   1341-386 proxy_messages endpoint (streaming + non-streaming + errors)
 """
 
+import asyncio
 import platform
 import sqlite3
 import sys
@@ -536,7 +537,7 @@ def test_compress_text_short_unchanged(monkeypatch):
     """compress_text returns text unchanged when len <= 200."""
     proxy = _fresh_proxy(monkeypatch)
     short = "short"
-    assert proxy.compress_text(short, "sess") == short
+    assert asyncio.run(proxy.compress_text(short, "sess")) == short
 
 
 def test_compress_text_no_backend_unchanged(monkeypatch):
@@ -548,7 +549,7 @@ def test_compress_text_no_backend_unchanged(monkeypatch):
     monkeypatch.setattr(proxy, "backend_system", None)
 
     long_text = "word " * 50
-    assert proxy.compress_text(long_text, "sess") == long_text
+    assert asyncio.run(proxy.compress_text(long_text, "sess")) == long_text
 
 
 def test_compress_text_error_returns_original(monkeypatch):
@@ -568,7 +569,7 @@ def test_compress_text_error_returns_original(monkeypatch):
     monkeypatch.setattr(proxy, "_cache", None)
 
     long_text = "word " * 50
-    assert proxy.compress_text(long_text, "sess") == long_text
+    assert asyncio.run(proxy.compress_text(long_text, "sess")) == long_text
 
 
 # ===========================================================================
@@ -660,7 +661,7 @@ def test_compress_system_field_string(monkeypatch):
     monkeypatch.setattr(proxy, "_db_conn", None)
     monkeypatch.setattr(proxy, "_cache", None)
 
-    result = proxy.compress_system_field("system instruction " * 20, "sess")
+    result = asyncio.run(proxy.compress_system_field("system instruction " * 20, "sess"))
     assert isinstance(result, str)
 
 
@@ -682,7 +683,7 @@ def test_compress_system_field_list_with_text_and_non_text(monkeypatch):
         {"type": "text", "text": "instruction " * 20},
         {"type": "image", "source": {"type": "url", "url": "http://example.com/img.png"}},
     ]
-    result = proxy.compress_system_field(system_list, "sess")
+    result = asyncio.run(proxy.compress_system_field(system_list, "sess"))
     assert isinstance(result, list)
     assert result[1] == system_list[1]  # image block unchanged
 
@@ -690,8 +691,8 @@ def test_compress_system_field_list_with_text_and_non_text(monkeypatch):
 def test_compress_system_field_other_type(monkeypatch):
     """compress_system_field returns non-string/list values unchanged."""
     proxy = _fresh_proxy(monkeypatch)
-    assert proxy.compress_system_field(None, "sess") is None
-    assert proxy.compress_system_field(42, "sess") == 42
+    assert asyncio.run(proxy.compress_system_field(None, "sess")) is None
+    assert asyncio.run(proxy.compress_system_field(42, "sess")) == 42
 
 
 # ===========================================================================
@@ -705,7 +706,7 @@ def test_compress_messages_skips_assistant(monkeypatch):
     monkeypatch.setattr(proxy, "backend", None)
 
     msgs = [{"role": "assistant", "content": "I am the assistant."}]
-    result = proxy.compress_messages(msgs, "sess")
+    result = asyncio.run(proxy.compress_messages(msgs, "sess"))
     assert result[0]["content"] == "I am the assistant."
 
 
@@ -732,7 +733,7 @@ def test_compress_messages_list_content(monkeypatch):
             ],
         }
     ]
-    result = proxy.compress_messages(msgs, "sess")
+    result = asyncio.run(proxy.compress_messages(msgs, "sess"))
     # non-text block passed through unchanged
     assert result[0]["content"][1]["url"] == "http://example.com/img.png"
 
@@ -743,7 +744,7 @@ def test_compress_messages_non_string_non_list_content(monkeypatch):
     monkeypatch.setattr(proxy, "backend", None)
 
     msgs = [{"role": "user", "content": 42}]
-    result = proxy.compress_messages(msgs, "sess")
+    result = asyncio.run(proxy.compress_messages(msgs, "sess"))
     assert result[0]["content"] == 42
 
 

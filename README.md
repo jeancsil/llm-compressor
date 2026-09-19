@@ -7,6 +7,7 @@
 - **Live dashboard** — overview, per-session drilldown, playground, and settings, in light or dark.
 - **4 compression models** — pick a tradeoff from fast/light to aggressive/precise.
 - **~96% cache hit rate** — repeated system prompts and prior turns are compressed once, then served from cache.
+- **Quality-gated by Jev** — every unique compression is judged; a Lost/Drifted verdict forwards the original text instead of the compressed one.
 - **Stacks with [rtk](https://github.com/rtk-ai/rtk)** — two independent savings layers: shell output + API payload.
 - **Optional Langfuse tracing** — full observability into every compressed request.
 
@@ -189,6 +190,8 @@ Every Anthropic API call is **stateless**: the client resends the full conversat
 | `assistant` messages | **No** | Model reads its own prior reasoning; compressing them causes self-confusion |
 
 Text shorter than 200 characters is passed through untouched — compressing it costs more latency than it saves.
+
+Every unique compression is quality-gated: Jev (TypeSafe) judges whether meaning survived compression, and a **Lost** or **Drifted** verdict forwards the ORIGINAL text instead of the compressed one (a **Preserved** verdict, judging disabled, an error, or a timeout all forward the compressed text — savings-first). See `QUALITY_GATE_TIMEOUT` in CLAUDE.md.
 
 ### Single-model mode (default)
 

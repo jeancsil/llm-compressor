@@ -1,3 +1,4 @@
+import asyncio
 import json
 import sys
 from collections import deque
@@ -252,7 +253,7 @@ def test_compress_text_records_latency(tmp_path, monkeypatch):
     # pointing at an already-closed connection, so reset it explicitly.
     proxy._cache = None
 
-    proxy.compress_text("word " * 50, "sess-test")  # 250 chars → triggers compression
+    asyncio.run(proxy.compress_text("word " * 50, "sess-test"))  # 250 chars → triggers compression
 
     row = proxy._db_conn.execute("SELECT latency_ms FROM compressions").fetchone()
     assert row is not None

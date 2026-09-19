@@ -20,10 +20,10 @@ sessions.py imports this module's sibling `stats`/`backends`/`db`, and
 proxy.py imports both compression.py and sessions.py at top level).
 """
 
+import asyncio
 import hashlib
 import json
 import os
-import random
 import re
 import time
 from collections import OrderedDict
@@ -97,9 +97,10 @@ class CompressionCache:
         caller. Without this, an entry that's already in memory stays a stale
         (unjudged) tuple for the rest of the process's life -- get() never
         re-reads disk for a key it already has -- so every future hit on a hot
-        key would keep re-rolling CACHE_SAMPLE_RATE and re-judging it forever.
-        A no-op if the key isn't resident (already evicted, or never cached
-        in-process); the disk row is still correct for the next cold load."""
+        key would keep calling Jev inline via compress_text()'s gate instead of
+        taking the instant-gate branch. A no-op if the key isn't resident
+        (already evicted, or never cached in-process); the disk row is still
+        correct for the next cold load."""
         entry = self._mem.get(key)
         if entry is None:
             return
@@ -215,7 +216,18 @@ def chunk_text(text: str) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def compress_text(text: str, session_id: str, role: str = "user") -> str:
+async def compress_text(text: str, session_id: str, role: str = "user") -> str:
+    """Compress `text`, then gate compressed-vs-original on a Jev verdict.
+
+    Every unique compression (one per cache key) is judged by Jev exactly
+    once, inline, bounded by `quality.GATE_TIMEOUT`. A verdict of Lost or
+    Drifted forwards the ORIGINAL text instead of the compressed text
+    (`quality.gate_decision`); Jev disabled/error/timeout/no-verdict all fall
+    back to forwarding the compressed text (savings-first -- the gate must
+    never add unbounded latency or block the proxy path). Gated rows are
+    recorded with realized tokens (`compressed == original`) via
+    `sessions.record_compression(..., gated=1)`.
+    """
     if len(text) <= 200:
         return text
     active = backends._pick_backend(role)
@@ -234,54 +246,57 @@ def compress_text(text: str, session_id: str, role: str = "user") -> str:
     # routes) and to avoid re-litigating import-order safety here.
     from llm_compressor import quality, sessions
 
+    async def _verdict_for(compressed: str, cache_key: str) -> dict | None:
+        """Await Jev once, bounded by GATE_TIMEOUT. None on disabled/error/timeout."""
+        if not quality.judge.enabled:
+            return None
+        try:
+            return await asyncio.wait_for(
+                quality.judge.judge_now(None, text, compressed, cache_key=cache_key),
+                timeout=quality.GATE_TIMEOUT,
+            )
+        except Exception as exc:
+            print(f"[gate] verdict unavailable, forwarding compressed: {exc}")
+            return None
+
+    async def _finish(compressed, orig, comp, cache_hit, verdict, latency_ms=0.0) -> str:
+        """Apply the gate decision, record the row, and return what to forward."""
+        raw = verdict.get("score") if verdict else None
+        gated = 1 if quality.gate_decision(raw) == "block" else 0
+        forwarded = text if gated else compressed
+        sessions.record_compression(
+            session_id,
+            orig,
+            comp,
+            latency_ms=latency_ms,
+            original_text=text,
+            compressed_text=compressed,
+            role=role,
+            active_backend=active,
+            cache_hit=cache_hit,
+            gated=gated,
+        )
+        return forwarded
+
     if _cache is not None:
         hit = _cache.get(key)
         if hit is not None:
             # `hit` is 3-tuple wide for an entry that was `put()` this run (no
             # quality data yet) and 7-tuple wide once promoted from disk, where
             # the cache table's quality_* columns are carried along -- see
-            # CompressionCache.get(). Unpack the quality fields defensively
+            # CompressionCache.get(). Unpack the quality score defensively
             # rather than assuming every hit has all seven elements.
             compressed, orig, comp = hit[0], hit[1], hit[2]
             q_score = hit[3] if len(hit) > 3 else None
-            q_label = hit[4] if len(hit) > 4 else None
-            q_flagged = hit[5] if len(hit) > 5 else None
-            q_detail = hit[6] if len(hit) > 6 else None
             print(f"[cache] hit {orig} → {comp} tokens [{session_id[:8]}] role={role}")
-            compression_id = sessions.record_compression(
-                session_id,
-                orig,
-                comp,
-                latency_ms=0.0,
-                original_text=text,
-                compressed_text=compressed,
-                role=role,
-                active_backend=active,
-                cache_hit=1,
-            )
-            if compression_id is not None and q_score is not None:
-                try:
-                    from llm_compressor import db
-
-                    if db._db_conn is not None:
-                        db._db_conn.execute(
-                            "INSERT OR REPLACE INTO compression_quality "
-                            "(compression_id, score, label, detail, flagged, judged_at) "
-                            "VALUES (?,?,?,?,?,?)",
-                            (compression_id, q_score, q_label, q_detail, q_flagged, db.utc_now()),
-                        )
-                        db._db_conn.commit()
-                except Exception as e:
-                    print(f"[quality] failed to copy cached verdict: {e}")
-            elif compression_id is not None and random.random() < quality.CACHE_SAMPLE_RATE:
-                # This key has no verdict yet (q_score is None). Cache hits
-                # dominate traffic, so sampling only the rare miss (as before)
-                # leaves the pre-existing cache permanently "Unjudged" -- roll
-                # a separate, lower-probability dice here to backfill it over
-                # time. Self-limiting: once this key is judged, update_quality()
-                # patches this process's mem entry so it stops rolling again.
-                quality.judge.judge(compression_id, text, compressed, cache_key=key)
-            return compressed
+            if q_score is not None:
+                # Warm hit WITH a stored verdict: gate instantly, no Jev call.
+                return await _finish(compressed, orig, comp, 1, {"score": q_score})
+            # Warm hit WITHOUT a verdict (pre-gate row / never judged): judge
+            # once now, then gate. The verdict lands in compression_cache
+            # (see judge_now/_judge) so the *next* hit takes the branch above.
+            verdict = await _verdict_for(compressed, key)
+            return await _finish(compressed, orig, comp, 1, verdict)
 
     t0 = time.perf_counter()
     try:
@@ -308,22 +323,14 @@ def compress_text(text: str, session_id: str, role: str = "user") -> str:
         return text
     latency_ms = (time.perf_counter() - t0) * 1000
     print(f"[{model_tag}] {orig} → {comp} tokens [{session_id[:8]}] role={role}")
-    compression_id = sessions.record_compression(
-        session_id,
-        orig,
-        comp,
-        latency_ms,
-        text,
-        compressed,
-        role=role,
-        active_backend=active,
-        cache_hit=0,
-    )
-    if compression_id is not None and random.random() < quality.SAMPLE_RATE:
-        quality.judge.judge(compression_id, text, compressed, cache_key=key)
     if _cache is not None:
+        # Put the fresh entry into the cache BEFORE judging: judge_now's
+        # `UPDATE compression_cache ... WHERE key=?` (in quality.py's _judge)
+        # needs the row to already exist, else the verdict silently fails to
+        # persist and every future hit on this key re-judges from scratch.
         _cache.put(key, compressed, orig, comp, model_tag, rate)
-    return compressed
+    verdict = await _verdict_for(compressed, key)
+    return await _finish(compressed, orig, comp, 0, verdict, latency_ms=latency_ms)
 
 
 def _compress_with(active: dict, text: str):
@@ -394,21 +401,28 @@ def _compress_kompress(active: dict, text: str):
     return result.compressed, result.original_tokens, result.compressed_tokens
 
 
-def compress_system_field(system_val, session_id: str):
+async def compress_system_field(system_val, session_id: str):
     """Compress the top-level Anthropic API `system` field (string or content-block list)."""
     if isinstance(system_val, str):
-        return compress_text(system_val, session_id, role="system")
+        return await compress_text(system_val, session_id, role="system")
     if isinstance(system_val, list):
-        return [
-            {**b, "text": compress_text(b.get("text", ""), session_id, role="system")}
-            if isinstance(b, dict) and b.get("type") == "text"
-            else b
-            for b in system_val
+        text_idx = [
+            i for i, b in enumerate(system_val) if isinstance(b, dict) and b.get("type") == "text"
         ]
+        compressed = await asyncio.gather(
+            *[compress_text(system_val[i]["text"], session_id, role="system") for i in text_idx]
+        )
+        new_blocks = list(system_val)
+        for i, c in zip(text_idx, compressed):
+            new_blocks[i] = {**system_val[i], "text": c}
+        return new_blocks
     return system_val
 
 
-def compress_messages(messages: list, session_id: str) -> list:
+async def compress_messages(messages: list, session_id: str) -> list:
+    """Compress every `role=user` message's text content; judges independent
+    text blocks concurrently (`asyncio.gather`) since each block's Jev call is
+    independent of the others."""
     out = []
     for msg in messages:
         if msg.get("role") != "user":
@@ -416,16 +430,19 @@ def compress_messages(messages: list, session_id: str) -> list:
             continue
         content = msg.get("content", "")
         if isinstance(content, str):
-            out.append({**msg, "content": compress_text(content, session_id, role="user")})
+            out.append({**msg, "content": await compress_text(content, session_id, role="user")})
         elif isinstance(content, list):
-            new_blocks = []
-            for block in content:
-                if isinstance(block, dict) and block.get("type") == "text":
-                    new_blocks.append(
-                        {**block, "text": compress_text(block["text"], session_id, role="user")}
-                    )
-                else:
-                    new_blocks.append(block)
+            text_idx = [
+                i
+                for i, b in enumerate(content)
+                if isinstance(b, dict) and b.get("type") == "text"
+            ]
+            compressed = await asyncio.gather(
+                *[compress_text(content[i]["text"], session_id, role="user") for i in text_idx]
+            )
+            new_blocks = list(content)
+            for i, c in zip(text_idx, compressed):
+                new_blocks[i] = {**content[i], "text": c}
             out.append({**msg, "content": new_blocks})
         else:
             out.append(msg)

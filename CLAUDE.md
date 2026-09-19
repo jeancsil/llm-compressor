@@ -55,9 +55,11 @@ make langfuse-test      # Send a test request and verify a trace appears
 ## Architecture
 
 - Backend loads at startup (MPS device when available, else CPU) — slow cold start expected
+- `compress_system_field()` / `compress_messages()` / `compress_text()` (compression.py) are `async`; `compress_messages()` judges independent text blocks concurrently via `asyncio.gather`
 - `compress_system_field()` compresses the top-level `system` field (CLAUDE.md, RTK.md, injected context)
 - `compress_messages()` compresses `role=user` messages; skips text ≤200 chars; skips `assistant` turns
-- Stats persisted to `metrics.db` (SQLite); `compressions` table includes `role` column (`system` | `user`)
+- Every unique compression is quality-gated: `compress_text()` awaits a Jev verdict (`quality.judge_now`) and forwards the ORIGINAL text instead of the compressed text on a Lost/Drifted verdict (`quality.gate_decision`); gated rows are recorded with realized tokens (`compressed_tokens == original_tokens`, `compressions.gated=1`)
+- Stats persisted to `metrics.db` (SQLite); `compressions` table includes `role` column (`system` | `user`) and a `gated` column (`0`/`1`)
 - Session tracked via `x-claude-code-session-id` header
 - `langfuse_tracer.py` — optional fire-and-forget tracing module; no-ops when keys are absent
 
@@ -80,6 +82,12 @@ curl -s -X POST http://127.0.0.1:9099/admin/set-model \
 ## Environment flags
 
 - `LLM_COMPRESSOR_LLM_NAMING=1` — opt-in, default off. When set, auto-naming sessions calls Haiku (`claude-haiku-4-5-20251001`) using the caller's forwarded OAuth bearer token (never a standalone `ANTHROPIC_API_KEY`), reusing the user's subscription out-of-band. Off by default; falls back to a deterministic heuristic slug.
+- `QUALITY_GATE_TIMEOUT` — seconds the proxy waits inline for a Jev verdict
+  before forwarding the compressed text anyway (default 5.0). Every unique
+  compression is judged by Jev once; a verdict of Lost or Drifted forwards
+  the ORIGINAL text instead of the compressed text. Jev disabled/error/timeout
+  ⇒ compressed forwarded (savings-first). `QUALITY_SAMPLE_RATE` /
+  `QUALITY_CACHE_SAMPLE_RATE` no longer govern judging.
 
 ## Config
 

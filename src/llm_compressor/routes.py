@@ -573,11 +573,11 @@ async def quality_status():
 @app.post("/admin/quality/judge/{compression_id}")
 async def judge_compression_now(compression_id: int):
     """On-demand judging for the per-row "Judge" button in the session detail
-    view. Unlike the sampled fire-and-forget path in compress_text(), this is
-    awaited directly so the frontend gets the verdict back in the response
-    instead of polling for it. No cache_key is threaded through here -- this
+    view. Unlike the gate's inline verdict call in compress_text() (which uses
+    a real cache_key and, for a fresh miss, `compression_id=None`), this is
+    awaited directly with a real `compression_id` and no cache_key -- it
     judges the one compression row, not the shared cache entry behind it (if
-    any); a matching cache hit is still eligible for its own sampled roll."""
+    any), and persists straight to `compression_quality`."""
     if db._db_conn is None:
         return JSONResponse({"error": "db not ready"}, status_code=503)
     from llm_compressor import quality  # local import ok; module is light
@@ -767,8 +767,8 @@ async def proxy_messages(request: Request):
     _ls_original_messages = copy.deepcopy(body.get("messages", []))
     _ls_original_system = copy.deepcopy(body.get("system"))
     if body.get("system"):
-        body["system"] = compression.compress_system_field(body["system"], session_id)
-    body["messages"] = compression.compress_messages(body["messages"], session_id)
+        body["system"] = await compression.compress_system_field(body["system"], session_id)
+    body["messages"] = await compression.compress_messages(body["messages"], session_id)
     _ls_compression_latency_ms = round(time.monotonic() * 1000 - _ls_start_ms, 1)
     _sess = stats["sessions"].get(session_id, {})
     _ls_original_tokens = _sess.get("original_tokens", 0)

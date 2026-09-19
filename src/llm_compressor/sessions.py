@@ -240,7 +240,15 @@ def record_compression(
     active_backend: dict | None = None,
     cache_hit: int = 0,
     ok: int = 1,
+    gated: int = 0,
 ):
+    # A gated row means the ORIGINAL was forwarded, so realized savings are zero.
+    # Store compressed == original everywhere (DB row, in-memory totals, recent
+    # feed) so no savings/ratio aggregate has to special-case the gate. The
+    # would-be compression is still preserved in compression_texts.
+    if gated:
+        compressed = original
+
     _stats.stats["total_original_tokens"] += original
     _stats.stats["total_compressed_tokens"] += compressed
 
@@ -252,8 +260,19 @@ def record_compression(
     if db._db_conn:
         cur = db._db_conn.execute(
             "INSERT INTO compressions (ts, session_id, model, original_tokens, "
-            "compressed_tokens, latency_ms, role, cache_hit, ok) VALUES (?,?,?,?,?,?,?,?,?)",
-            (ts, session_id, model_name, original, compressed, latency_ms, role, cache_hit, ok),
+            "compressed_tokens, latency_ms, role, cache_hit, ok, gated) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (
+                ts,
+                session_id,
+                model_name,
+                original,
+                compressed,
+                latency_ms,
+                role,
+                cache_hit,
+                ok,
+                gated,
+            ),
         )
         compression_id = cur.lastrowid
         if original_text is not None and compressed_text is not None:

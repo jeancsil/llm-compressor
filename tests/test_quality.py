@@ -9,6 +9,10 @@ import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
+from llm_compressor import compression, quality
+
 
 def make_judge(monkeypatch, api_key="ts-test-key"):
     """Env-gated init(), like langfuse_tracer's make_tracer() -- real construction,
@@ -73,51 +77,50 @@ def test_enabled_when_api_key_set(monkeypatch):
     assert s["api_key_set"] is True
 
 
-# --- judge() dispatch / no-ops ---
+# --- judge_now() (awaited, on-demand path for the per-row "Judge" button,
+# and -- with compression_id=None -- the gate's inline verdict call) ---
 
 
-def test_judge_noop_when_disabled(monkeypatch):
-    j, _ = make_judge(monkeypatch, api_key=None)
-    j.judge(1, "orig", "comp")  # must not raise -- returns before touching asyncio
+def test_judge_now_accepts_none_compression_id_and_skips_quality_insert(tmp_path, monkeypatch):
+    """The gate calls judge_now(None, ...) BEFORE the compression row exists.
+    It must still perform the Jev call and parse the verdict, but skip the
+    `compression_quality` INSERT (no valid compression_id to key it on)."""
+    from llm_compressor import db
 
+    conn = db.init_db(str(tmp_path / "m.db"))
+    monkeypatch.setattr(db, "_db_conn", conn)
+    conn.execute(
+        "INSERT INTO compression_cache (key, model, rate, compressed_text, "
+        "original_tokens, compressed_tokens, created_at, hit_count, last_hit) "
+        "VALUES ('k1','llmlingua2',0.5,'COMP',100,60,?,0,?)",
+        (db.utc_now(), db.utc_now()),
+    )
+    conn.commit()
 
-def test_judge_noop_when_compression_id_none(monkeypatch):
     j, _ = make_judge(monkeypatch)
-    j._judge = AsyncMock()
+    j._client = MagicMock()
+    j._client.post = AsyncMock(return_value=_mock_response(_GOOD_PAYLOAD))
 
-    async def run():
-        j.judge(None, "orig", "comp")
-        await asyncio.sleep(0)
+    result = asyncio.run(j.judge_now(None, "original", "compressed", cache_key="k1"))
 
-    asyncio.run(run())
-    j._judge.assert_not_awaited()
-
-
-def test_judge_schedules_task_with_expected_args(monkeypatch):
-    j, _ = make_judge(monkeypatch)
-    j._judge = AsyncMock()
-
-    async def run():
-        j.judge(7, "original text", "compressed text", cache_key="k1")
-        await asyncio.sleep(0)
-
-    asyncio.run(run())
-    j._judge.assert_awaited_once_with(7, "original text", "compressed text", "k1")
-
-
-def test_judge_defaults_cache_key_to_none(monkeypatch):
-    j, _ = make_judge(monkeypatch)
-    j._judge = AsyncMock()
-
-    async def run():
-        j.judge(7, "a", "b")
-        await asyncio.sleep(0)
-
-    asyncio.run(run())
-    j._judge.assert_awaited_once_with(7, "a", "b", None)
-
-
-# --- judge_now() (awaited, on-demand path for the per-row "Judge" button) ---
+    assert result == {
+        "score": 2.0,
+        "label": "Preserved",
+        "detail": "preserved",
+        "confidence": 0.9,
+        "flagged": 0,
+        "meta": {
+            "probabilities": {"0": 0.05, "1": 0.05, "2": 0.9},
+            "usage": {"input_tokens": 10, "output_tokens": 2},
+            "model": "jev-latest",
+        },
+    }
+    assert conn.execute("SELECT COUNT(*) FROM compression_quality").fetchone()[0] == 0
+    cache_row = conn.execute(
+        "SELECT quality_score, quality_label FROM compression_cache WHERE key='k1'"
+    ).fetchone()
+    assert tuple(cache_row) == (2.0, "Preserved")  # cache verdict columns updated
+    conn.close()
 
 
 def test_judge_now_returns_none_when_disabled(monkeypatch):
@@ -671,3 +674,123 @@ def test_status_reports_gate_config():
     assert st["block_levels"] == ["Lost", "Drifted"]
     assert st["fallback"] == "compressed"
     assert "timeout_s" in st and "gate_enabled" in st
+
+
+# --- record_compression(gated=...) ---
+
+
+def test_record_compression_gated_zeroes_savings(tmp_path, monkeypatch):
+    from llm_compressor import db, sessions
+    conn = db.init_db(str(tmp_path / "m.db"))
+    monkeypatch.setattr(db, "_db_conn", conn)
+    cid = sessions.record_compression(
+        "sess", original=100, compressed=40, gated=1,
+        original_text="x" * 300, compressed_text="y",
+    )
+    row = db._db_conn.execute(
+        "SELECT original_tokens, compressed_tokens, gated FROM compressions WHERE id=?",
+        (cid,),
+    ).fetchone()
+    assert tuple(row) == (100, 100, 1)  # realized: compressed forced to original
+    conn.close()
+
+
+# --- gate: compress_text() forwards original on Lost/Drifted, compressed
+# otherwise; Jev disabled/error always falls back to compressed. ---
+
+
+@pytest.fixture
+def fresh_db(tmp_path, monkeypatch):
+    """Live temp-DB connection wired up as db._db_conn, plus a loaded backend
+    so `compress_text`'s `backends._pick_backend(role)` returns non-None
+    (the gate tests stub `_compress_with` directly, so the backend's contents
+    don't matter -- only that one is present)."""
+    from llm_compressor import backends, db
+
+    conn = db.init_db(str(tmp_path / "m.db"))
+    monkeypatch.setattr(db, "_db_conn", conn)
+    monkeypatch.setattr(backends, "backend", {"type": "llmlingua2", "rate": 0.5})
+    monkeypatch.setattr(backends, "dual_mode", False)
+    yield conn
+    conn.close()
+
+
+def _stub_judge(monkeypatch, verdict):
+    """Make judge_now return a fixed verdict (or None) without any HTTP."""
+
+    async def fake_judge_now(cid, original, compressed, cache_key=None):
+        return verdict
+
+    monkeypatch.setattr(quality.judge, "judge_now", fake_judge_now)
+    monkeypatch.setattr(quality.judge, "_client", object())  # enabled
+
+
+def _stub_compress(monkeypatch):
+    monkeypatch.setattr(
+        compression, "_compress_with", lambda active, text: ("COMPRESSED", 100, 40)
+    )
+    monkeypatch.setattr(compression, "_cache", None)  # force miss path
+
+
+def test_gate_forwards_original_on_lost(monkeypatch, fresh_db):
+    _stub_compress(monkeypatch)
+    _stub_judge(monkeypatch, {"score": 0.0, "label": "Lost"})
+    text = "word " * 60
+    out = asyncio.run(compression.compress_text(text, "sess"))
+    assert out == text  # original forwarded, NOT "COMPRESSED"
+
+
+def test_gate_forwards_original_on_drifted(monkeypatch, fresh_db):
+    _stub_compress(monkeypatch)
+    _stub_judge(monkeypatch, {"score": 1.0, "label": "Drifted"})
+    out = asyncio.run(compression.compress_text("word " * 60, "sess"))
+    assert out == "word " * 60
+
+
+def test_gate_keeps_compressed_on_preserved(monkeypatch, fresh_db):
+    _stub_compress(monkeypatch)
+    _stub_judge(monkeypatch, {"score": 2.0, "label": "Preserved"})
+    out = asyncio.run(compression.compress_text("word " * 60, "sess"))
+    assert out == "COMPRESSED"
+
+
+def test_gate_keeps_compressed_when_jev_disabled(monkeypatch, fresh_db):
+    _stub_compress(monkeypatch)
+    monkeypatch.setattr(quality.judge, "_client", None)  # disabled
+    out = asyncio.run(compression.compress_text("word " * 60, "sess"))
+    assert out == "COMPRESSED"
+
+
+def test_gate_keeps_compressed_on_jev_error(monkeypatch, fresh_db):
+    _stub_compress(monkeypatch)
+
+    async def boom(*a, **k):
+        raise RuntimeError("jev down")
+
+    monkeypatch.setattr(quality.judge, "judge_now", boom)
+    monkeypatch.setattr(quality.judge, "_client", object())
+    out = asyncio.run(compression.compress_text("word " * 60, "sess"))
+    assert out == "COMPRESSED"  # error -> savings-first fallback
+
+
+def test_gate_records_gated_row_on_block(monkeypatch, fresh_db):
+    """The gate's DB row records realized tokens (compressed == original) and
+    gated=1 when the verdict blocks -- sessions.record_compression's contract
+    from Step 2, exercised end-to-end through the gate."""
+    _stub_compress(monkeypatch)
+    _stub_judge(monkeypatch, {"score": 0.0, "label": "Lost"})
+    asyncio.run(compression.compress_text("word " * 60, "sess"))
+    row = fresh_db.execute(
+        "SELECT original_tokens, compressed_tokens, gated FROM compressions ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    assert tuple(row) == (100, 100, 1)
+
+
+def test_gate_records_ungated_row_on_allow(monkeypatch, fresh_db):
+    _stub_compress(monkeypatch)
+    _stub_judge(monkeypatch, {"score": 2.0, "label": "Preserved"})
+    asyncio.run(compression.compress_text("word " * 60, "sess"))
+    row = fresh_db.execute(
+        "SELECT original_tokens, compressed_tokens, gated FROM compressions ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    assert tuple(row) == (100, 40, 0)

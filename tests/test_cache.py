@@ -1,3 +1,4 @@
+import asyncio
 import sys
 from unittest.mock import MagicMock
 
@@ -142,13 +143,50 @@ def test_compress_text_caches_second_call(tmp_path, monkeypatch):
     monkeypatch.setattr(proxy, "dual_mode", False)
 
     text = "x" * 500  # > 200 so it is compressed
-    assert proxy.compress_text(text, "sess") == "COMPRESSED"
-    assert proxy.compress_text(text, "sess") == "COMPRESSED"
+    assert asyncio.run(proxy.compress_text(text, "sess")) == "COMPRESSED"
+    assert asyncio.run(proxy.compress_text(text, "sess")) == "COMPRESSED"
     assert calls["n"] == 1  # model ran only once
     hits = conn.execute("SELECT COUNT(*) FROM compressions WHERE cache_hit=1").fetchone()[0]
     assert hits == 1
     texts = conn.execute("SELECT COUNT(*) FROM compression_texts").fetchone()[0]
     assert texts == 2  # miss + cache-hit both write text (commit 69e8372)
+    conn.close()
+
+
+def test_compress_text_gates_instantly_on_warm_verdict(tmp_path, monkeypatch):
+    """Task 3: a cache hit whose row already carries a stored quality_score
+    gates immediately off that score -- no Jev call needed (the instant-gate
+    branch in compress_text(), vs. the miss/cold-hit branch that awaits
+    judge_now)."""
+    proxy = _import_proxy(monkeypatch)
+    conn = proxy.init_db(str(tmp_path / "m.db"))
+    monkeypatch.setattr(proxy, "_db_conn", conn)
+    monkeypatch.setattr(proxy, "backend", {"type": "llmlingua2", "compressor": MagicMock(), "rate": 0.5})
+    monkeypatch.setattr(proxy, "dual_mode", False)
+
+    cache = proxy.CompressionCache(conn, max_mem=10, max_rows=100)
+    monkeypatch.setattr(proxy, "_cache", cache)
+
+    text = "word " * 60
+    key = proxy._cache_key(text, "llmlingua2", 0.5)
+    cache.put(key, "COMPRESSED", 100, 40, "llmlingua2", 0.5)
+    cache.update_quality(key, 0.0, "Lost", "meaning lost", 1)  # warm verdict: Lost
+
+    from llm_compressor import quality
+
+    async def fail_if_called(*a, **k):
+        raise AssertionError("judge_now must not be called for a warm-verdict hit")
+
+    monkeypatch.setattr(quality.judge, "judge_now", fail_if_called)
+    monkeypatch.setattr(quality.judge, "_client", object())  # enabled
+
+    out = asyncio.run(proxy.compress_text(text, "sess"))
+
+    assert out == text  # gated instantly off the stored Lost verdict
+    row = conn.execute(
+        "SELECT original_tokens, compressed_tokens, gated FROM compressions ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    assert tuple(row) == (100, 100, 1)
     conn.close()
 
 

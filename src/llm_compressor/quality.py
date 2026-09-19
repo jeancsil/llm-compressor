@@ -1,32 +1,21 @@
-"""Best-effort compression-quality judging via TypeSafe's System One API.
+"""Compression-quality judging via TypeSafe's System One API, and the gate it drives.
 
-Fire-and-forget, sampled, and fully optional: mirrors langfuse_tracer.py's shape so a
-missing API key, a slow/erroring TypeSafe call, or a DB hiccup here can never add
-latency to the proxy path or raise into it. See docs.typesafe.ai/api and
-docs.typesafe.ai/primitives/score.md for the verified HTTP contract this implements.
+Every unique compression is judged once, inline, by `compress_text()` in
+compression.py: `judge_now()` is awaited with a bounded timeout (`GATE_TIMEOUT`)
+and its verdict decides whether the compressed or the original text is
+forwarded (`gate_decision()`). A missing API key, a slow/erroring TypeSafe
+call, or a DB hiccup here can never add unbounded latency to the proxy path or
+raise into it -- the caller always falls back to forwarding the compressed
+text. See docs.typesafe.ai/api and docs.typesafe.ai/primitives/score.md for
+the verified HTTP contract this implements.
 """
 
-import asyncio
 import json
 import os
 
 import httpx
 
 TYPESAFE_API_BASE = os.environ.get("TYPESAFE_API_BASE", "https://api.typesafe.ai")
-# Fresh (cache-miss) compressions: rolled once per compress_text() call.
-# Raised from 0.4 -> 1.0 (judge every fresh compression) per explicit request:
-# the sampled backfill left most rows "Unjudged" with no visible way to close
-# the gap other than the per-row manual button, which stays scoped to
-# unjudged rows only (see qualityCell() in session_detail.html).
-SAMPLE_RATE = float(os.environ.get("QUALITY_SAMPLE_RATE", "1.0"))
-# Cache hits: rolled per hit *only* while the key has no verdict yet (see
-# compression.py's hit branch and CompressionCache.update_quality). Cache hits
-# vastly outnumber misses (~97% of traffic observed in practice), so this can
-# stay well below SAMPLE_RATE and still backfill the pre-existing, un-judged
-# cache at a much faster rate than before without multiplying TypeSafe spend
-# the way reusing SAMPLE_RATE outright would. Raised from 0.05 -> 0.25 per the
-# same request as SAMPLE_RATE above.
-CACHE_SAMPLE_RATE = float(os.environ.get("QUALITY_CACHE_SAMPLE_RATE", "0.25"))
 THRESHOLD = 0.5  # normalized (0-1) score below this is flagged as low quality
 GATE_TIMEOUT = float(os.environ.get("QUALITY_GATE_TIMEOUT", "5.0"))
 
@@ -81,45 +70,33 @@ class QualityJudge:
     def enabled(self) -> bool:
         return self._client is not None
 
-    def judge(
-        self,
-        compression_id: int,
-        original_text: str,
-        compressed_text: str,
-        cache_key: str | None = None,
-    ) -> None:
-        """Fire-and-forget sampled judging -- schedules `_judge` and discards its result."""
-        if not self._client or compression_id is None:
-            return
-        try:
-            asyncio.create_task(
-                self._judge(compression_id, original_text, compressed_text, cache_key)
-            )
-        except Exception as exc:
-            print(f"[quality] failed to schedule judgment: {exc}")
-
     async def judge_now(
         self,
-        compression_id: int,
+        compression_id: int | None,
         original_text: str,
         compressed_text: str,
         cache_key: str | None = None,
     ) -> dict | None:
-        """Awaited, on-demand judging for the per-row "Judge" button.
+        """Awaited, on-demand judging.
 
-        Unlike `judge()` this is not sampled and its caller awaits the verdict
-        directly, so the route handler can hand it straight back to the
-        frontend instead of the frontend re-polling for a fire-and-forget
-        result. Returns None if judging is disabled or the call/parse failed
-        (persistence still happens inside `_judge` on success either way).
+        Two callers:
+        - The per-row "Judge" button (routes.py), with a real `compression_id`:
+          the verdict is persisted to `compression_quality` as before.
+        - The gate in `compress_text()` (compression.py), with
+          `compression_id=None`: called BEFORE the compression row exists, so
+          only the Jev call + `compression_cache` verdict columns (when
+          `cache_key` is set) are wanted. `_judge` skips the
+          `compression_quality` INSERT in that case -- see its body.
+
+        Returns None if judging is disabled or the call/parse/persist failed.
         """
-        if not self._client or compression_id is None:
+        if not self._client:
             return None
         return await self._judge(compression_id, original_text, compressed_text, cache_key)
 
     async def _judge(
         self,
-        compression_id: int,
+        compression_id: int | None,
         original_text: str,
         compressed_text: str,
         cache_key: str | None,
@@ -189,21 +166,27 @@ class QualityJudge:
 
             if db._db_conn is None:
                 return None
-            db._db_conn.execute(
-                "INSERT OR REPLACE INTO compression_quality "
-                "(compression_id, score, label, detail, confidence, flagged, judged_at, meta) "
-                "VALUES (?,?,?,?,?,?,?,?)",
-                (
-                    compression_id,
-                    raw_score,
-                    label,
-                    detail,
-                    confidence,
-                    flagged,
-                    db.utc_now(),
-                    json.dumps(meta),
-                ),
-            )
+            # `compression_id is None` means this call came from the gate in
+            # compress_text() -- BEFORE the compression row exists, so there is
+            # no valid foreign key for compression_quality yet. Skip that
+            # INSERT in that case; the per-row "Judge" button path (a real
+            # compression_id) is unchanged and still persists it.
+            if compression_id is not None:
+                db._db_conn.execute(
+                    "INSERT OR REPLACE INTO compression_quality "
+                    "(compression_id, score, label, detail, confidence, flagged, judged_at, meta) "
+                    "VALUES (?,?,?,?,?,?,?,?)",
+                    (
+                        compression_id,
+                        raw_score,
+                        label,
+                        detail,
+                        confidence,
+                        flagged,
+                        db.utc_now(),
+                        json.dumps(meta),
+                    ),
+                )
             if cache_key is not None:
                 db._db_conn.execute(
                     "UPDATE compression_cache SET quality_score=?, quality_label=?, "
@@ -220,9 +203,10 @@ class QualityJudge:
                 # The disk row is now judged, but CompressionCache.get() only
                 # reads disk on a cold miss -- an entry already resident in
                 # this process's `_mem` LRU would otherwise look unjudged
-                # (q_score is None) forever, re-rolling CACHE_SAMPLE_RATE on
-                # every future hit for the rest of the process's life. Patch
-                # it in place so the next hit sees the verdict immediately.
+                # (q_score is None) forever, re-calling Jev on every future hit
+                # for the rest of the process's life. Patch it in place so the
+                # next hit sees the verdict immediately and takes the
+                # instant-gate branch in compress_text().
                 from llm_compressor import compression
 
                 if compression._cache is not None:
