@@ -304,6 +304,14 @@ def init_db(path: str):
         conn.execute("ALTER TABLE compressions ADD COLUMN ok INTEGER DEFAULT 1")
     except Exception:
         pass  # column already exists
+    try:
+        # Gate: 1 = Jev judged the compression Lost/Drifted and the ORIGINAL
+        # text was forwarded instead of the compressed text; 0 = compressed
+        # forwarded. Gated rows record compressed_tokens == original_tokens so
+        # every savings aggregate counts them as zero realized savings.
+        conn.execute("ALTER TABLE compressions ADD COLUMN gated INTEGER DEFAULT 0")
+    except Exception:
+        pass  # column already exists
     _normalize_timestamps(conn)
     _migrate_quality_label_detail_split(conn)
     # Mark when caching went live so hit-ratio stats can exclude the pre-feature

@@ -325,6 +325,15 @@ def test_migrate_creates_compression_quality_meta_column(tmp_path):
     conn.close()
 
 
+def test_compressions_has_gated_column(tmp_path):
+    from llm_compressor import db
+
+    conn = db.init_db(str(tmp_path / "m.db"))
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(compressions)")}
+    assert "gated" in cols
+    conn.close()
+
+
 # --- _judge() failure paths: each stage swallows and writes nothing ---
 
 
