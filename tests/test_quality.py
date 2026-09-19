@@ -56,7 +56,8 @@ def test_disabled_when_no_api_key(monkeypatch):
     assert s["enabled"] is False
     assert s["api_key_set"] is False
     assert s["host"] == mod.TYPESAFE_API_BASE
-    assert s["sampled_pct"] == int(mod.SAMPLE_RATE * 100)
+    assert s["gate_enabled"] is False
+    assert s["timeout_s"] == mod.GATE_TIMEOUT
 
 
 def test_disabled_when_api_key_blank(monkeypatch):
@@ -644,3 +645,29 @@ def test_migrate_quality_label_detail_split_is_one_shot(tmp_path):
     ).fetchone()
     assert row[0] == "Preserved" and row[1] == "preserved"
     conn.close()
+
+
+# --- gate_decision() classifier ---
+
+
+def test_gate_decision_blocks_lost_and_drifted():
+    from llm_compressor import quality
+    assert quality.gate_decision(0.0) == "block"   # Lost
+    assert quality.gate_decision(0.4) == "block"    # rounds to 0
+    assert quality.gate_decision(1.0) == "block"    # Drifted
+    assert quality.gate_decision(1.4) == "block"    # rounds to 1
+
+
+def test_gate_decision_allows_preserved_and_unknown():
+    from llm_compressor import quality
+    assert quality.gate_decision(2.0) == "allow"    # Preserved
+    assert quality.gate_decision(1.6) == "allow"    # rounds to 2
+    assert quality.gate_decision(None) == "allow"   # no verdict -> savings-first
+
+
+def test_status_reports_gate_config():
+    from llm_compressor import quality
+    st = quality.judge.status()
+    assert st["block_levels"] == ["Lost", "Drifted"]
+    assert st["fallback"] == "compressed"
+    assert "timeout_s" in st and "gate_enabled" in st

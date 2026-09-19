@@ -28,6 +28,7 @@ SAMPLE_RATE = float(os.environ.get("QUALITY_SAMPLE_RATE", "1.0"))
 # same request as SAMPLE_RATE above.
 CACHE_SAMPLE_RATE = float(os.environ.get("QUALITY_CACHE_SAMPLE_RATE", "0.25"))
 THRESHOLD = 0.5  # normalized (0-1) score below this is flagged as low quality
+GATE_TIMEOUT = float(os.environ.get("QUALITY_GATE_TIMEOUT", "5.0"))
 
 _CRITERIA = [
     "Meaning is lost or significantly changed — key facts, instructions, or intent "
@@ -43,6 +44,20 @@ _CRITERIA = [
 # stays available as `detail` (a tooltip) so the chip itself can show a label
 # short enough to sit inline in a table cell.
 SHORT_LABELS = {0: "Lost", 1: "Drifted", 2: "Preserved"}
+
+# Verdict raw score rounds to a _CRITERIA index: 0=Lost, 1=Drifted, 2=Preserved.
+# The gate blocks (forwards the original) on Lost/Drifted; only Preserved keeps
+# the compressed text. Absent/malformed verdict -> allow (savings-first).
+_BLOCK_LEVELS = {0, 1}
+
+
+def gate_decision(raw_score: "float | None") -> str:
+    if raw_score is None:
+        return "allow"
+    try:
+        return "block" if round(float(raw_score)) in _BLOCK_LEVELS else "allow"
+    except (TypeError, ValueError):
+        return "allow"
 
 
 class QualityJudge:
@@ -227,8 +242,10 @@ class QualityJudge:
     def status(self) -> dict:
         return {
             "enabled": self.enabled,
-            "sampled_pct": int(SAMPLE_RATE * 100),
-            "cache_sampled_pct": int(CACHE_SAMPLE_RATE * 100),
+            "gate_enabled": self.enabled,
+            "block_levels": [SHORT_LABELS[0], SHORT_LABELS[1]],  # ["Lost", "Drifted"]
+            "timeout_s": GATE_TIMEOUT,
+            "fallback": "compressed",
             "api_key_set": self._api_key_set,
             "host": TYPESAFE_API_BASE,
         }
