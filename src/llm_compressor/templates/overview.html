@@ -122,7 +122,13 @@
   <div class="kpi"><div class="label">Avg savings %</div><div class="value num">&mdash;</div></div>
   <div class="kpi"><div class="label">Requests</div><div class="value num">&mdash;</div></div>
   <div class="kpi"><div class="label">P95 latency</div><div class="value num">&mdash;</div></div>
+  <div class="kpi"><div class="label">Gated (served original)</div><div class="value num">&mdash;</div></div>
 </div>
+<p class="hint" id="gate-note" style="margin-top: var(--sp-2);">
+  Every compression is judged by Jev; a Lost or Drifted verdict serves the original text instead of
+  the compressed one. The savings figures above already exclude gated requests &mdash; they show what
+  was actually forwarded, not what compression would have saved.
+</p>
 
 <section class="panel" id="flow-panel" style="margin-top: var(--sp-4);">
   <div class="panel-head">
@@ -305,6 +311,8 @@
       computeDelta(cur.requests, prev.requests, false));
     html += kpiTile('P95 latency', UI.fmtMs(cur.p95_latency_ms), 'p50 ' + UI.fmtMs(cur.p50_latency_ms),
       computeDelta(cur.p95_latency_ms, prev.p95_latency_ms, true));
+    html += kpiTile('Gated (served original)', UI.fmtExact(cur.gated_count || 0), null,
+      computeDelta(cur.gated_count, prev.gated_count, true));
 
     grid.innerHTML = html;
 

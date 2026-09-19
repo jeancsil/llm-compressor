@@ -16,6 +16,7 @@ reloads this module, so a module-level binding would go stale after the
 first test.
 """
 
+import asyncio
 import copy
 import json
 import math
@@ -375,6 +376,31 @@ async def play_compress(request: Request):
     char_pct = round((1 - comp_chars / max(1, orig_chars)) * 100, 1)
     token_pct = round((1 - comp_tokens_est / orig_tokens_est) * 100, 1)
 
+    # Jev verdict, mirroring the proxy path's gate in compression.compress_text():
+    # awaited once, bounded by GATE_TIMEOUT, never raises into this route.
+    # Only surfaced when judging is enabled -- there is nothing to show
+    # otherwise, and the playground has no session/cache_key to persist against
+    # (judge_now(None, ..., cache_key=None) skips every DB write; see quality.py).
+    jev = None
+    from llm_compressor import quality  # local import ok; module is light
+
+    if quality.judge.enabled:
+        verdict = None
+        try:
+            verdict = await asyncio.wait_for(
+                quality.judge.judge_now(None, text, compressed),
+                timeout=quality.GATE_TIMEOUT,
+            )
+        except Exception as exc:
+            print(f"[playground] verdict unavailable: {exc}")
+        score = verdict.get("score") if verdict else None
+        jev = {
+            "label": verdict.get("label") if verdict else None,
+            "score": score,
+            "detail": verdict.get("detail") if verdict else None,
+            "gated": quality.gate_decision(score) == "block",
+        }
+
     return JSONResponse(
         {
             "original": text,
@@ -387,6 +413,7 @@ async def play_compress(request: Request):
             "token_pct": token_pct,
             "model": backends.backend.get("type") if backends.backend else model,
             "latency_ms": latency_ms,
+            "jev": jev,
         }
     )
 
@@ -650,7 +677,7 @@ async def get_session_compressions(session_id: str, page: int = 1, page_size: in
         """
         SELECT c.id, c.ts, c.model, c.original_tokens, c.compressed_tokens,
                ROUND((c.original_tokens - c.compressed_tokens) * 100.0 / c.original_tokens, 1) AS savings_pct,
-               c.latency_ms, c.role,
+               c.latency_ms, c.role, c.gated,
                cq.score, cq.label, cq.detail, cq.confidence, cq.flagged, cq.meta,
                ct.original_text, ct.compressed_text
         FROM compressions c

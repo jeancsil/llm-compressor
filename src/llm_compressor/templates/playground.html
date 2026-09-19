@@ -133,6 +133,11 @@
         <div class="value mono" id="kpiModelValue" style="font-size: var(--fs-md);">—</div>
       </div>
     </div>
+    <div class="row" id="jevRow" hidden style="margin-top: var(--sp-3); gap: var(--sp-2); align-items: center;">
+      <span class="eyebrow">Jev verdict</span>
+      <span class="chip" id="jevVerdictChip"></span>
+      <span class="chip accent" id="jevGatedChip" hidden>would serve: original (gated)</span>
+    </div>
 
     <div class="diff-grid" style="margin-top: var(--sp-4);">
       <div class="diff-panel">
@@ -171,6 +176,9 @@
   var originalPre = document.getElementById('originalPre');
   var compressedPre = document.getElementById('compressedPre');
   var diffHint = document.getElementById('diffHint');
+  var jevRow = document.getElementById('jevRow');
+  var jevVerdictChip = document.getElementById('jevVerdictChip');
+  var jevGatedChip = document.getElementById('jevGatedChip');
 
   var VALID_MODELS = ['llmlingua2', 'llmlingua2-large', 'kompress'];
 
@@ -273,6 +281,26 @@
 
   /* ---- results rendering ------------------------------------------- */
 
+  // `data.jev` is only present when Jev judging is enabled server-side
+  // (routes.py's play_compress calls quality.judge.judge_now() the same way
+  // the proxy's gate does, bounded by quality.GATE_TIMEOUT) -- absent means
+  // disabled, not "no verdict yet", so the row stays hidden rather than
+  // showing a misleading "Unjudged" state.
+  var JEV_CHIP_CLASS = { Lost: 'bad', Drifted: 'warn', Preserved: 'good' };
+
+  function renderJev(jev) {
+    if (!jev) {
+      jevRow.hidden = true;
+      return;
+    }
+    jevRow.hidden = false;
+    var cls = JEV_CHIP_CLASS[jev.label] || '';
+    jevVerdictChip.className = 'chip' + (cls ? ' ' + cls : '');
+    jevVerdictChip.textContent = jev.label || 'Unjudged';
+    jevVerdictChip.title = jev.detail || '';
+    jevGatedChip.hidden = !jev.gated;
+  }
+
   function renderResults(data) {
     var savedChars = Math.max(0, (data.original_chars || 0) - (data.compressed_chars || 0));
     var savedTokens = Math.max(0, (data.original_tokens_est || 0) - (data.compressed_tokens_est || 0));
@@ -311,6 +339,8 @@
       diffHint.textContent = 'This backend rewrites and deletes rather than dropping tokens in place, ' +
         'so a token-level diff is not meaningful — compare the panels above.';
     }
+
+    renderJev(data.jev);
 
     resultsPanel.hidden = false;
   }
@@ -377,6 +407,7 @@
     updateCount();
     setStatusIdle();
     resultsPanel.hidden = true;
+    jevRow.hidden = true;
     promptInput.focus();
   });
 

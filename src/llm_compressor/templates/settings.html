@@ -156,8 +156,16 @@ table.data td:first-child {
     <div class="panel-head">
       <h2>Quality</h2>
     </div>
-    <div class="panel-body stack" id="qualityPanel">
-      <!-- populated by JS -->
+    <div class="panel-body stack">
+      <p style="color: var(--text-muted); margin: 0; font-size: var(--fs-sm);">
+        Every compression is judged by Jev (TypeSafe). A verdict of <strong>Lost</strong> or
+        <strong>Drifted</strong> gates the response &mdash; the original text is served instead of
+        the compressed one. When the gate is disabled, Jev errors, or the call times out, the
+        compressed text is kept (savings-first fallback).
+      </p>
+      <div id="qualityPanel">
+        <!-- populated by JS -->
+      </div>
     </div>
   </div>
 
@@ -461,12 +469,53 @@ table.data td:first-child {
   function loadQualityStatus() {
     UI.getJSON('/admin/quality-status')
       .then(data => {
-        renderObservability(data, 'qualityPanel');
+        renderQualityStatus(data);
       })
       .catch(err => {
         const panel = document.getElementById('qualityPanel');
         panel.innerHTML = `<div class="chip bad">${UI.escapeHtml(String(err))}</div>`;
       });
+  }
+
+  // Dedicated renderer for the gate (replaces the old sampled-%% quality
+  // status): quality.judge.status() no longer reports a sampling rate at
+  // all -- every unique compression is judged now -- so the panel states
+  // that plainly instead of showing a rate field that would always read
+  // 100%.
+  function renderQualityStatus(data) {
+    const panel = document.getElementById('qualityPanel');
+    const enabled = !!data.enabled;
+    const statusHtml = `<div class="observability-status"><div class="chip ${enabled ? 'good' : ''}">` +
+      `${enabled ? 'Gate enabled' : 'Gate disabled'}</div></div>`;
+
+    const blockLevels = (data.block_levels || []).join(', ') || '—';
+    const fallback = data.fallback === 'compressed'
+      ? 'Keeps compressed text (savings-first)'
+      : (data.fallback || '—');
+    const rows = [
+      ['Judging every compression', enabled ? 'Yes' : 'No'],
+      ['Blocks on verdict', blockLevels],
+      ['Timeout', data.timeout_s != null ? data.timeout_s + 's' : '—'],
+      ['On disabled / error / timeout', fallback],
+      ['API key configured', data.api_key_set ? 'Yes' : 'No'],
+      ['Host', data.host || '—'],
+    ];
+    const tableHtml = `
+      <div class="table-wrap">
+        <table class="data">
+          <tbody>
+            ${rows.map(([k, v]) => `
+              <tr>
+                <td>${UI.escapeHtml(k)}</td>
+                <td>${UI.escapeHtml(String(v))}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+
+    panel.innerHTML = statusHtml + tableHtml;
   }
 
   function renderObservability(data, targetId = 'observabilityPanel') {

@@ -192,7 +192,9 @@ def list_sessions(conn, page: int = 1, page_size: int = 25) -> dict:
                             WHERE c.session_id = ids.session_id), 0) AS requests,
                   (SELECT ROUND(AVG(CAST(c.original_tokens AS REAL)
                                     / NULLIF(c.compressed_tokens, 0)), 2)
-                     FROM compressions c WHERE c.session_id = ids.session_id) AS avg_ratio
+                     FROM compressions c WHERE c.session_id = ids.session_id) AS avg_ratio,
+                  COALESCE((SELECT SUM(c.gated) FROM compressions c
+                            WHERE c.session_id = ids.session_id), 0) AS gated_count
            FROM ids
            LEFT JOIN sessions s ON s.session_id = ids.session_id
            WHERE ids.session_id IS NOT NULL AND ids.session_id != ''

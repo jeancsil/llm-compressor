@@ -578,8 +578,20 @@ tr.expanded-detail td { background: var(--surface-sunken); }
     return '<div class="quality-detail-text">' + UI.escapeHtml(c.detail) + '</div>' + qualityMetaText(c);
   }
 
+  function gatedBadge(c) {
+    // The gate (quality.py's gate_decision, applied inline in
+    // compression.compress_text()) forwarded the ORIGINAL text for this row
+    // instead of the compressed one -- compressed_tokens == original_tokens
+    // as recorded by sessions.record_compression(..., gated=1). Shown beside
+    // the quality chip, not instead of it: the chip still carries the Jev
+    // verdict that triggered the gate.
+    if (!c.gated) return '';
+    return ' <span class="chip accent" title="Jev judged this compression Lost or Drifted, ' +
+      'so the original text was served instead of the compressed one.">served: original (gated)</span>';
+  }
+
   function qualityCell(c) {
-    var chip = qualityChip(c) + qualityInfoButton(c) + qualityDetailText(c);
+    var chip = qualityChip(c) + gatedBadge(c) + qualityInfoButton(c) + qualityDetailText(c);
     if (!qualityEnabled || c.score !== null && c.score !== undefined) {
       return chip;
     }

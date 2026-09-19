@@ -35,11 +35,12 @@
           <th class="num">Requests</th>
           <th class="num">Tokens saved</th>
           <th class="num">Avg ratio</th>
+          <th class="num" title="Requests where Jev judged the compression Lost or Drifted, so the original text was served instead">Gated</th>
           <th class="num">Last seen</th>
         </tr>
       </thead>
       <tbody id="sessions-rows">
-        <tr><td colspan="6" class="empty">Loading&hellip;</td></tr>
+        <tr><td colspan="7" class="empty">Loading&hellip;</td></tr>
       </tbody>
     </table>
   </div>
@@ -80,6 +81,7 @@
       '<td class="num">' + UI.fmtExact(s.requests || 0) + '</td>' +
       '<td class="num" title="' + UI.escapeHtml(UI.fmtExact(tokensSaved)) + '">' + UI.fmt(tokensSaved) + '</td>' +
       '<td class="num">' + (avgRatio ? Number(avgRatio).toFixed(2) + '&times;' : '&mdash;') + '</td>' +
+      '<td class="num">' + (s.gated_count ? UI.fmtExact(s.gated_count) : '&mdash;') + '</td>' +
       '<td class="num" title="' + UI.escapeHtml(UI.fmtTime(s.last_seen)) + '">' + UI.escapeHtml(UI.ago(s.last_seen)) + '</td>' +
       '</tr>';
   }
@@ -88,7 +90,7 @@
     var hasProject = state.items.some(function (s) { return !!s.project; });
     document.getElementById('sessions-table').classList.toggle('no-project', !hasProject);
     if (!state.items.length) {
-      rowsEl.innerHTML = '<tr><td colspan="6" class="empty">No sessions yet.</td></tr>';
+      rowsEl.innerHTML = '<tr><td colspan="7" class="empty">No sessions yet.</td></tr>';
     } else {
       rowsEl.innerHTML = state.items.map(rowHtml).join('');
     }
@@ -139,7 +141,7 @@
         render();
       })
       .catch(function () {
-        rowsEl.innerHTML = '<tr><td colspan="6" class="empty">Could not load sessions.</td></tr>';
+        rowsEl.innerHTML = '<tr><td colspan="7" class="empty">Could not load sessions.</td></tr>';
         pagerEl.innerHTML = '';
       });
   }

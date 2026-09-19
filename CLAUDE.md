@@ -60,6 +60,7 @@ make langfuse-test      # Send a test request and verify a trace appears
 - `compress_messages()` compresses `role=user` messages; skips text ≤200 chars; skips `assistant` turns
 - Every unique compression is quality-gated: `compress_text()` awaits a Jev verdict (`quality.judge_now`) and forwards the ORIGINAL text instead of the compressed text on a Lost/Drifted verdict (`quality.gate_decision`); gated rows are recorded with realized tokens (`compressed_tokens == original_tokens`, `compressions.gated=1`)
 - Stats persisted to `metrics.db` (SQLite); `compressions` table includes `role` column (`system` | `user`) and a `gated` column (`0`/`1`)
+- The gate is surfaced across every page: Overview shows a `gated_count` stat tile (headline savings already exclude gated rows), Sessions lists a per-session gated count, Session detail badges gated rows beside the quality chip, Settings shows gate status (`quality.judge.status()`: enabled, block levels, timeout, savings-first fallback) in place of the old sampled-% quality panel, and Playground surfaces the Jev verdict + would-be-gated decision per compression (`POST /play/compress` response's `jev` field, only present when judging is enabled)
 - Session tracked via `x-claude-code-session-id` header
 - `langfuse_tracer.py` — optional fire-and-forget tracing module; no-ops when keys are absent
 

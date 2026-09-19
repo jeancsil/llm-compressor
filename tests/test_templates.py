@@ -116,3 +116,123 @@ def test_render_places_head_extras_in_the_document_head():
 
     assert head in html
     assert html.index(head) < html.index("<body>")
+
+
+# ---------------------------------------------------------------------------
+# Jev gate UI (Task 5)
+#
+# These pages are JS-rendered SPAs: the server ships a static shell plus an
+# inlined <script> that fetches JSON and builds markup client-side.
+# templates.render() never executes that script, so — same as the existing
+# qualityChip()/qualityInfoButton() slicing tests above — these assert against
+# the *source text* of the shipped page (static body copy and/or literal JS
+# string constants), not against data-bound output. The route-level tests
+# below (using the `client` fixture) cover the actual JSON payloads.
+# ---------------------------------------------------------------------------
+
+
+def test_overview_shows_gate_panel():
+    from llm_compressor import templates
+
+    html = templates.render("overview.html", title="Overview", nav="overview")
+
+    assert "gated" in html.lower() or "served original" in html.lower()
+    # The tile must be bound to the real stats field (Task 4's gated_count),
+    # and the note must say headline savings already exclude gated rows.
+    assert "gated_count" in html
+    assert "already exclude" in html.lower()
+
+
+def test_settings_shows_gate_status():
+    from llm_compressor import templates
+
+    html = templates.render("settings.html", title="Settings", nav="settings")
+
+    assert "Lost" in html and "Drifted" in html  # block levels
+    assert "gate" in html.lower()
+    # States plainly that every compression is judged now (no more sampling).
+    assert "every compression is judged" in html.lower()
+
+
+def test_session_detail_marks_gated_rows():
+    from llm_compressor import templates
+
+    html = templates.render(
+        "session_detail.html", title="x", nav="sessions", head="", breadcrumb=""
+    )
+
+    cell_fn = html[html.index("function gatedBadge") : html.index("function isExpanded")]
+    assert "gated" in cell_fn.lower()
+    assert "c.gated" in cell_fn
+    assert "qualityCell" in html and "gatedBadge(c)" in html
+
+
+def test_sessions_table_has_gated_column():
+    from llm_compressor import templates
+
+    html = templates.render("sessions.html", title="Sessions", nav="sessions")
+
+    assert "gated" in html.lower()
+
+
+def test_playground_shows_jev_verdict():
+    from llm_compressor import templates
+
+    html = templates.render("playground.html", title="Playground", nav="playground")
+
+    assert "jev" in html.lower()
+    assert "gated" in html.lower()
+
+
+def test_session_compressions_endpoint_includes_gated_field(client):
+    """routes.py's /session/{id}/compressions listing must carry `gated` per
+    row (Task 5's routes.py change), not just the quality chip fields."""
+    from llm_compressor import sessions
+
+    sessions.record_compression(
+        "s1", 100, 40, gated=1, original_text="x" * 300, compressed_text="y"
+    )
+    sessions.record_compression(
+        "s1", 100, 40, gated=0, original_text="x" * 300, compressed_text="y"
+    )
+
+    r = client.get("/session/s1/compressions")
+    assert r.status_code == 200
+    items = r.json()["items"]
+    assert len(items) == 2
+    gated_values = {item["gated"] for item in items}
+    assert gated_values == {0, 1}
+
+
+def test_play_compress_includes_jev_verdict_when_enabled(client, monkeypatch):
+    """playground compress response must carry the Jev verdict + gate
+    decision when judging is enabled (Task 5's routes.py change)."""
+    from unittest.mock import AsyncMock
+
+    from llm_compressor import quality
+
+    monkeypatch.setattr(quality.judge, "_client", object())  # enabled=True
+    verdict = {
+        "score": 1.0,
+        "label": "Drifted",
+        "detail": "some drift",
+        "confidence": 0.7,
+        "flagged": 0,
+        "meta": {},
+    }
+    monkeypatch.setattr(quality.judge, "judge_now", AsyncMock(return_value=verdict))
+
+    r = client.post("/play/compress", json={"text": "word " * 50, "model": ""})
+    assert r.status_code == 200
+    jev = r.json()["jev"]
+    assert jev["label"] == "Drifted"
+    assert jev["gated"] is True
+
+
+def test_play_compress_omits_jev_verdict_when_disabled(client):
+    """quality.judge is disabled by default in the `client` fixture (no
+    TYPESAFE_API_KEY set) -- the playground response must not claim a
+    verdict that was never obtained."""
+    r = client.post("/play/compress", json={"text": "word " * 50, "model": ""})
+    assert r.status_code == 200
+    assert r.json()["jev"] is None
